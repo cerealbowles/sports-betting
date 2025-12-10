@@ -1,0 +1,206 @@
+<!doctype html>
+    <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Spooky Sports</title>
+            <script src="{{ url_for('static', filename='main.js') }}"></script>
+            <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    </head>
+    <body>
+        <div class="container">
+        <h1>👻 Spooky Sports 🎃</h1>
+
+        <div class="settings-bar card">
+            <div class="settings-left">
+            <form method="post" action="{{ url_for('save_settings') }}" style="display:flex; gap:8px; align-items:center;">
+                <div class="form-row" style="margin:0;">
+                <label style="margin-right:6px;">Bankroll</label>
+                <input name="bankroll" type="text" inputmode="decimal" value="{{ '%.2f' % settings.bankroll }}">
+                </div>
+                <div class="form-row" style="margin:0;">
+                <label style="margin-right:6px;">Cap %</label>
+                <input name="percent_bankroll" type="number" step="0.0001" value="{{ settings.percent_bankroll }}">
+                </div>
+                <button type="submit">Save</button>
+            </form>
+            </div>
+            <!-- <div class="small">Bankroll is updated automatically when placing/closing bets.</div> -->
+            <span id="bankroll_value" style="display:none;">{{ settings.bankroll }}</span>
+            <span id="percent_cap_value" style="display:none;">{{ settings.percent_bankroll }}</span>
+        </div>
+
+        <div class="main-grid">
+            <div class="calculator card calculator">
+            <h2>🔮 New Bet</h2>
+            <div class="form-row">
+                <label>Bet name</label>
+                <input id="bet_name" name="name" type="text" required>
+            </div>
+            <div class="form-row">
+                <label>Event Start</label>
+                <input name="eventstart" type="datetime-local">
+            </div>
+            <div class="form-row">
+                <label>Sport</label>
+                <input id="sport" name="sport" type="text" placeholder="NBA, NFL...">
+            </div>
+            <div class="form-row">
+                <label>Type</label>
+                <select id="bet_type" name="bet_type">
+                <option value="Moneyline">Moneyline</option>
+                <option value="Spread">Spread</option>
+                <option value="Over/Under">Over/Under</option>
+                <option value="Player">Player</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>American odds (e.g. -120 or 150)</label>
+                <input id="american_odds" name="american_odds" type="number" step="1" required placeholder="-120 or 150">
+                <div class="small">Decimal: <strong id="converted_decimal">—</strong></div>
+            </div>
+            <div class="form-row">
+                <label>Win probability (0-1)</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                <input id="prob" name="prob" type="number" step="0.0001" value="0.5" required style="flex:0 0 120px;">
+                <div id="empirical_info" class="small" style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Calc: —</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <label>Recommended stake</label>
+                <div><strong id="recommended_stake">—</strong></div>
+            </div>
+            <div class="form-row">
+                <label>Actual stake</label>
+                <input id="actual_stake" name="stake" type="number" step="0.01" required>
+            </div>
+            <input type="hidden" id="odds_hidden" name="odds" value="">
+            <div style="margin-top:8px;">
+                <form id="betForm" method="post" action="{{ url_for('add_open') }}">
+                <input type="hidden" id="form_name" name="name">
+                <input type="hidden" id="form_eventstart" name="eventstart">
+                <input type="hidden" id="form_odds" name="odds">
+                <input type="hidden" id="form_prob" name="prob">
+                <input type="hidden" id="form_stake" name="stake">
+                <input type="hidden" id="form_sport" name="sport">
+                <input type="hidden" id="form_type" name="bet_type">
+                <button type="submit" style="width:100%;">Place Bet</button>
+                </form>
+            </div>
+            </div>
+
+            <div class="dashboard">
+            <div class="chart card chart">
+                <h3>Bets (7D)</h3>
+                <div class="small">Bar chart disabled in this lightweight view.</div>
+            </div>
+            <div class="chart card chart">
+                <h3>Success Rate</h3>
+                <div class="small">Bar chart disabled in this lightweight view.</div>
+            </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🔓 Open Bets</h2>
+            {% if open_bets %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th class="hide-mobile">When</th>
+                    <th>Name</th>
+                    <th>Stake</th>
+                    <th>Return</th>
+                    <th>⚙️</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for b in open_bets %}
+                <tr>
+                    <td class="hide-mobile">{{ b.created_at.strftime('%m/%d %H:%M') }}</td>
+                    <td>{{ b.name }}</td>
+                    <td>${{ "%.2f"|format(b.stake) }}</td>
+                    <td>${{ "%.2f"|format(b.stake * b.odds) }}</td>
+                    <td class="actions">
+                    <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="small">Edit</a>
+                    <form method="post" action="{{ url_for('close_open', bet_id=b.id) }}" style="display:inline-flex; gap:6px; align-items:center;">
+                        <select name="outcome" style="padding:6px; border-radius:6px; background:#151522; color:#e6e6e6;">
+                        <option value="win">Win</option>
+                        <option value="loss">Loss</option>
+                        </select>
+                        <button type="submit" class="small">OK</button>
+                    </form>
+                    <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete?');" style="display:inline-block;">
+                        <button type="submit" class="small" style="background:#ff4757;">Del</button>
+                    </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="small">No open bets yet.</div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>🔒 Closed Bets</h2>
+            <div style="margin-bottom:8px;"><button onclick="document.getElementById('addClosedBtn').scrollIntoView({behavior:'smooth'});">+ Add Bet</button></div>
+            {% if closed_bets %}
+            <table class="table">
+                <thead>
+                <tr>
+                    <th class="hide-mobile">When</th>
+                    <th>Name</th>
+                    <th>Stake</th>
+                    <th>Result</th>
+                    <th>P&L</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for cb in closed_bets %}
+                <tr>
+                    <td class="hide-mobile">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
+                    <td>{{ cb.name }}</td>
+                    <td>${{ "%.2f"|format(cb.stake) }}</td>
+                    <td class="{% if cb.outcome == 'win' %}status-win{% else %}status-loss{% endif %}">{{ cb.outcome.upper() }}</td>
+                    <td class="{% if cb.profit >= 0 %}status-win{% else %}status-loss{% endif %}">${{ "%.2f"|format(cb.profit) }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="small">No closed bets yet.</div>
+            {% endif %}
+        </div>
+
+        <div id="addClosedBtn" class="card" style="margin-top:12px;">
+            <h3>Add closed bet</h3>
+            <form method="post" action="{{ url_for('add_closed') }}">
+            <div class="form-row">Name: <input name="name" required></div>
+            <div class="form-row">Event Start: <input name="eventstart" type="datetime-local"></div>
+            <div class="form-row">Sport: <input name="sport" placeholder="e.g. NBA, NFL"></div>
+            <div class="form-row">Type:
+                <select name="bet_type">
+                <option value="Moneyline">Moneyline</option>
+                <option value="Spread">Spread</option>
+                <option value="Over/Under">Over/Under</option>
+                <option value="Player">Player</option>
+                </select>
+            </div>
+            <div class="form-row">American odds: <input name="american_odds" type="number" step="1" required></div>
+            <div class="form-row">Prob (0-1): <input name="prob" type="number" step="0.0001" value="0.5" required></div>
+            <div class="form-row">Stake: <input name="stake" type="number" step="0.01" required></div>
+            <div class="form-row">Outcome:
+                <select name="outcome">
+                <option value="win">win</option>
+                <option value="loss">loss</option>
+                </select>
+            </div>
+            <div class="form-row">Closed at (optional): <input name="closed_at" type="datetime-local"></div>
+            <button type="submit" style="width:100%;">Add Closed Bet</button>
+            </form>
+        </div>
+        </div>
+    </body>
+</html>

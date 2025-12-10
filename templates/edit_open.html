@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Spooky Sports</title>
+        <link javascript src="{{ url_for('static', filename='main.js') }}"></link>
+        <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    </head>
+    <body>
+        <h2>Edit Open Bet</h2>
+        <form method="post">
+            Name: <input name="name" value="{{ b.name }}"><br>
+            Sport: <input name="sport" value="{{ b.sport }}"><br>
+            Type:
+            <select name="bet_type">
+            <option value="Moneyline" {% if b.bet_type == 'Moneyline' %}selected{% endif %}>Moneyline</option>
+            <option value="Spread" {% if b.bet_type == 'Spread' %}selected{% endif %}>Spread</option>
+            <option value="Over/Under" {% if b.bet_type == 'Over/Under' %}selected{% endif %}>Over/Under</option>
+            </select><br>
+            Odds: <input name="odds" type="number" step="0.01" value="{{ b.odds }}"><br>
+            Prob: <input name="prob" type="number" step="0.0001" value="{{ b.prob }}"><br>
+            Stake: <input name="stake" type="number" step="0.01" value="{{ b.stake }}"><br>
+            <button type="submit">Save</button>
+            <a href="{{ url_for('index') }}">Cancel</a>
+        </form>
+    </body>
+</html>

@@ -1,12 +1,12 @@
-from flask import Flask, request, redirect, url_for, render_template_string, abort
+from flask import Flask, request, redirect, url_for, render_template, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
 from datetime import datetime
 import os
 import math
 
 # app.py
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
-
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bets.db'
@@ -16,12 +16,13 @@ db = SQLAlchemy(app)
 # Models
 class Setting(db.Model):
   id = db.Column(db.Integer, primary_key=True)
-  bankroll = db.Column(db.Float, default=1000.0)
-  percent_bankroll = db.Column(db.Float, default=0.02)  # fraction of bankroll as cap
+  bankroll = db.Column(db.Float, default=20)
+  percent_bankroll = db.Column(db.Float, default=0.25)  # fraction of bankroll
 
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
+  eventstart = db.Column(db.DateTime, default=None)  # event start time
   odds = db.Column(db.Float)  # decimal odds
   prob = db.Column(db.Float)  # user's estimated win probability (0-1)
   stake = db.Column(db.Float)
@@ -32,6 +33,7 @@ class OpenBet(db.Model):
 class ClosedBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
+  eventstart = db.Column(db.DateTime, default=None) 
   odds = db.Column(db.Float)
   prob = db.Column(db.Float)
   stake = db.Column(db.Float)
@@ -45,8 +47,19 @@ class ClosedBet(db.Model):
 with app.app_context():
   if not os.path.exists('bets.db'):
     db.create_all()
-    db.session.add(Setting(bankroll=1000.0, percent_bankroll=0.02))
+    db.session.add(Setting(bankroll=50, percent_bankroll=0.25))
     db.session.commit()
+
+def ensure_column_exists():
+  with app.app_context():
+    inspector = inspect(db.engine)
+    columns = [col['name'] for col in inspector.get_columns('open_bet')]
+    if 'eventstart' not in columns:
+        with db.engine.begin() as conn:
+            conn.execute(text('ALTER TABLE open_bet ADD COLUMN eventstart DATETIME DEFAULT NULL'))
+            conn.execute(text('ALTER TABLE closed_bet ADD COLUMN eventstart DATETIME DEFAULT NULL'))
+    
+ensure_column_exists()
 
 # Kelly calculation function with space to tweak using closed bets history
 def compute_recommended_amount(bankroll, percent_bankroll, odds, prob, closed_bets):
@@ -148,445 +161,7 @@ def compute_recommended_amount(bankroll, percent_bankroll, odds, prob, closed_be
   recommended = max(recommended, 0.10)
   return round(recommended, 2)
 
-# Templates (single-file approach)
-BASE = """
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Spooky Sports</title>
-<style>
-/* Reset / basics */
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html,body { height: 100%; }
-body {
-  background: #11121a;
-  color: #e6e6e6;
-  font-family: Georgia, 'Times New Roman', serif;
-  padding: 14px;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
 
-/* Container */
-.container {
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-/* Header */
-h1 {
-  color: #ff6b35;
-  text-align: center;
-  font-size: 1.9rem;
-  margin-bottom: 10px;
-  text-shadow: 0 0 10px rgba(255,107,53,0.35);
-}
-h2 { color: #ff6b35; margin-bottom: 8px; font-size: 1.05rem; }
-h3 { color: #ffd93d; margin-bottom: 8px; font-size: 0.95rem; }
-
-/* Card styles */
-.card {
-  background: linear-gradient(180deg, #1f1f2e 0%, #262636 100%);
-  border: 1px solid rgba(255,107,53,0.08);
-  padding: 12px;
-  border-radius: 8px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-  margin-bottom: 12px;
-}
-
-/* Settings bar (compact) */
-.settings-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px;
-  border-radius: 8px;
-  background: #252535;
-  margin-bottom: 12px;
-  border: 1px solid rgba(255,107,53,0.06);
-}
-.settings-left { display:flex; gap:8px; align-items:center; flex:1; }
-.settings-left .form-row { display:flex; gap:6px; align-items:center; }
-.settings-left label { color:#ffd93d; font-weight:bold; font-size:0.9rem; white-space:nowrap; }
-.settings-left input[type="text"], .settings-left input[type="number"] {
-  padding:6px 8px; border-radius:6px; border:1px solid #3a3a4a; background:#151522; color:#e6e6e6; width:110px;
-}
-
-/* Grid layout */
-.main-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr; /* mobile first */
-}
-
-/* Calculator (left) */
-.calculator {
-  padding: 10px;
-}
-
-/* Dashboard (right) */
-.dashboard {
-  display:flex; flex-direction:column; gap:8px;
-}
-.chart {
-  padding:10px;
-  border-radius:8px;
-  background: linear-gradient(180deg,#23232e,#2b2b40);
-  border:1px solid rgba(255,107,53,0.06);
-}
-
-/* Forms */
-.form-row { margin-bottom:10px; display:flex; flex-direction:column; gap:6px; }
-.form-row label { color:#ffd93d; font-weight:bold; font-size:0.95rem; }
-input[type="text"], input[type="number"], select, input[type="datetime-local"] {
-  padding:8px 10px; border-radius:6px; border:1px solid #3a3a4a; background:#151522; color:#e6e6e6; font-size:0.95rem;
-  -webkit-appearance:none;
-}
-input:focus, select:focus {
-  outline: none; box-shadow: 0 0 8px rgba(255,107,53,0.12); border-color: #ff6b35;
-}
-
-/* Buttons */
-button {
-  background: #ff6b35; color: #14141a; border: none; padding: 8px 12px; border-radius:6px; cursor:pointer; font-weight:700;
-}
-button.secondary { background:#33343f; color:#ffd93d; border:1px solid rgba(255,217,61,0.06); }
-
-/* Tables */
-.table {
-  width:100%; border-collapse:collapse; margin-top:8px; font-size:0.93rem;
-}
-.table th {
-  text-align:left; padding:8px; background:#13131a; color:#ffd93d; font-size:0.78rem; border-bottom:1px solid rgba(255,107,53,0.07);
-}
-.table td { padding:8px; border-bottom:1px solid rgba(255,255,255,0.03); color:#e6e6e6; vertical-align:middle; }
-.small { color:#9aa0a6; font-size:0.85rem; }
-
-/* Status */
-.status-win { color:#22c55e; font-weight:700; }
-.status-loss { color:#ff4757; font-weight:700; }
-
-/* Actions compact */
-.actions { display:flex; gap:6px; align-items:center; }
-
-/* Responsive rules */
-@media (min-width: 768px) {
-  .main-grid { grid-template-columns: 1fr 1fr; }
-  .calculator { grid-column: 1 / 2; }
-  .dashboard { grid-column: 2 / 3; }
-  .settings-bar { padding:12px; }
-}
-
-/* Mobile-specific simplifications */
-@media (max-width: 767px) {
-  body { padding: 12px; }
-  h1 { font-size: 1.4rem; }
-  .settings-left input[type="text"] { width: 100px; }
-  .hide-mobile { display: none !important; }
-  .actions { flex-direction: column; gap:6px; }
-}
-
-/* Subtle spooky accent */
-.spooky { text-shadow: 0 0 8px rgba(255,107,53,0.25); color:#ff8a50; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>👻 Spooky Sports 🎃</h1>
-
-  <div class="settings-bar card">
-    <div class="settings-left">
-      <form method="post" action="{{ url_for('save_settings') }}" style="display:flex; gap:8px; align-items:center;">
-        <div class="form-row" style="margin:0;">
-          <label style="margin-right:6px;">Bankroll</label>
-          <input name="bankroll" type="text" inputmode="decimal" value="{{ '%.2f' % settings.bankroll }}">
-        </div>
-        <div class="form-row" style="margin:0;">
-          <label style="margin-right:6px;">Cap %</label>
-          <input name="percent_bankroll" type="number" step="0.0001" value="{{ settings.percent_bankroll }}">
-        </div>
-        <button type="submit">Save</button>
-      </form>
-    </div>
-    <div class="small">Bankroll is updated automatically when placing/closing bets.</div>
-    <span id="bankroll_value" style="display:none;">{{ settings.bankroll }}</span>
-    <span id="percent_cap_value" style="display:none;">{{ settings.percent_bankroll }}</span>
-  </div>
-
-  <div class="main-grid">
-    <div class="calculator card calculator">
-      <h2>🔮 New Bet</h2>
-      <div class="form-row">
-        <label>Bet name</label>
-        <input id="bet_name" name="name" type="text" required>
-      </div>
-      <div class="form-row">
-        <label>Sport</label>
-        <input id="sport" name="sport" type="text" placeholder="NBA, NFL...">
-      </div>
-      <div class="form-row">
-        <label>Type</label>
-        <select id="bet_type" name="bet_type">
-          <option value="Moneyline">Moneyline</option>
-          <option value="Spread">Spread</option>
-          <option value="Over/Under">Over/Under</option>
-          <option value="Player">Player</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label>American odds (e.g. -120 or 150)</label>
-        <input id="american_odds" name="american_odds" type="number" step="1" required placeholder="-120 or 150">
-        <div class="small">Decimal: <strong id="converted_decimal">—</strong></div>
-      </div>
-      <div class="form-row">
-        <label>Win probability (0-1)</label>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input id="prob" name="prob" type="number" step="0.0001" value="0.5" required style="flex:0 0 120px;">
-          <div id="empirical_info" class="small" style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Calc: —</div>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>Recommended stake</label>
-        <div><strong id="recommended_stake">—</strong></div>
-      </div>
-      <div class="form-row">
-        <label>Actual stake</label>
-        <input id="actual_stake" name="stake" type="number" step="0.01" required>
-      </div>
-      <input type="hidden" id="odds_hidden" name="odds" value="">
-      <div style="margin-top:8px;">
-        <form id="betForm" method="post" action="{{ url_for('add_open') }}">
-          <input type="hidden" id="form_name" name="name">
-          <input type="hidden" id="form_odds" name="odds">
-          <input type="hidden" id="form_prob" name="prob">
-          <input type="hidden" id="form_stake" name="stake">
-          <input type="hidden" id="form_sport" name="sport">
-          <input type="hidden" id="form_type" name="bet_type">
-          <button type="submit" style="width:100%;">Place Bet</button>
-        </form>
-      </div>
-    </div>
-
-    <div class="dashboard">
-      <div class="chart card chart">
-        <h3>Bets (7D)</h3>
-        <div class="small">Bar chart disabled in this lightweight view.</div>
-      </div>
-      <div class="chart card chart">
-        <h3>Success Rate</h3>
-        <div class="small">Bar chart disabled in this lightweight view.</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>🔓 Open Bets</h2>
-    {% if open_bets %}
-      <table class="table">
-        <thead>
-          <tr>
-            <th class="hide-mobile">When</th>
-            <th>Name</th>
-            <th>Stake</th>
-            <th>Return</th>
-            <th>⚙️</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for b in open_bets %}
-          <tr>
-            <td class="hide-mobile">{{ b.created_at.strftime('%m/%d %H:%M') }}</td>
-            <td>{{ b.name }}</td>
-            <td>${{ "%.2f"|format(b.stake) }}</td>
-            <td>${{ "%.2f"|format(b.stake * b.odds) }}</td>
-            <td class="actions">
-              <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="small">Edit</a>
-              <form method="post" action="{{ url_for('close_open', bet_id=b.id) }}" style="display:inline-flex; gap:6px; align-items:center;">
-                <select name="outcome" style="padding:6px; border-radius:6px; background:#151522; color:#e6e6e6;">
-                  <option value="win">Win</option>
-                  <option value="loss">Loss</option>
-                </select>
-                <button type="submit" class="small">OK</button>
-              </form>
-              <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete?');" style="display:inline-block;">
-                <button type="submit" class="small" style="background:#ff4757;">Del</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <div class="small">No open bets yet.</div>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h2>🔒 Closed Bets</h2>
-    <div style="margin-bottom:8px;"><button onclick="document.getElementById('addClosedBtn').scrollIntoView({behavior:'smooth'});">+ Add Bet</button></div>
-    {% if closed_bets %}
-      <table class="table">
-        <thead>
-          <tr>
-            <th class="hide-mobile">When</th>
-            <th>Name</th>
-            <th>Stake</th>
-            <th>Result</th>
-            <th>P&L</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for cb in closed_bets %}
-          <tr>
-            <td class="hide-mobile">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
-            <td>{{ cb.name }}</td>
-            <td>${{ "%.2f"|format(cb.stake) }}</td>
-            <td class="{% if cb.outcome == 'win' %}status-win{% else %}status-loss{% endif %}">{{ cb.outcome.upper() }}</td>
-            <td class="{% if cb.profit >= 0 %}status-win{% else %}status-loss{% endif %}">${{ "%.2f"|format(cb.profit) }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <div class="small">No closed bets yet.</div>
-    {% endif %}
-  </div>
-
-  <div id="addClosedBtn" class="card" style="margin-top:12px;">
-    <h3>Add closed bet</h3>
-    <form method="post" action="{{ url_for('add_closed') }}">
-      <div class="form-row">Name: <input name="name" required></div>
-      <div class="form-row">Sport: <input name="sport" placeholder="e.g. NBA, NFL"></div>
-      <div class="form-row">Type:
-        <select name="bet_type">
-          <option value="Moneyline">Moneyline</option>
-          <option value="Spread">Spread</option>
-          <option value="Over/Under">Over/Under</option>
-          <option value="Player">Player</option>
-        </select>
-      </div>
-      <div class="form-row">American odds: <input name="american_odds" type="number" step="1" required></div>
-      <div class="form-row">Prob (0-1): <input name="prob" type="number" step="0.0001" value="0.5" required></div>
-      <div class="form-row">Stake: <input name="stake" type="number" step="0.01" required></div>
-      <div class="form-row">Outcome:
-        <select name="outcome">
-          <option value="win">win</option>
-          <option value="loss">loss</option>
-        </select>
-      </div>
-      <div class="form-row">Closed at (optional): <input name="closed_at" type="datetime-local"></div>
-      <button type="submit" style="width:100%;">Add Closed Bet</button>
-    </form>
-  </div>
-</div>
-
-<script>
-/* Utility: convert American -> decimal */
-function americanToDecimal(a) {
-  var n = Number(a);
-  if (!isFinite(n)) return null;
-  if (n > 0) return +(n/100 + 1).toFixed(4);
-  return +(100/Math.abs(n) + 1).toFixed(4);
-}
-
-/* compute recommended stake (client mirror of server logic) */
-function computeKelly(bankroll, percentCap, odds, prob) {
-  if (!odds || !prob || odds <= 0 || prob <= 0 || prob >= 1) return 0.0;
-  var b = odds - 1.0;
-  if (b <= 0) return 0.0;
-  var f = (b * prob - (1 - prob)) / b;
-  f = Math.max(0.0, f);
-  var rawStake = f * bankroll;
-  var cap = percentCap * bankroll;
-  var recommended = Math.min(rawStake, cap);
-  recommended = Math.max(recommended, 0.10);
-  return Math.round(recommended * 100) / 100;
-}
-
-/* Empirical info fetch (small summary next to probability) */
-function updateEmpiricalInfo() {
-  var sport = (document.getElementById('sport')||{}).value || '';
-  var betType = (document.getElementById('bet_type')||{}).value || '';
-  var prob = (document.getElementById('prob')||{}).value || '0.5';
-  fetch('/api/empirical_info', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ sport: sport, bet_type: betType, prob: prob })
-  }).then(r=>r.json()).then(function(data){
-    var el = document.getElementById('empirical_info');
-    if(!el) return;
-    if(data.empirical === null || data.matching_count === 0) {
-      el.textContent = 'Empirical: —   Adjusted: ' + (data.adjusted!==undefined?Number(data.adjusted).toFixed(4):'—');
-    } else {
-      el.textContent = 'Empirical: ' + Number(data.empirical).toFixed(4) +
-        '  Adjusted: ' + Number(data.adjusted).toFixed(4) +
-        '  (α=' + Number(data.alpha).toFixed(2) + ', n=' + (data.matching_count||0) + ')';
-    }
-  }).catch(function(){});
-}
-
-/* Wire up inputs */
-document.addEventListener('DOMContentLoaded', function(){
-  var aInput = document.getElementById('american_odds');
-  var probInput = document.getElementById('prob');
-  var outSpan = document.getElementById('converted_decimal');
-  var recommendedSpan = document.getElementById('recommended_stake');
-  var bankroll = parseFloat(document.getElementById('bankroll_value').textContent || '0');
-  var percentCap = parseFloat(document.getElementById('percent_cap_value').textContent || '0.02');
-
-  function updateRecommended() {
-    var dec = americanToDecimal(aInput.value);
-    var p = parseFloat(probInput.value);
-    if (dec === null || !isFinite(p)) {
-      recommendedSpan.textContent = '—';
-      document.getElementById('odds_hidden').value = '';
-      return;
-    }
-    outSpan.textContent = dec;
-    var rec = computeKelly(bankroll, percentCap, dec, p);
-    recommendedSpan.textContent = '$' + rec.toFixed(2);
-    document.getElementById('odds_hidden').value = dec;
-  }
-
-  if (aInput) aInput.addEventListener('input', updateRecommended);
-  if (probInput) probInput.addEventListener('input', updateRecommended);
-
-  /* empirical info updates */
-  var sportEl = document.getElementById('sport');
-  var typeEl = document.getElementById('bet_type');
-  if (sportEl) sportEl.addEventListener('input', updateEmpiricalInfo);
-  if (typeEl) typeEl.addEventListener('change', updateEmpiricalInfo);
-  if (probInput) probInput.addEventListener('input', updateEmpiricalInfo);
-  updateEmpiricalInfo();
-
-  /* bet form submission fills hidden fields */
-  document.getElementById('betForm').addEventListener('submit', function(e){
-    var name = document.getElementById('bet_name').value;
-    var odds = document.getElementById('odds_hidden').value;
-    var prob = document.getElementById('prob').value;
-    var stake = document.getElementById('actual_stake').value;
-    var sport = document.getElementById('sport').value || '';
-    var type = document.getElementById('bet_type').value || 'Moneyline';
-    if (!name || !odds || !prob || !stake) {
-      alert('Please fill in all fields.');
-      e.preventDefault();
-      return;
-    }
-    document.getElementById('form_name').value = name;
-    document.getElementById('form_odds').value = odds;
-    document.getElementById('form_prob').value = prob;
-    document.getElementById('form_stake').value = stake;
-    document.getElementById('form_sport').value = sport;
-    document.getElementById('form_type').value = type;
-  });
-});
-</script>
-</body>
-</html>
-"""
 
 # Routes
 @app.route('/')
@@ -594,7 +169,7 @@ def index():
   settings = Setting.query.first()
   open_bets = OpenBet.query.order_by(OpenBet.created_at.desc()).all()
   closed_bets = ClosedBet.query.order_by(ClosedBet.closed_at.desc()).all()
-  return render_template_string(BASE, settings=settings, open_bets=open_bets, closed_bets=closed_bets, recommended=None)
+  return render_template('index.html', settings=settings, open_bets=open_bets, closed_bets=closed_bets, recommended=None)
 
 @app.route('/save_settings', methods=['POST'])
 def save_settings():
@@ -634,10 +209,33 @@ def api_calc():
   recommended = compute_recommended_amount(settings.bankroll, settings.percent_bankroll, odds, prob, closed_bets)
   return {'recommended': recommended}
 
+@app.route("/api/empirical_info", methods=["POST"])
+def empirical_info():
+  data = request.get_json()
+
+  sport = data.get("sport", "")
+  bet_type = data.get("bet_type", "")
+  prob = float(data.get("prob", 0.5))
+
+  # TODO: Replace with your real logic:
+  # Here we just return some dummy values.
+  empirical = 0.5
+  adjusted = prob * 0.9
+  alpha = 1.3
+  matching_count = 12
+
+  return jsonify({
+      "empirical": empirical,
+      "adjusted": adjusted,
+      "alpha": alpha,
+      "matching_count": matching_count
+  })
+
 @app.route('/add_open', methods=['POST'])
 def add_open():
   try:
     name = request.form.get('name', 'Bet')
+    eventstart = request.form.get('eventstart')
     odds = float(request.form.get('odds'))
     prob = float(request.form.get('prob'))
     stake = float(request.form.get('stake'))
@@ -645,7 +243,7 @@ def add_open():
     bet_type = request.form.get('bet_type', 'Moneyline')  # NEW
   except Exception:
     return redirect(url_for('index'))
-  b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type)
+  b = OpenBet(name=name, eventstart=eventstart, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type)
   db.session.add(b)
   db.session.commit()
   return redirect(url_for('index'))
@@ -665,26 +263,7 @@ def edit_open(bet_id):
       return redirect(url_for('index'))
     except Exception:
       pass
-  # simple edit form
-  form = """
-  <h2>Edit Open Bet</h2>
-  <form method="post">
-    Name: <input name="name" value="{{ b.name }}"><br>
-    Sport: <input name="sport" value="{{ b.sport }}"><br>
-    Type:
-    <select name="bet_type">
-      <option value="Moneyline" {% if b.bet_type == 'Moneyline' %}selected{% endif %}>Moneyline</option>
-      <option value="Spread" {% if b.bet_type == 'Spread' %}selected{% endif %}>Spread</option>
-      <option value="Over/Under" {% if b.bet_type == 'Over/Under' %}selected{% endif %}>Over/Under</option>
-    </select><br>
-    Odds: <input name="odds" type="number" step="0.01" value="{{ b.odds }}"><br>
-    Prob: <input name="prob" type="number" step="0.0001" value="{{ b.prob }}"><br>
-    Stake: <input name="stake" type="number" step="0.01" value="{{ b.stake }}"><br>
-    <button type="submit">Save</button>
-    <a href="{{ url_for('index') }}">Cancel</a>
-  </form>
-  """
-  return render_template_string(form, b=b)
+  return render_template('edit_open.html', b=b)
 
 @app.route('/delete_open/<int:bet_id>', methods=['POST'])
 def delete_open(bet_id):
@@ -717,6 +296,7 @@ def close_open(bet_id):
 def add_closed():
   try:
     name = request.form.get('name', 'Bet')
+    eventstart = request.form.get('eventstart')
     american_odds = float(request.form.get('american_odds'))
     # Convert American odds to decimal
     if american_odds > 0:
@@ -749,7 +329,7 @@ def add_closed():
       pass
 
   cb = ClosedBet(
-    name=name, odds=odds, prob=prob, stake=stake,
+    name=name, eventstart=eventstart, odds=odds, prob=prob, stake=stake,
     sport=sport, bet_type=bet_type, outcome=outcome,
     profit=profit, closed_at=closed_at
   )
