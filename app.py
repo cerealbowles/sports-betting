@@ -22,18 +22,17 @@ class Setting(db.Model):
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
-  eventstart = db.Column(db.DateTime, default=None)  # event start time
   odds = db.Column(db.Float)  # decimal odds
   prob = db.Column(db.Float)  # user's estimated win probability (0-1)
   stake = db.Column(db.Float)
   sport = db.Column(db.String(100), default='')     # NEW: sport text
   bet_type = db.Column(db.String(50), default='Moneyline')  # NEW: Moneyline/Spread/Over/Under/Player
   created_at = db.Column(db.DateTime, default=datetime.utcnow)
+  eventstart = db.Column(db.DateTime, default=None)  # event start time
 
 class ClosedBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
-  eventstart = db.Column(db.DateTime, default=None) 
   odds = db.Column(db.Float)
   prob = db.Column(db.Float)
   stake = db.Column(db.Float)
@@ -42,6 +41,7 @@ class ClosedBet(db.Model):
   outcome = db.Column(db.String(20))  # 'win' or 'loss'
   profit = db.Column(db.Float)
   closed_at = db.Column(db.DateTime, default=datetime.utcnow)
+  eventstart = db.Column(db.DateTime, default=None) 
 
 # Create DB if missing
 with app.app_context():
@@ -243,7 +243,7 @@ def add_open():
     bet_type = request.form.get('bet_type', 'Moneyline')  # NEW
   except Exception:
     return redirect(url_for('index'))
-  b = OpenBet(name=name, eventstart=eventstart, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type)
+  b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type, eventstart=eventstart)
   db.session.add(b)
   db.session.commit()
   return redirect(url_for('index'))
@@ -284,7 +284,7 @@ def close_open(bet_id):
   else:
     profit = -b.stake
   cb = ClosedBet(name=b.name, odds=b.odds, prob=b.prob, stake=b.stake,
-                 sport=b.sport, bet_type=b.bet_type,            # NEW: carry sport/type
+                 sport=b.sport, bet_type=b.bet_type,
                  outcome=outcome, profit=profit, closed_at=datetime.utcnow())
   db.session.add(cb)
   db.session.delete(b)
@@ -329,9 +329,9 @@ def add_closed():
       pass
 
   cb = ClosedBet(
-    name=name, eventstart=eventstart, odds=odds, prob=prob, stake=stake,
+    name=name, odds=odds, prob=prob, stake=stake,
     sport=sport, bet_type=bet_type, outcome=outcome,
-    profit=profit, closed_at=closed_at
+    profit=profit, closed_at=closed_at, eventstart=eventstart
   )
   db.session.add(cb)
   db.session.commit()
