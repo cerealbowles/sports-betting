@@ -235,7 +235,7 @@ def empirical_info():
 def add_open():
   try:
     name = request.form.get('name', 'Bet')
-    eventstart = request.form.get('eventstart')
+    eventstart_str = request.form.get('eventstart')
     odds = float(request.form.get('odds'))
     prob = float(request.form.get('prob'))
     stake = float(request.form.get('stake'))
@@ -244,8 +244,8 @@ def add_open():
   except Exception:
     return redirect(url_for('index'))
   
-  eventstart = datetime.strptime(eventstart, "%Y-%m-%dT%H:%M")
-  b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type, eventstart=eventstart)
+  eventstart_dt = datetime.fromisoformat(eventstart_str)
+  b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type, eventstart=eventstart_dt)
   db.session.add(b)
   db.session.commit()
   return redirect(url_for('index'))
@@ -298,7 +298,7 @@ def close_open(bet_id):
 def add_closed():
   try:
     name = request.form.get('name', 'Bet')
-    eventstart = request.form.get('eventstart')
+    eventstart_str = request.form.get('eventstart')
     american_odds = float(request.form.get('american_odds'))
     # Convert American odds to decimal
     if american_odds > 0:
@@ -322,6 +322,8 @@ def add_closed():
   else:
     profit = -stake
 
+  eventstart_dt = datetime.fromisoformat(eventstart_str)
+
   closed_at = datetime.utcnow()
   if closed_at_raw:
     try:
@@ -333,7 +335,7 @@ def add_closed():
   cb = ClosedBet(
     name=name, odds=odds, prob=prob, stake=stake,
     sport=sport, bet_type=bet_type, outcome=outcome,
-    profit=profit, closed_at=closed_at, eventstart=eventstart
+    profit=profit, closed_at=closed_at, eventstart=eventstart_dt
   )
   db.session.add(cb)
   db.session.commit()

@@ -79,6 +79,7 @@ updateEmpiricalInfo();
 /* bet form submission fills hidden fields */
 document.getElementById('betForm').addEventListener('submit', function(e){
     var name = document.getElementById('bet_name').value;
+    var eventstart = document.getElementById('eventstart').value;
     var odds = document.getElementById('odds_hidden').value;
     var prob = document.getElementById('prob').value;
     var stake = document.getElementById('actual_stake').value;
@@ -90,6 +91,7 @@ document.getElementById('betForm').addEventListener('submit', function(e){
     return;
     }
     document.getElementById('form_name').value = name;
+    document.getElementById('form_eventstart').value = eventstart;
     document.getElementById('form_odds').value = odds;
     document.getElementById('form_prob').value = prob;
     document.getElementById('form_stake').value = stake;

@@ -78,14 +78,14 @@
             <input type="hidden" id="odds_hidden" name="odds" value="">
             <div style="margin-top:8px;">
                 <form id="betForm" method="post" action="{{ url_for('add_open') }}">
-                <input type="hidden" id="form_name" name="name">
-                <input type="hidden" id="form_eventstart" name="eventstart">
-                <input type="hidden" id="form_odds" name="odds">
-                <input type="hidden" id="form_prob" name="prob">
-                <input type="hidden" id="form_stake" name="stake">
-                <input type="hidden" id="form_sport" name="sport">
-                <input type="hidden" id="form_type" name="bet_type">
-                <button type="submit" style="width:100%;">Place Bet</button>
+                    <input type="hidden" id="form_name" name="name">
+                    <input type="hidden" id="form_eventstart" name="eventstart">
+                    <input type="hidden" id="form_odds" name="odds">
+                    <input type="hidden" id="form_prob" name="prob">
+                    <input type="hidden" id="form_stake" name="stake">
+                    <input type="hidden" id="form_sport" name="sport">
+                    <input type="hidden" id="form_type" name="bet_type">
+                    <button type="submit" style="width:100%;">Place Bet</button>
                 </form>
             </div>
             </div>
@@ -151,7 +151,7 @@
             <table class="table">
                 <thead>
                 <tr>
-                    <th class="hide-mobile">When</th>
+                    <th class="hide-mobile">Event Date</th>
                     <th>Name</th>
                     <th>Stake</th>
                     <th>Result</th>
@@ -161,7 +161,7 @@
                 <tbody>
                 {% for cb in closed_bets %}
                 <tr>
-                    <td class="hide-mobile">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
+                    <td class="hide-mobile">{{ cb.eventstart.strftime('%m/%d %H:%M') }}</td>
                     <td>{{ cb.name }}</td>
                     <td>${{ "%.2f"|format(cb.stake) }}</td>
                     <td class="{% if cb.outcome == 'win' %}status-win{% else %}status-loss{% endif %}">{{ cb.outcome.upper() }}</td>
@@ -190,7 +190,7 @@
                 </select>
             </div>
             <div class="form-row">American odds: <input name="american_odds" type="number" step="1" required></div>
-            <div class="form-row">Prob (0-1): <input name="prob" type="number" step="0.0001" value="0.5" required></div>
+            <div class="form-row">Prob (0-1): <input name="prob" type="number" step="0.01" value="0.5" required></div>
             <div class="form-row">Stake: <input name="stake" type="number" step="0.01" required></div>
             <div class="form-row">Outcome:
                 <select name="outcome">
