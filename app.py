@@ -239,10 +239,12 @@ def add_open():
     odds = float(request.form.get('odds'))
     prob = float(request.form.get('prob'))
     stake = float(request.form.get('stake'))
-    sport = request.form.get('sport', '')                  # NEW
-    bet_type = request.form.get('bet_type', 'Moneyline')  # NEW
+    sport = request.form.get('sport', '')
+    bet_type = request.form.get('bet_type', 'Moneyline')
   except Exception:
     return redirect(url_for('index'))
+  
+  eventstart = datetime.strptime(eventstart, "%Y-%m-%dT%H:%M")
   b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type, eventstart=eventstart)
   db.session.add(b)
   db.session.commit()
