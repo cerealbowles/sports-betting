@@ -161,7 +161,7 @@
                 <tbody>
                 {% for cb in closed_bets %}
                 <tr>
-                    <td class="hide-mobile">{% if b.eventstart %}{{ b.eventstart.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
+                    <td class="hide-mobile">{% if cb.eventstart %}{{ cb.eventstart.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
                     <td>{{ cb.name }}</td>
                     <td>${{ "%.2f"|format(cb.stake) }}</td>
                     <td class="{% if cb.outcome == 'win' %}status-win{% else %}status-loss{% endif %}">{{ cb.outcome.upper() }}</td>
