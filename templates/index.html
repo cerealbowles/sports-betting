@@ -118,7 +118,7 @@
                 <tbody>
                 {% for b in open_bets %}
                 <tr>
-                    <td class="hide-mobile">{{ b.created_at.strftime('%m/%d %H:%M') }}</td>
+                    <td class="hide-mobile">{% if b.created_at %}{{ b.created_at.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
                     <td>{{ b.name }}</td>
                     <td>${{ "%.2f"|format(b.stake) }}</td>
                     <td>${{ "%.2f"|format(b.stake * b.odds) }}</td>
@@ -161,7 +161,7 @@
                 <tbody>
                 {% for cb in closed_bets %}
                 <tr>
-                    <td class="hide-mobile">{{ cb.eventstart.strftime('%m/%d %H:%M') }}</td>
+                    <td class="hide-mobile">{% if b.eventstart %}{{ b.eventstart.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
                     <td>{{ cb.name }}</td>
                     <td>${{ "%.2f"|format(cb.stake) }}</td>
                     <td class="{% if cb.outcome == 'win' %}status-win{% else %}status-loss{% endif %}">{{ cb.outcome.upper() }}</td>
