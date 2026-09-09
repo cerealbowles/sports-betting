@@ -3382,16 +3382,10 @@ def nhl_schedule():
 
 @app.route('/nfl')
 def nfl_schedule():
-  schedule = nfl_api.build_schedule_context()
-  _upsert_predictions(schedule, 'NFL')
-  return render_template('nfl_schedule.html', schedule=schedule, subnav_sport='NFL')
-
-@app.route('/nfl/week')
-def nfl_week():
   week = request.args.get('week', type=int)
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
-  return render_template('nfl_week.html', week_ctx=week_ctx, subnav_sport='NFL')
+  return render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL')
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():

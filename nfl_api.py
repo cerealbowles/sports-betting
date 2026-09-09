@@ -298,9 +298,9 @@ def get_live_scores():
 
 def _build_game(event, team_stats, game_log, nfl_odds_map):
     """Builds one game's full display dict — teams, live state, model, odds,
-    weather, injuries. Shared by build_schedule_context() (today) and
-    build_week_schedule_context() (a full week) so both views render
-    identically off templates/_nfl_game_card.html."""
+    weather, injuries. Shared by build_schedule_context() (the daily-digest
+    cache warmer) and build_week_schedule_context() (the /nfl page) so both
+    render identically off templates/_nfl_game_card.html."""
     from odds_api import _normalize
 
     comp = event.get('competitions', [{}])[0]
@@ -524,13 +524,14 @@ def build_week_schedule_context(week=None):
             _build_game(event, team_stats, game_log, nfl_odds_map)
         )
 
+    today_str = _today_et()
     days = []
     for d in sorted(by_date.keys()):
         try:
             date_display = datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %-d')
         except Exception:
             date_display = d
-        days.append({'date': d, 'date_display': date_display, 'games': by_date[d]})
+        days.append({'date': d, 'date_display': date_display, 'games': by_date[d], 'is_today': d == today_str})
 
     return {
         'week':            week,
