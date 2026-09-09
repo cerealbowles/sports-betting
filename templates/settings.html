@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+{% block title %}Settings · Spooky Sports{% endblock %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:0 auto;">
+  <h2 style="margin-bottom:20px;font-size:1.1rem;">Settings</h2>
+
+  <form method="post" action="{{ url_for('save_settings') }}">
+
+    <!-- Bankroll ─────────────────────────────────────────── -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Bankroll</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <label style="display:block;">
+          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Amount ($)</div>
+          <input type="number" name="bankroll" value="{{ settings.bankroll }}" min="0" step="0.01"
+                 style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.85rem;">
+        </label>
+        <label style="display:block;">
+          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Kelly cap (%)</div>
+          <input type="number" name="percent_bankroll" value="{{ (settings.percent_bankroll * 100) | round(1) }}" min="0" max="100" step="0.1"
+                 style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.85rem;">
+        </label>
+      </div>
+      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+        Kelly cap limits any single bet to this % of the bankroll regardless of the Kelly fraction. 2–5% is typical.
+      </p>
+    </div>
+
+    <!-- Notifications ────────────────────────────────────── -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Notifications · Discord</div>
+      <label style="display:block;margin-bottom:10px;">
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Webhook URL</div>
+        <input type="url" id="webhook-input" name="discord_webhook_url"
+               value="{{ settings.discord_webhook_url or '' }}"
+               placeholder="https://discord.com/api/webhooks/…"
+               style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;">
+      </label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button type="button" id="test-webhook"
+                style="font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          Send test
+        </button>
+        <button type="button" id="send-daily-picks"
+                style="font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          Send today's picks now
+        </button>
+        <span id="test-result" style="font-size:0.72rem;"></span>
+      </div>
+      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+        Daily picks post automatically at noon ET. Trust Score alerts fire on ±10+ point moves (every 2 hours, 8 am – 8 pm ET).<br>
+        To get a webhook URL: Discord channel → Edit → Integrations → Webhooks → New Webhook → Copy URL.
+      </p>
+    </div>
+
+    <button type="submit"
+            style="width:100%;padding:10px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;font-size:0.85rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">
+      Save Settings
+    </button>
+
+  </form>
+</div>
+
+<!-- Model Backfill ───────────────────────────────────── -->
+<div class="card" style="max-width:520px;margin:14px auto 0;">
+  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Model · 2026 Backfill</div>
+  <p style="font-size:0.72rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+    Re-scores all completed 2026 games with the current model weights, updates the database, and refits Platt calibration. Run this after any model weight change.
+  </p>
+  <button type="button" id="run-backfill"
+          style="padding:9px 18px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.83rem;font-weight:700;cursor:pointer;">
+    Run 2026 Backfill
+  </button>
+  <button type="button" id="repair-pick-roi"
+          style="margin-left:10px;padding:9px 18px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.83rem;font-weight:700;cursor:pointer;">
+    Repair pick_roi
+  </button>
+  <span id="repair-result" style="margin-left:12px;font-size:0.75rem;color:var(--text-muted);"></span>
+</div>
+
+<!-- Odds Snapshot Storage ───────────────────────────────── -->
+<div class="card" style="max-width:520px;margin:14px auto 0;">
+  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Odds Snapshot Storage</div>
+  {% if odds_stats and odds_stats.count > 0 %}
+  <p style="font-size:0.78rem;color:var(--text);margin:0 0 6px;">
+    <strong>{{ odds_stats.count }}</strong> snapshots across <strong>{{ odds_stats.n_games }}</strong> games
+    &nbsp;·&nbsp; ~<strong>{{ (odds_stats.est_bytes / 1024) | round(1) }} KB</strong>
+  </p>
+  <p style="font-size:0.72rem;color:var(--text-muted);margin:0;line-height:1.5;">
+    Oldest snapshot: {{ odds_stats.oldest[:10] if odds_stats.oldest else '—' }}
+    ({{ odds_stats.age_days if odds_stats.age_days is not none else '—' }} days ago)
+    {% if odds_stats.age_days is not none and odds_stats.age_days >= 90 %}
+      <br><span style="color:var(--orange);font-weight:700;">⚠ 90+ days of history collected — consider rolling this up into per-game movement categories instead of raw odds.</span>
+    {% endif %}
+  </p>
+  <p style="font-size:0.70rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+    Purging is disabled while we build a sample for line-movement-profile analysis (Early sharp / Late sharp / Sustained / Reversal). Only pre-game (Preview) odds are recorded — in-game price swings are excluded.
+  </p>
+  {% else %}
+  <p style="font-size:0.78rem;color:var(--text-muted);">No odds snapshots recorded yet.</p>
+  {% endif %}
+</div>
+
+<!-- Backfill modal ───────────────────────────────────── -->
+<div id="backfillModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:500;align-items:center;justify-content:center;">
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:28px;min-width:320px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+    <div id="backfillTitle" style="font-size:0.95rem;font-weight:700;margin-bottom:18px;">Running Backfill…</div>
+    <div id="backfillSteps" style="display:flex;flex-direction:column;gap:10px;max-height:320px;overflow-y:auto;margin-bottom:18px;"></div>
+    <div id="backfillFooter" style="display:none;gap:10px;justify-content:flex-end;">
+      <button onclick="closeBackfillModal()" style="padding:8px 16px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;cursor:pointer;">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('test-webhook').addEventListener('click', function () {
+  var btn    = this;
+  var result = document.getElementById('test-result');
+  var url    = document.getElementById('webhook-input').value.trim();
+  if (!url) {
+    result.textContent  = 'Enter a URL first.';
+    result.style.color  = 'var(--loss)';
+    return;
+  }
+  btn.textContent = 'Sending…';
+  btn.disabled    = true;
+  result.textContent = '';
+  fetch('/api/test-webhook', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body:    'webhook_url=' + encodeURIComponent(url),
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (data) {
+    result.textContent = data.ok ? '✓ Message sent' : ('✗ ' + (data.error || 'Failed'));
+    result.style.color = data.ok ? 'var(--win)' : 'var(--loss)';
+  })
+  .catch(function () {
+    result.textContent = '✗ Network error';
+    result.style.color = 'var(--loss)';
+  })
+  .finally(function () {
+    btn.textContent = 'Send test';
+    btn.disabled    = false;
+  });
+});
+
+document.getElementById('send-daily-picks').addEventListener('click', function () {
+  var btn    = this;
+  var result = document.getElementById('test-result');
+  btn.textContent = 'Sending…';
+  btn.disabled    = true;
+  result.textContent = '';
+  fetch('/api/send-daily-picks', { method: 'POST' })
+  .then(function (r) { return r.json(); })
+  .then(function (data) {
+    result.textContent = data.ok ? '✓ Daily picks sent' : ('✗ ' + (data.error || 'Failed'));
+    result.style.color = data.ok ? 'var(--win)' : 'var(--loss)';
+  })
+  .catch(function () {
+    result.textContent = '✗ Network error';
+    result.style.color = 'var(--loss)';
+  })
+  .finally(function () {
+    btn.textContent = 'Send today\'s picks now';
+    btn.disabled    = false;
+  });
+});
+
+/* ── Backfill ─────────────────────────────────────────── */
+var _backfillSource = null;
+
+function closeBackfillModal() {
+  if (_backfillSource) { _backfillSource.close(); _backfillSource = null; }
+  document.getElementById('backfillModal').style.display = 'none';
+}
+
+function _backfillRow(text, status) {
+  var row  = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.8rem;';
+  var icon = document.createElement('span');
+  icon.className = 'bfi';
+  icon.style.cssText = 'width:16px;text-align:center;flex-shrink:0;font-size:0.85rem;display:inline-block;';
+  if (status === 'running') {
+    icon.textContent = '⟳';
+    icon.style.color = 'var(--text-muted)';
+    icon.style.animation = 'rfi-spin 1s linear infinite';
+  } else if (status === 'error') {
+    icon.textContent = '✗';
+    icon.style.color = '#f87171';
+  }
+  var label = document.createElement('span');
+  label.textContent = text;
+  label.style.opacity = status === 'running' ? '0.7' : '1';
+  row.appendChild(icon);
+  row.appendChild(label);
+  return row;
+}
+
+document.getElementById('run-backfill').addEventListener('click', function () {
+  var modal  = document.getElementById('backfillModal');
+  var title  = document.getElementById('backfillTitle');
+  var steps  = document.getElementById('backfillSteps');
+  var footer = document.getElementById('backfillFooter');
+  steps.innerHTML = '';
+  title.textContent = 'Running Backfill…';
+  footer.style.display = 'none';
+  modal.style.display = 'flex';
+
+  if (_backfillSource) { _backfillSource.close(); }
+  _backfillSource = new EventSource('/api/backfill/stream');
+  var _currentRow = null;
+
+  _backfillSource.onmessage = function (e) {
+    var data = JSON.parse(e.data);
+    if (data.status === 'running') {
+      _currentRow = _backfillRow(data.step, 'running');
+      steps.appendChild(_currentRow);
+      steps.scrollTop = steps.scrollHeight;
+    } else if (data.status === 'done' && _currentRow) {
+      var icon = _currentRow.querySelector('.bfi');
+      icon.style.animation = 'none';
+      icon.textContent = '✓';
+      icon.style.color = '#4ade80';
+      _currentRow.querySelector('span:last-child').style.opacity = '1';
+      _currentRow = null;
+    } else if (data.status === 'complete') {
+      _backfillSource.close(); _backfillSource = null;
+      title.textContent = '✓ Backfill Complete';
+      footer.style.display = 'flex';
+    } else if (data.status === 'error') {
+      if (_currentRow) {
+        var icon = _currentRow.querySelector('.bfi');
+        icon.style.animation = 'none';
+        icon.textContent = '✗';
+        icon.style.color = '#f87171';
+      } else {
+        steps.appendChild(_backfillRow(data.step, 'error'));
+      }
+      _backfillSource.close(); _backfillSource = null;
+      title.textContent = '✗ Backfill Failed';
+      footer.style.display = 'flex';
+    }
+  };
+
+  _backfillSource.onerror = function () {
+    if (_backfillSource) { _backfillSource.close(); _backfillSource = null; }
+    steps.appendChild(_backfillRow('Connection lost — check logs', 'error'));
+    title.textContent = '✗ Backfill Failed';
+    footer.style.display = 'flex';
+  };
+});
+
+/* ── Repair pick_roi ──────────────────────────────────── */
+document.getElementById('repair-pick-roi').addEventListener('click', function () {
+  var btn = this;
+  var res = document.getElementById('repair-result');
+  btn.disabled = true;
+  btn.textContent = 'Repairing…';
+  res.textContent = '';
+  fetch('/api/repair/pick-roi', { method: 'POST' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) {
+        res.textContent = '✗ ' + d.error;
+        res.style.color = 'var(--loss)';
+      } else {
+        res.textContent = '✓ Repaired ' + d.repaired + ' of ' + d.total + ' records';
+        res.style.color = 'var(--profit)';
+      }
+    })
+    .catch(function () {
+      res.textContent = '✗ Request failed';
+      res.style.color = 'var(--loss)';
+    })
+    .finally(function () {
+      btn.textContent = 'Repair pick_roi';
+      btn.disabled = false;
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,642 @@
+{% extends "base.html" %}
+{% block title %}History — Spooky Sports{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>{% endblock %}
+
+{% block content %}
+
+{% if imported is not none %}
+<div class="import-result {{ 'import-ok' if imported > 0 else 'import-warn' }}">
+    {% if imported > 0 %}✓ Imported {{ imported }} bet{{ 's' if imported != 1 }}.{% endif %}
+    {% if skipped > 0 %} {{ skipped }} row{{ 's' if skipped != 1 }} skipped (missing or invalid fields).{% endif %}
+    {% if imported == 0 and skipped == 0 %}Nothing imported — check your CSV.{% endif %}
+</div>
+{% endif %}
+
+<!-- Stat summary -->
+<div class="dashboard" style="margin-bottom:14px;">
+    <div class="stat-card">
+        <div class="stat-label">Units P&amp;L</div>
+        <div class="stat-value {{ 'status-win' if units_profit >= 0 else 'status-loss' }}">
+            {{ '+' if units_profit > 0 }}{{ '%.2f' % units_profit }}u
+        </div>
+        <div class="stat-sub">{{ stats.wins }}W &nbsp;{{ stats.losses }}L{% if stats.cashouts %} &nbsp;{{ stats.cashouts }}CO{% endif %}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Win Rate
+            {% if trend.n > 0 %}
+            <span class="trend-tag {{ 'trend-up' if trend.up else 'trend-dn' }}">
+                {{ trend.wins }}/{{ trend.n }} L10
+            </span>
+            {% endif %}
+        </div>
+        <div class="stat-value">{{ stats.win_rate }}%</div>
+        <div class="stat-sub">{{ stats.total_closed }} bets closed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg CLV</div>
+        <div class="stat-value {% if clv_stats.avg is not none %}{{ 'status-win' if clv_stats.avg >= 0 else 'status-loss' }}{% endif %}">
+            {% if clv_stats.avg is not none %}{{ '+' if clv_stats.avg > 0 }}{{ clv_stats.avg }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">{% if clv_stats.positive_pct is not none %}{{ clv_stats.positive_pct }}% positive · {{ clv_stats.count }} bets{% else %}no closing lines{% endif %}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">ROI</div>
+        <div class="stat-value {{ 'status-win' if stats.roi >= 0 else 'status-loss' }}">{{ stats.roi }}%</div>
+        <div class="stat-sub">${{ "%.2f"|format(stats.total_staked) }} staked</div>
+    </div>
+</div>
+
+<!-- Closed Bets table -->
+<div class="card">
+    <div class="section-header">
+        <h2>Closed Bets</h2>
+        <button class="secondary small" onclick="openAddClosedModal()">+ Add Past Bet</button>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+        <input type="search" id="bet-search" class="filter-input" placeholder="Search bets…" oninput="applyFilters()">
+        <select id="filter-sport" class="filter-select" onchange="applyFilters()">
+            <option value="" {% if not initial_sport %}selected{% endif %}>All sports</option>
+            {% for s in sports_list %}<option value="{{ s }}" {% if initial_sport and s.upper() == initial_sport %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+        <select id="filter-outcome" class="filter-select" onchange="applyFilters()">
+            <option value="">All results</option>
+            <option value="win">Wins</option>
+            <option value="loss">Losses</option>
+        </select>
+    </div>
+
+    {% if closed_bets %}
+    <table class="table" id="closed-bets-table">
+        <thead>
+        <tr>
+            <th class="hide-mobile">Closed</th>
+            <th>Bet</th>
+            <th>Stake</th>
+            <th>Result</th>
+            <th>P&amp;L</th>
+            <th>CLV</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for cb in closed_bets %}
+        <tr data-sport="{{ (cb.sport or '') | lower }}" data-outcome="{{ cb.outcome }}">
+            <td class="hide-mobile small">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
+            <td>
+                <div>{{ cb.name }}{% if cb.sport %}<span class="small" style="color:var(--blue); margin-left:6px;">{{ cb.sport }}</span>{% endif %}{% if cb.is_paper %}<span class="paper-badge">Paper</span>{% endif %}</div>
+                {% if cb.notes %}<div class="small" style="color:var(--text-muted); margin-top:2px;">{{ cb.notes[:80] }}{% if cb.notes|length > 80 %}…{% endif %}</div>{% endif %}
+            </td>
+            <td>{{ '%.2f' % (cb.stake / unit_size) }}u</td>
+            <td>
+              {% if cb.outcome == 'cashout' %}
+                <span class="badge" style="background:rgba(99,102,241,0.15);color:#6366f1;border:1px solid rgba(99,102,241,0.35);">CO</span>
+              {% elif cb.outcome == 'win' %}
+                <span class="badge badge-win">WIN</span>
+              {% else %}
+                <span class="badge badge-loss">LOSS</span>
+              {% endif %}
+            </td>
+            <td class="{{ 'status-win' if cb.profit >= 0 else 'status-loss' }}">
+              {{ '+' if cb.profit > 0 }}{{ '%.2f' % (cb.profit / unit_size) }}u
+              {% if cb.outcome == 'cashout' and cb.cashout_amount is not none %}
+                <div class="small" style="color:var(--text-muted);font-weight:400;">${{ '%.2f' % cb.cashout_amount }} rcvd</div>
+              {% endif %}
+            </td>
+            <td class="small">
+                {% if cb.clv is not none %}
+                <span class="{{ 'status-win' if cb.clv >= 0 else 'status-loss' }}">{{ '+' if cb.clv >= 0 }}{{ cb.clv }}%</span>
+                {% else %}<span style="color:var(--border-strong);">—</span>{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <div id="filter-empty" class="small" style="display:none; padding:12px 0; text-align:center; color:var(--text-muted);">No bets match the current filters.</div>
+    <div id="closed-bets-pagination" style="display:flex; align-items:center; justify-content:center; gap:10px; margin-top:12px;">
+        <button class="secondary small" id="cb-prev" onclick="cbChangePage(-1)">&#8592; Prev</button>
+        <span id="cb-page-info" class="small" style="color:var(--text-muted);"></span>
+        <button class="secondary small" id="cb-next" onclick="cbChangePage(1)">Next &#8594;</button>
+    </div>
+    {% else %}
+    <div class="small" style="padding:10px 0;">No closed bets yet.</div>
+    {% endif %}
+</div>
+
+<!-- Analytics with tabs -->
+{% if closed_bets %}
+<div class="card analytics-section">
+    <div class="section-header" style="margin-bottom:0;">
+        <h2>Analytics</h2>
+    </div>
+
+    <div class="chart-tabs">
+        <button class="chart-tab active" data-tab="performance">Performance</button>
+        <button class="chart-tab" data-tab="edge">Edge &amp; CLV</button>
+        <button class="chart-tab" data-tab="breakdown">Breakdown</button>
+    </div>
+
+    <!-- Performance tab -->
+    <div class="chart-tab-pane active" id="tab-performance">
+        <div class="charts-grid charts-grid-2">
+            <div class="chart-box">
+                <h3>Cumulative P&amp;L (units)</h3>
+                <canvas id="chartCumPL"></canvas>
+            </div>
+            <div class="chart-box">
+                <h3>Activity (7 Days)</h3>
+                <canvas id="chartActivity"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edge & CLV tab -->
+    <div class="chart-tab-pane" id="tab-edge">
+        {% if chart_data.clv %}
+        <div class="clv-summary-row">
+            <div class="clv-sum-item">
+                <span class="clv-sum-label">Avg CLV</span>
+                <span class="clv-sum-val {{ 'status-win' if clv_stats.avg and clv_stats.avg >= 0 else 'status-loss' }}">
+                    {% if clv_stats.avg is not none %}{{ '+' if clv_stats.avg > 0 }}{{ clv_stats.avg }}%{% else %}—{% endif %}
+                </span>
+            </div>
+            <div class="clv-sum-item">
+                <span class="clv-sum-label">Positive CLV</span>
+                <span class="clv-sum-val {{ 'status-win' if clv_stats.positive_pct and clv_stats.positive_pct >= 50 else '' }}">
+                    {% if clv_stats.positive_pct is not none %}{{ clv_stats.positive_pct }}%{% else %}—{% endif %}
+                </span>
+            </div>
+            <div class="clv-sum-item">
+                <span class="clv-sum-label">Tracked</span>
+                <span class="clv-sum-val">{{ clv_stats.count }}</span>
+            </div>
+        </div>
+        {% endif %}
+        <div class="charts-grid charts-grid-2">
+            {% if chart_data.clv %}
+            <div class="chart-box" style="grid-column: span 2;">
+                <h3>Closing Line Value</h3>
+                <div class="small" style="margin-bottom:8px; color:var(--text-muted);">CLV per bet vs closing odds — dashed line is your running average. +2% = beating the market consistently.</div>
+                <canvas id="chartCLV" style="height:220px !important;"></canvas>
+            </div>
+            {% endif %}
+            <div class="chart-box">
+                <h3>Expected vs Actual Win Rate</h3>
+                <canvas id="chartEVActual"></canvas>
+            </div>
+            {% if chart_data.calibration %}
+            <div class="chart-box">
+                <h3>Probability Calibration</h3>
+                <canvas id="chartCalibration"></canvas>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Breakdown tab -->
+    <div class="chart-tab-pane" id="tab-breakdown">
+        <div class="charts-grid charts-grid-2">
+            <div class="chart-box">
+                <h3>P&amp;L by Sport</h3>
+                <canvas id="chartBySport"></canvas>
+            </div>
+            <div class="chart-box">
+                <h3>Win / Loss</h3>
+                <canvas id="chartWinLoss"></canvas>
+            </div>
+            <div class="chart-box">
+                <h3>Bet Type Breakdown</h3>
+                <canvas id="chartBetType"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Add Past Bet Modal -->
+<div id="addClosedModal" class="modal-overlay" onclick="closeModalOutside(event)">
+    <div class="modal">
+        <button class="modal-close" onclick="closeAddClosedModal()" aria-label="Close">&#215;</button>
+        <h2 style="margin-bottom:16px;">Add Past Bet</h2>
+        <form method="post" action="{{ url_for('add_closed') }}">
+            <div class="form-row"><label>Name</label><input name="name" required placeholder="e.g. Broncos -3.5"></div>
+            <div class="form-row"><label>Event Start</label><input name="eventstart" type="datetime-local"></div>
+            <div class="form-row"><label>Sport</label><input name="sport" placeholder="e.g. NFL, NHL"></div>
+            <div class="form-row">
+                <label>Type</label>
+                <select name="bet_type">
+                    <option value="Moneyline">Moneyline</option>
+                    <option value="Spread">Spread</option>
+                    <option value="Over/Under">Over/Under</option>
+                    <option value="Player">Player</option>
+                </select>
+            </div>
+            <div class="form-row"><label>American Odds</label><input name="american_odds" type="text" inputmode="text" required placeholder="-110"></div>
+            <div class="form-row"><label>Win Probability (0–1)</label><input name="prob" type="number" step="0.01" inputmode="decimal" value="0.5" required></div>
+            <div class="form-row"><label>Stake ($)</label><input name="stake" type="number" step="0.01" inputmode="decimal" required placeholder="0.00"></div>
+            <div class="form-row">
+                <label>Outcome</label>
+                <select name="outcome">
+                    <option value="win">Win</option>
+                    <option value="loss">Loss</option>
+                </select>
+            </div>
+            <div class="form-row"><label>Closed At (optional)</label><input name="closed_at" type="datetime-local"></div>
+            <div class="form-row"><label>Notes (optional)</label><textarea name="notes" rows="2" style="resize:vertical; font-family:inherit; font-size:0.9rem; padding:9px 12px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--bg-input); color:var(--text); width:100%;"></textarea></div>
+            <button type="submit" style="width:100%; margin-top:4px;">Save Bet</button>
+        </form>
+    </div>
+</div>
+
+<!-- Bulk Import -->
+<details class="card import-card">
+    <summary class="import-summary">
+        <span>⬆ Bulk Import Past Bets</span>
+        <span class="import-hint">CSV paste</span>
+    </summary>
+    <div class="import-body">
+        <p class="import-desc">One bet per row. Header row required. <code>date</code> accepts <code>YYYY-MM-DD</code> or <code>MM/DD/YYYY</code>. All fields except <code>odds</code>, <code>stake</code>, and <code>outcome</code> are optional.</p>
+        <pre class="import-example">date,name,sport,bet_type,odds,prob,stake,outcome,notes
+2025-05-01,PIT ML,MLB,Moneyline,-115,0.55,25,win,Good pitching matchup
+2025-05-03,BUF -3.5,NFL,Spread,-110,0.52,30,loss,
+2025-05-05,NYR vs WSH Over 6,NHL,Over/Under,+102,0.50,20,win,</pre>
+        <form method="post" action="{{ url_for('import_bets') }}">
+            <textarea name="csv_data" class="import-textarea" rows="7" placeholder="Paste CSV rows here (include the header line)…" spellcheck="false"></textarea>
+            <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                <button type="submit">Import Bets</button>
+            </div>
+        </form>
+    </div>
+</details>
+
+{% endblock %}
+
+{% block scripts %}
+<script type="application/json" id="page-data">
+{"chart_data": {{ chart_data | tojson }}, "wins": {{ stats.wins }}, "losses": {{ stats.losses }}}
+</script>
+<script>
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.chart-tab').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.chart-tab').forEach(function(b) { b.classList.remove('active'); });
+        document.querySelectorAll('.chart-tab-pane').forEach(function(p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        var pane = document.getElementById('tab-' + btn.getAttribute('data-tab'));
+        if (pane) pane.classList.add('active');
+    });
+});
+
+// ── Filter / search ───────────────────────────────────────────────────────────
+var allRows = [];
+function applyFilters() {
+    if (!allRows.length) return;
+    var q       = (document.getElementById('bet-search').value || '').toLowerCase();
+    var sport   = (document.getElementById('filter-sport').value || '').toLowerCase();
+    var outcome = (document.getElementById('filter-outcome').value || '').toLowerCase();
+    var visible = 0;
+    allRows.forEach(function(row) {
+        var name    = (row.querySelector('td:nth-child(2)')  || {}).textContent || '';
+        var rowSp   = (row.getAttribute('data-sport')   || '').toLowerCase();
+        var rowOut  = (row.getAttribute('data-outcome') || '').toLowerCase();
+        var show = (!q || name.toLowerCase().includes(q))
+                && (!sport   || rowSp  === sport)
+                && (!outcome || rowOut === outcome);
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    var empty = document.getElementById('filter-empty');
+    var pg    = document.getElementById('closed-bets-pagination');
+    if (empty) empty.style.display = visible === 0 ? '' : 'none';
+    // Hide pagination when filtering
+    if (pg) pg.style.display = (q || sport || outcome) ? 'none' : '';
+    if (!q && !sport && !outcome) cbRender();
+}
+
+// ── Closed Bets pagination ────────────────────────────────────────────────────
+const PAGE_SIZE = 10;
+let currentPage = 0;
+const table = document.getElementById('closed-bets-table');
+
+function cbRender() {
+    if (!table) return;
+    const start = currentPage * PAGE_SIZE;
+    allRows.forEach(function(r, i) {
+        r.style.display = (i >= start && i < start + PAGE_SIZE) ? '' : 'none';
+    });
+    var total = Math.ceil(allRows.length / PAGE_SIZE);
+    var info  = document.getElementById('cb-page-info');
+    if (info) info.textContent = 'Page ' + (currentPage + 1) + ' of ' + (total || 1);
+    var prev = document.getElementById('cb-prev');
+    var next = document.getElementById('cb-next');
+    if (prev) prev.disabled = currentPage === 0;
+    if (next) next.disabled = currentPage >= (total - 1);
+    var pg = document.getElementById('closed-bets-pagination');
+    if (pg) pg.style.display = total <= 1 ? 'none' : '';
+}
+window.cbChangePage = function(dir) {
+    var total = Math.ceil(allRows.length / PAGE_SIZE);
+    currentPage = Math.max(0, Math.min(total - 1, currentPage + dir));
+    cbRender();
+};
+
+if (table) {
+    allRows = Array.from(table.querySelectorAll('tbody tr'));
+    cbRender();
+    // Apply the sport filter if the select was pre-set server-side (e.g.
+    // arriving via a sport-scoped page's "History" link, ?sport=MLB) —
+    // setting the <select>'s value alone doesn't filter row visibility.
+    if (document.getElementById('filter-sport').value) applyFilters();
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+(function () {
+  var _pd    = JSON.parse(document.getElementById('page-data').textContent);
+  var data   = _pd.chart_data;
+  var wins   = _pd.wins;
+  var losses = _pd.losses;
+
+  Chart.defaults.color       = '#94A3B8';
+  Chart.defaults.borderColor = 'rgba(148,163,184,0.08)';
+  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+  Chart.defaults.font.size   = 11;
+
+  var C = {
+    orange:    '#FB4F14', orangeDim: 'rgba(251,79,20,0.22)',
+    blue:      '#2563EB', blueDim:   'rgba(37,99,235,0.22)',
+    green:     '#22c55e', greenDim:  'rgba(34,197,94,0.18)',
+    red:       '#ef4444', redDim:    'rgba(239,68,68,0.18)',
+    muted:     '#94A3B8',
+  };
+  var tip = {
+    backgroundColor: '#0F1117', borderColor: 'rgba(0,0,0,0.35)', borderWidth: 1,
+    titleColor: '#E2E8F0', bodyColor: '#94A3B8', padding: 10, cornerRadius: 6,
+  };
+
+  /* 1. Cumulative P&L (units) */
+  (function () {
+    var ctx = document.getElementById('chartCumPL');
+    if (!ctx || !data.cumulative_pl.length) return;
+    var unitSize = {{ unit_size }};
+    var vals = data.cumulative_pl.map(function(d) { return { x: d.x, y: Math.round(d.y / unitSize * 100) / 100 }; });
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: vals.map(function(d) { return d.x; }),
+        datasets: [{
+          data: vals.map(function(d) { return d.y; }),
+          borderColor: C.orange, borderWidth: 2,
+          backgroundColor: function(ctx) {
+            var g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+            g.addColorStop(0, 'rgba(251,79,20,0.22)'); g.addColorStop(1, 'rgba(251,79,20,0.02)');
+            return g;
+          },
+          fill: true, tension: 0.35,
+          pointRadius: vals.length > 40 ? 0 : 3,
+          pointBackgroundColor: C.orange, pointHoverRadius: 5,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: Object.assign({}, tip, { callbacks: { label: function(c) { return ' ' + (c.parsed.y >= 0 ? '+' : '') + c.parsed.y.toFixed(2) + 'u'; } } })
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+          y: { ticks: { callback: function(v) { return (v >= 0 ? '+' : '') + v + 'u'; } } }
+        }
+      }
+    });
+  }());
+
+  /* 2. Win / Loss */
+  (function () {
+    var ctx = document.getElementById('chartWinLoss');
+    if (!ctx || (!wins && !losses)) return;
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Wins', 'Losses'],
+        datasets: [{ data: [wins, losses],
+          backgroundColor: ['rgba(34,197,94,0.25)', 'rgba(239,68,68,0.25)'],
+          borderColor: [C.green, C.red], borderWidth: 2, hoverOffset: 6 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '62%',
+        plugins: { legend: { position: 'bottom', labels: { padding: 14, boxWidth: 10, color: C.muted } }, tooltip: tip }
+      }
+    });
+  }());
+
+  /* 3. P&L by Sport */
+  (function () {
+    var ctx = document.getElementById('chartBySport');
+    if (!ctx) return;
+    var sports  = Object.keys(data.by_sport);
+    if (!sports.length) return;
+    var unitSize = {{ unit_size }};
+    var profits = sports.map(function(s) { return Math.round(data.by_sport[s].profit / unitSize * 100) / 100; });
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: sports,
+        datasets: [{
+          label: 'P&L (u)', data: profits,
+          backgroundColor: profits.map(function(p) { return p >= 0 ? C.greenDim : C.redDim; }),
+          borderColor:      profits.map(function(p) { return p >= 0 ? C.green   : C.red;    }),
+          borderWidth: 1, borderRadius: 4, maxBarThickness: 28,
+        }]
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: Object.assign({}, tip, { callbacks: { label: function(c) { return ' ' + (c.parsed.x >= 0 ? '+' : '') + c.parsed.x.toFixed(2) + 'u'; } } })
+        },
+        scales: {
+          x: { ticks: { callback: function(v) { return v + 'u'; } } },
+          y: { grid: { display: false }, ticks: { color: C.muted } }
+        }
+      }
+    });
+  }());
+
+  /* 4. Activity */
+  (function () {
+    var ctx = document.getElementById('chartActivity');
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.daily.labels,
+        datasets: [{ label: 'Bets closed', data: data.daily.counts,
+          backgroundColor: C.blueDim, borderColor: C.blue, borderWidth: 1, borderRadius: 4, maxBarThickness: 36 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: tip },
+        scales: { x: { grid: { display: false } }, y: { ticks: { stepSize: 1, color: C.muted }, beginAtZero: true } }
+      }
+    });
+  }());
+
+  /* 5. Bet Type */
+  (function () {
+    var ctx = document.getElementById('chartBetType');
+    if (!ctx) return;
+    var types = Object.keys(data.by_type);
+    if (!types.length) return;
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: types,
+        datasets: [
+          { label: 'Wins',   data: types.map(function(t) { return data.by_type[t].wins; }),
+            backgroundColor: C.greenDim, borderColor: C.green, borderWidth: 1, borderRadius: 4, maxBarThickness: 32 },
+          { label: 'Losses', data: types.map(function(t) { return data.by_type[t].losses; }),
+            backgroundColor: C.redDim,   borderColor: C.red,   borderWidth: 1, borderRadius: 4, maxBarThickness: 32 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', labels: { padding: 12, boxWidth: 10, color: C.muted } }, tooltip: tip },
+        scales: { x: { grid: { display: false } }, y: { ticks: { stepSize: 1, color: C.muted }, beginAtZero: true } }
+      }
+    });
+  }());
+
+  /* 6. Expected vs Actual */
+  (function () {
+    var ctx = document.getElementById('chartEVActual');
+    if (!ctx) return;
+    var sports = Object.keys(data.ev_comparison);
+    if (!sports.length) return;
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: sports,
+        datasets: [
+          { label: 'Expected %', data: sports.map(function(s) { return data.ev_comparison[s].expected; }),
+            backgroundColor: C.blueDim,   borderColor: C.blue,   borderWidth: 1, borderRadius: 4, maxBarThickness: 32 },
+          { label: 'Actual %',   data: sports.map(function(s) { return data.ev_comparison[s].actual; }),
+            backgroundColor: C.orangeDim, borderColor: C.orange, borderWidth: 1, borderRadius: 4, maxBarThickness: 32 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { padding: 12, boxWidth: 10, color: C.muted } },
+          tooltip: Object.assign({}, tip, { callbacks: { label: function(c) { return ' ' + c.dataset.label + ': ' + c.parsed.y.toFixed(1) + '%'; } } })
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { ticks: { callback: function(v) { return v + '%'; }, color: C.muted }, max: 100, beginAtZero: true }
+        }
+      }
+    });
+  }());
+
+  /* 7. CLV */
+  (function () {
+    var ctx = document.getElementById('chartCLV');
+    if (!ctx || !data.clv || !data.clv.length) return;
+    var pts   = data.clv;
+    var n     = pts.length;
+    var lbls  = pts.map(function(d) { return d.x; });
+    var clvs  = pts.map(function(d) { return d.clv; });
+    var avgs  = pts.map(function(d) { return d.avg; });
+    var names = pts.map(function(d) { return d.name; });
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: lbls,
+        datasets: [
+          { label: 'CLV', data: clvs,
+            backgroundColor: clvs.map(function(v) { return v >= 0 ? C.greenDim : C.redDim; }),
+            borderColor:      clvs.map(function(v) { return v >= 0 ? C.green   : C.red;   }),
+            borderWidth: 1, borderRadius: 3, order: 2 },
+          { label: 'Running avg', data: avgs, type: 'line',
+            borderColor: C.orange, borderWidth: 2, borderDash: [5, 3],
+            pointRadius: 0, fill: false, tension: 0.35, order: 1 },
+          { label: '+2% benchmark', data: Array(n).fill(2), type: 'line',
+            borderColor: 'rgba(34,197,94,0.28)', borderWidth: 1, borderDash: [3, 4],
+            pointRadius: 0, fill: false, order: 3 },
+          { label: '0% (market)', data: Array(n).fill(0), type: 'line',
+            borderColor: 'rgba(148,163,184,0.28)', borderWidth: 1,
+            pointRadius: 0, fill: false, order: 3 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { padding: 12, boxWidth: 12,
+            filter: function(item) { return item.datasetIndex <= 1; } } },
+          tooltip: Object.assign({}, tip, {
+            callbacks: {
+              title: function(items) { return names[items[0].dataIndex] || lbls[items[0].dataIndex]; },
+              label: function(c) {
+                if (c.datasetIndex === 0) return ' CLV: ' + (c.parsed.y >= 0 ? '+' : '') + c.parsed.y.toFixed(1) + '%';
+                if (c.datasetIndex === 1) return ' Avg: ' + (c.parsed.y >= 0 ? '+' : '') + c.parsed.y.toFixed(2) + '%';
+                return null;
+              }
+            }
+          })
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { ticks: { callback: function(v) { return (v >= 0 ? '+' : '') + v + '%'; } } }
+        }
+      }
+    });
+  }());
+
+  /* 8. Calibration */
+  (function () {
+    var ctx = document.getElementById('chartCalibration');
+    if (!ctx || !data.calibration || !data.calibration.length) return;
+    var buckets = data.calibration.map(function(d) { return d.prob; });
+    var actuals = data.calibration.map(function(d) { return d.actual; });
+    var counts  = data.calibration.map(function(d) { return d.count; });
+    var minB = Math.min.apply(null, buckets) - 5;
+    var maxB = Math.max.apply(null, buckets) + 5;
+    new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [
+          { label: 'Your bets',
+            data: buckets.map(function(b, i) { return {x: b, y: actuals[i]}; }),
+            backgroundColor: C.orange, borderColor: C.orange,
+            pointRadius: counts.map(function(c) { return Math.max(5, Math.min(14, c * 1.5)); }),
+            pointHoverRadius: 8 },
+          { label: 'Perfect calibration',
+            data: [{x: minB, y: minB}, {x: maxB, y: maxB}], type: 'line',
+            borderColor: 'rgba(148,163,184,0.3)', borderDash: [4, 4],
+            borderWidth: 1.5, pointRadius: 0, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { padding: 12, boxWidth: 10, color: C.muted } },
+          tooltip: Object.assign({}, tip, {
+            callbacks: {
+              label: function(ctx) {
+                var i = ctx.dataIndex;
+                if (ctx.datasetIndex === 0)
+                  return ' Predicted ' + buckets[i] + '% → Actual ' + actuals[i] + '% (' + counts[i] + ' bets)';
+                return null;
+              }
+            }
+          })
+        },
+        scales: {
+          x: { min: minB, max: maxB, title: { display: true, text: 'Predicted %', color: '#5E7A96' }, ticks: { callback: function(v){ return v+'%'; } } },
+          y: { min: 0,    max: 100,   title: { display: true, text: 'Actual %',    color: '#5E7A96' }, ticks: { callback: function(v){ return v+'%'; } } }
+        }
+      }
+    });
+  }());
+}());
+</script>
+{% endblock %}

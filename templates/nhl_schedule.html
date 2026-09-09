@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}NHL Today — Spooky Sports{% endblock %}
+
+{% block head %}
+<style>
+/* ── NHL-specific: goalie section ── */
+.goalie-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-top: 1px solid var(--border);
+}
+.goalie-col { padding: 10px 14px; }
+.goalie-col.col-home {
+    border-left: 1px solid var(--border);
+    text-align: right;
+}
+.goalie-col.col-away { text-align: left; }
+.gc-label { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.gc-name { font-size: 0.83rem; font-weight: 700; color: var(--text); line-height: 1.2; margin-top: 2px; }
+.gc-stats {
+    font-size: 0.72rem; color: var(--text-muted); margin-top: 3px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.col-home .gc-stats { justify-content: flex-end; }
+.gc-stat-hi { color: var(--text); font-weight: 600; }
+
+.team-stat-row {
+    display: flex; gap: 10px; font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; flex-wrap: wrap;
+}
+.fg-home .team-stat-row { justify-content: flex-end; }
+.team-stat-row b { color: var(--silver); }
+
+@media (max-width: 700px) {
+    .goalie-col { padding: 8px 8px; }
+    .gc-stats { gap: 5px; font-size: 0.68rem; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if not schedule %}
+<div class="card" style="padding:24px; text-align:center;">
+    <p style="color:var(--text-muted);">No NHL games today, or unable to reach the NHL API. Try refreshing.</p>
+</div>
+{% else %}
+
+{% for day in schedule %}
+<div class="day-header">
+    <h2>{{ day.date_display }}</h2>
+    <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
+    <span class="refresh-info"><a href="{{ url_for('nhl_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+</div>
+
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set ns = namespace(final_hdr=False) %}
+<div class="games-grid">
+{% for game in _live + _upcoming + _final %}
+{% if game.status == 'Final' and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
+{% endif %}
+
+{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
+{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
+
+<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
+
+    <!-- ── Header bar ── -->
+    <div class="game-header">
+        {% if game.status == 'Live' %}
+            <span class="status-live">● Live</span>
+        {% elif game.status == 'Final' %}
+            <span class="status-final">Final</span>
+        {% else %}
+            <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
+        {% endif %}
+        {% if game.venue %}<span class="game-venue">{{ game.venue }}</span>{% endif %}
+        <div class="game-header-right">
+            {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
+        </div>
+    </div>
+
+    <!-- ── Scoreboard ── -->
+    <div class="scoreboard">
+
+        <!-- Away -->
+        <div class="sb-team sb-away">
+            <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            <div class="sb-team-info">
+                <div class="sb-name">{{ game.away.name }}</div>
+                <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}–{{ game.away.ot_losses }}</div>
+                <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }}</div>
+                {% if game.status != 'Final' %}
+                <a href="{{ bet_away_url }}" class="btn-bet-team sb-bet-mobile">{{ game.away.abbrev }}</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Center: score + desktop bet buttons -->
+        <div class="sb-center">
+            {% if game.status in ('Live', 'Final') %}
+            <div class="sb-score">
+                <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
+                <span class="sb-score-sep">–</span>
+                <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
+            </div>
+            {% else %}
+            <div class="sb-vs">vs</div>
+            {% endif %}
+            {% if game.status != 'Final' %}
+            <div class="bet-pair desktop-bet">
+                <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
+                <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbrev }}</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Home -->
+        <div class="sb-team sb-home">
+            <div class="sb-team-info">
+                <div class="sb-name">{{ game.home.name }}</div>
+                <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}–{{ game.home.ot_losses }}</div>
+                <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }}</div>
+                {% if game.status != 'Final' %}
+                <a href="{{ bet_home_url }}" class="btn-bet-team sb-bet-mobile">{{ game.home.abbrev }}</a>
+                {% endif %}
+            </div>
+            <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+        </div>
+
+    </div><!-- /.scoreboard -->
+
+    {% if game.status == 'Final' %}<details class="final-stats-toggle"><summary>Stats &amp; analysis</summary>{% endif %}
+    <!-- ── Goalie section ── -->
+    <div class="goalie-section">
+        {% for team, col_class in [(game.away, 'col-away'), (game.home, 'col-home')] %}
+        <div class="goalie-col {{ col_class }}">
+            <div class="gc-label">Projected G</div>
+            {% if team.goalie %}
+            <div class="gc-name">
+                {{ team.goalie.name }}
+                {% if team.goalie.injury %}<span class="injury-tag">{{ team.goalie.injury }}</span>{% endif %}
+            </div>
+            <div class="gc-stats">
+                <span><b class="gc-stat-hi">{{ team.goalie.sv_pct }}</b> SV%</span>
+                <span><b class="gc-stat-hi">{{ team.goalie.gaa }}</b> GAA</span>
+                <span><b class="gc-stat-hi">{{ team.goalie.record }}</b></span>
+            </div>
+            {% else %}
+            <div class="gc-name" style="color:var(--text-muted);">TBD</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ── Recent form + team stats ── -->
+    <div class="form-row-section">
+        {% for team, fg_class in [(game.away, 'fg-away'), (game.home, 'fg-home')] %}
+        <div class="form-group {{ fg_class }}">
+            <span class="form-label">Recent</span>
+            <div class="form-dots">
+                {% for r in team.form %}<span class="dot {{ 'dot-w' if r == 'W' else 'dot-l' }}">{{ r }}</span>{% endfor %}
+            </div>
+            <div class="team-stat-row">
+                <span>GF/G <b>{{ team.gf_pg }}</b></span>
+                <span>GA/G <b>{{ team.ga_pg }}</b></span>
+                <span>L10 <b>{{ team.l10 }}</b></span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ── FanDuel analysis ── -->
+    {% if game.odds %}
+    <div class="analysis-section">
+        <div class="analysis-row">
+            <span class="analysis-label">FanDuel</span>
+            <div class="analysis-data">
+                <span class="odds-team">
+                    <span>{{ game.away.abbrev }}</span>
+                    <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
+                    {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
+                </span>
+                <span class="odds-sep">·</span>
+                <span class="odds-team">
+                    <span>{{ game.home.abbrev }}</span>
+                    <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
+                    {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
+                </span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% if game.status == 'Final' %}</details>{% endif %}
+
+</div><!-- /.game-card -->
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endfor %}
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+</script>
+{% endblock %}

@@ -1,21 +1,26 @@
-# Use an official Python runtime
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy Python dependency list
+# Dependencies first — better layer caching on rebuilds
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the app code
+# Application code
 COPY . .
 
-# Expose port 5000
+# Ensure data directory exists at image build time
+RUN mkdir -p /data
+
 EXPOSE 5000
 
-# Command to run
-CMD ["python", "app.py"]
-
+# Single worker so the in-memory cache (warmed by APScheduler) is shared
+# across all requests. A personal home server never needs more than 1 worker.
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:5000", \
+     "--workers", "1", \
+     "--threads", "4", \
+     "--timeout", "120", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "app:app"]

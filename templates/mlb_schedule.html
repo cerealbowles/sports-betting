@@ -1,0 +1,1171 @@
+{% extends "base.html" %}
+{% block title %}MLB Today — Spooky Sports{% endblock %}
+
+{% block head %}
+<style>
+/* ── Linescore ──────────────────────────────────────────── */
+.linescore-wrap {
+    overflow-x: auto;
+    border-top: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.linescore-wrap::-webkit-scrollbar { display: none; }
+.linescore {
+    width: 100%; border-collapse: collapse;
+    font-size: 0.72rem; white-space: nowrap;
+}
+.linescore th, .linescore td {
+    padding: 5px 8px; text-align: center;
+    border-right: 1px solid var(--border);
+}
+.linescore th:last-child, .linescore td:last-child { border-right: none; }
+.linescore thead th { color: var(--text-muted); font-weight: 600; background: var(--bg-card-2); }
+.linescore .ls-team { text-align: left; font-weight: 700; color: var(--text); width: 44px; }
+.linescore .ls-total { font-weight: 700; color: var(--text); background: rgba(0,0,0,0.025); border-left: 1px solid var(--border); }
+.linescore thead .ls-total { border-left: 1px solid var(--border); }
+.linescore td { color: var(--silver); }
+.linescore .ls-active { color: var(--win); font-weight: 700; }
+
+/* ── Pitcher section ────────────────────────────────────── */
+.pitcher-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-top: 1px solid var(--border);
+}
+.pitcher-col {
+    padding: 10px 14px;
+}
+.pitcher-col.col-home {
+    border-left: 1px solid var(--border);
+    text-align: right;
+}
+.pitcher-col.col-away { text-align: left; }
+.pc-name {
+    font-size: 0.83rem; font-weight: 700; color: var(--text); line-height: 1.2;
+}
+.pc-stats {
+    font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.col-home .pc-stats { justify-content: flex-end; }
+.pc-stat-hi { color: var(--text); font-weight: 600; }
+
+.last-starts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.col-home .last-starts { justify-content: flex-end; }
+.start-tag {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 6px; border-radius: 4px;
+    font-size: 0.66rem; font-weight: 700; line-height: 1.4;
+}
+.start-w { background: rgba(21,128,61,0.10);  color: var(--win);    border: 1px solid rgba(21,128,61,0.25); }
+.start-l { background: rgba(185,28,28,0.08);  color: var(--loss);   border: 1px solid rgba(185,28,28,0.22); }
+.start-n { background: rgba(55,65,81,0.07);   color: var(--silver); border: 1px solid rgba(55,65,81,0.16); }
+
+.batting-row {
+    display: flex; gap: 10px; font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; flex-wrap: wrap;
+}
+.fg-home .batting-row { justify-content: flex-end; }
+.batting-row b { color: var(--silver); }
+
+.bullpen-row {
+    display: flex; gap: 7px; font-size: 0.67rem; color: var(--text-muted);
+    margin-top: 5px; padding-top: 4px; border-top: 1px dashed var(--border);
+    flex-wrap: wrap; align-items: center;
+}
+.col-home .bullpen-row { justify-content: flex-end; }
+.bullpen-row b { color: var(--silver); }
+.bullpen-row .bp-label { font-weight: 700; color: var(--text-muted); font-size: 0.62rem; letter-spacing: 0.3px; }
+.bp-warn { color: #f59e0b; }
+.bp-good { color: var(--win); }
+.bp-out  { color: var(--loss); }
+
+@media (max-width: 700px) {
+    .last-starts { max-width: 160px; }
+    .col-home .last-starts { margin-left: auto; }
+    .pitcher-section { font-size: 0.78rem; }
+    .pitcher-col { padding: 8px 8px; }
+    .pc-stats { gap: 5px; font-size: 0.68rem; }
+}
+
+.kelly-verdict {
+    display: inline-block; font-size: 0.7rem; font-weight: 800;
+    min-width: 1.5em; padding: 2px 4px; border-radius: 4px;
+    text-align: center; white-space: nowrap; letter-spacing: 0;
+}
+.kelly-strong { background: rgba(21,128,61,0.15);  color: #15803d; border: 1px solid rgba(21,128,61,0.30); }
+.kelly-value  { background: rgba(34,197,94,0.10);  color: #16a34a; border: 1px solid rgba(34,197,94,0.22); }
+.kelly-lean   { background: rgba(245,158,11,0.15); color: #b45309; border: 1px solid rgba(245,158,11,0.25); }
+.ts-high   { background: rgba(21,128,61,0.15);  color: #15803d; border: 1px solid rgba(21,128,61,0.30); }
+.ts-mid    { background: rgba(234,88,12,0.12);  color: #ea580c; border: 1px solid rgba(234,88,12,0.25); }
+.ts-low    { background: rgba(245,158,11,0.12); color: #b45309; border: 1px solid rgba(245,158,11,0.22); }
+.ts-skip   { background: rgba(0,0,0,0.05);      color: var(--text-muted); border: 1px solid var(--border); }
+.wind-mod    { color: #f59e0b; font-weight: 600; }
+.wind-strong { color: #ef4444; font-weight: 700; }
+@media (max-width: 600px) {
+    .rec-col-hide { display: none; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Live MLB Bets ────────────────────────────────────── -->
+{% include "_open_bets_section.html" with context %}
+
+{% if best_bets %}
+<span id="top3-bankroll-val" data-bankroll="{{ bankroll }}" data-kelly-cap="{{ kelly_cap }}" style="display:none;">{{ bankroll }}</span>
+
+<!-- ── Pick of the Day ──────────────────────────────────── -->
+<div class="card" style="margin-bottom:14px;{% if pick_of_day %}border:1px solid var(--orange);{% endif %}">
+  <div class="section-header" style="margin-bottom:10px;">
+    <h2>🎯 Pick of the Day</h2>
+    <span class="small">ROI-optimized for a single strong bet · prob ≥ 55% and calibration bucket clear of known danger zones</span>
+  </div>
+  {% if pick_of_day %}
+  {% set pod = pick_of_day %}
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <div style="font-size:1.1rem;font-weight:800;">
+        {% if pod.pick_abbr == pod.away_abbr %}
+          <span style="color:var(--orange);">{{ pod.away_abbr }}</span> @ {{ pod.home_abbr }}
+        {% else %}
+          {{ pod.away_abbr }} @ <span style="color:var(--orange);">{{ pod.home_abbr }}</span>
+        {% endif %}
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">
+        {{ pod.pick_name }} ML {{ '+' if pod.amer_odds > 0 }}{{ pod.amer_odds }}
+        &nbsp;·&nbsp; Model {{ pod.adj_prob }}% &nbsp;·&nbsp;
+        <span style="color:{{ 'var(--win)' if pod.adj_edge > 0 else 'var(--loss)' }};font-weight:600;">{{ '+' if pod.adj_edge > 0 }}{{ pod.adj_edge }}% edge</span>
+        &nbsp;·&nbsp; EV {{ '+' if pod.ev_pct > 0 }}{{ pod.ev_pct }}%
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <span class="kelly-verdict ts-high" style="font-size:1.3rem;padding:6px 14px;" title="ROI-optimized score">{{ pod.pod_score }}</span>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">POD Score</div>
+    </div>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:0.85rem;margin:0;">No pick clears the strong-bet floor tonight — every Preview game is either below 55% model probability or sitting in a historically weak calibration bucket. Sitting this one out is the right call.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="section-header" style="margin-bottom:10px;">
+    <h2>Today's Recommendations</h2>
+    <span class="small">sorted by Unified Score · rank recorded at each game's start time · all games shown</span>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px;">
+    <button onclick="startRefresh('stats')"
+            style="font-size:0.75rem;padding:5px 11px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">
+      ↻ Refresh Stats
+    </button>
+    <button onclick="startRefresh('odds')"
+            style="font-size:0.75rem;padding:5px 11px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">
+      ↻ Refresh Odds
+    </button>
+    <button id="bet-top3-btn" onclick="openTop3Modal()"
+            style="font-size:0.75rem;padding:5px 13px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;cursor:pointer;font-weight:700;margin-left:4px;">
+      Bet Top N
+    </button>
+  </div>
+
+  <!-- ── Bet Top 3 Modal ──────────────────────────────────── -->
+  <div id="top3Modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.60);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:320px;max-width:500px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <div>
+          <div id="top3-modal-title" style="font-size:0.95rem;font-weight:700;">Bet Top 3</div>
+          <div id="top3-modal-subtitle" style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">Sequential Kelly · best pick first</div>
+        </div>
+        <button onclick="closeTop3Modal()" style="background:none;border:none;color:var(--text-muted);font-size:1.3rem;cursor:pointer;padding:2px 6px;line-height:1;">×</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <select id="bet-n-select" onchange="_recalcTop3()"
+                style="flex:1;font-size:0.78rem;padding:6px 8px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">
+          <option value="1">Top 1</option>
+          <option value="2">Top 2</option>
+          <option value="3" selected>Top 3</option>
+          <option value="4">Top 4</option>
+          <option value="5">Top 5</option>
+        </select>
+      </div>
+      <div id="top3-bets" style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid var(--border);margin-bottom:16px;">
+        <div style="font-size:0.75rem;color:var(--text-muted);">
+          Total staked: <strong id="top3-total" style="color:var(--text);">$0.00</strong>
+          &nbsp;·&nbsp; Remaining: <strong id="top3-remaining" style="color:var(--text);">—</strong>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button id="top3-paper-btn" onclick="placeTop3(true)"
+                style="font-size:0.78rem;padding:7px 14px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;font-weight:600;">
+          Paper Only
+        </button>
+        <button id="top3-place-btn" onclick="placeTop3(false)"
+                style="font-size:0.82rem;padding:8px 18px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;cursor:pointer;font-weight:700;">
+          Place All 3 Bets
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Refresh progress modal -->
+  <div id="refreshModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:320px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h3 id="refreshModalTitle" style="margin:0;font-size:0.95rem;font-weight:700;">Refreshing…</h3>
+        <button onclick="closeRefreshModal()" style="background:none;border:none;color:var(--text-muted);font-size:1.2rem;cursor:pointer;padding:2px 6px;line-height:1;">×</button>
+      </div>
+      <div id="refreshSteps" style="display:flex;flex-direction:column;gap:8px;min-height:40px;"></div>
+      <div id="refreshFooter" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:14px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">
+        <button onclick="closeRefreshModal()" style="font-size:0.75rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;">
+          Close
+        </button>
+        <button onclick="window.location.reload()" style="font-size:0.75rem;padding:5px 14px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;font-weight:700;cursor:pointer;">
+          Reload Page
+        </button>
+      </div>
+    </div>
+  </div>
+  <table id="rec-table" style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+    <thead>
+      <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
+        <th style="padding:5px 8px;text-align:left;">#</th>
+        <th style="padding:5px 8px;text-align:left;">Matchup</th>
+        <th style="padding:5px 8px;text-align:left;">Status</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Mkt</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
+        <th class="rec-sort-th" data-sort-key="unf" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Unified Score">US<span class="rec-sort-arrow"></span></th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Zone</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">EV%</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Move</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);" title="Movement profile — fixed 10% weight in Unified Score & Pick of Day Score (per-profile value fitted from resolved outcomes)">MV Prof</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for b in best_bets %}
+    {% set ts = b.trust_score %}
+    {% set td = b.ts_detail if b.ts_detail else {} %}
+    {% set unf = b.unified_score %}
+    {% set unf_cls = 'ts-high' if unf >= 55 else ('ts-mid' if unf >= 42 else ('ts-low' if unf >= 28 else 'ts-skip')) %}
+    <tr data-game="{{ b.away_abbr }}@{{ b.home_abbr }}" data-ts="{{ ts }}" data-unf="{{ unf }}"
+        data-amer-odds="{{ b.amer_odds }}"
+        data-prob="{{ (b.adj_prob / 100) | round(4) }}"
+        data-pick-name="{{ b.pick_abbr }} ML"
+        data-side="{{ b.bet_side }}"
+        data-home-name="{{ b.home_name }}"
+        data-away-name="{{ b.away_name }}"
+        data-utc="{{ b.game_time_utc }}"
+        data-edge="{{ b.adj_edge }}"
+        data-status="{{ b.status }}"
+        data-sp-confirmed="{{ '1' if b.sp_confirmed else '0' }}"
+        style="border-bottom:1px solid var(--border);{% if b.status in ('Live', 'Final') %}opacity:0.60;{% elif unf < 30 %}opacity:0.55;{% endif %}{% if not b.sp_confirmed %}opacity:0.50;border-left:3px solid #f59e0b;background:rgba(245,158,11,0.05);{% elif b.adj_edge <= 0 %}border-left:3px solid var(--loss);background:rgba(239,68,68,0.05);{% endif %}"
+        title="{{ 'Both starting pitchers not yet announced — sorted below confirmed games until they are' if not b.sp_confirmed else ('Negative model edge — the market is pricing this pick more heavily than the model\'s own probability supports (paying above model fair value), not necessarily favoring the other side' if b.adj_edge <= 0 else '') }}">
+      <td class="rec-num" style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;">{{ loop.index }}</td>
+      <td style="padding:6px 8px;font-weight:600;">
+        {% if b.pick_abbr == b.away_abbr %}
+          <span style="font-weight:800;color:var(--orange);">{{ b.away_abbr }}</span> @ {{ b.home_abbr }}
+        {% else %}
+          {{ b.away_abbr }} @ <span style="font-weight:800;color:var(--orange);">{{ b.home_abbr }}</span>
+        {% endif %}
+        {% if b.has_open_bet %}<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#f59e0b;margin-left:5px;vertical-align:middle;" title="Open bet on this game"></span>{% endif %}
+        {% if not b.sp_confirmed %}<span style="font-size:0.62rem;font-weight:700;color:#f59e0b;margin-left:6px;vertical-align:middle;" title="Both starting pitchers not yet announced">SP TBD</span>{% endif %}
+      </td>
+      <td style="padding:6px 8px;white-space:nowrap;">
+        {% if b.status == 'Live' %}
+          <span style="color:#4ade80;font-weight:700;font-size:0.72rem;">● Live</span>
+        {% elif b.status == 'Final' %}
+          <span style="color:var(--text-muted);font-size:0.72rem;">Final{% if b.outcome %} <span style="font-weight:700;color:{% if b.outcome == 'W' %}var(--win){% else %}var(--loss){% endif %};">{{ b.outcome }}</span>{% endif %}</span>
+        {% elif b.game_time_utc %}
+          <span class="game-time" data-utc="{{ b.game_time_utc }}" style="font-size:0.72rem;color:var(--text-muted);">—</span>
+        {% endif %}
+      </td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if b.amer_odds > 0 }}{{ b.amer_odds }}</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ b.mkt_implied }}%</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if b.adj_edge > 0 else 'var(--loss)' }};">{{ '+' if b.adj_edge > 0 }}{{ b.adj_edge }}%</td>
+      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ unf_cls }}" data-ts-detail='{{ b.ts_detail | tojson if b.ts_detail else "" }}' style="min-width:28px;cursor:default;" title="Unified Score (hover for factor breakdown)">{{ unf }}</span></td>
+      {# TS component columns — color-coded by component value (0–1 scale) #}
+      {% set ev = td.e or 0 %}
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.70rem;color:{{ 'var(--win)' if ev >= 0.65 else ('var(--text)' if ev >= 0.45 else ('var(--orange)' if ev >= 0.30 else 'var(--loss)')) }};">{{ td.el or '—' }}</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.72rem;font-weight:600;color:{{ 'var(--win)' if b.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%</td>
+      {% set lm = b.line_move_pct %}
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.70rem;{% if lm is not none %}font-weight:600;color:{{ 'var(--win)' if lm > 0.5 else ('var(--loss)' if lm < -0.5 else 'var(--text-muted)') }};{% else %}color:var(--text-muted);{% endif %}">
+        {% if lm is not none %}{{ '+' if lm > 0 }}{{ lm }}%{% else %}—{% endif %}
+      </td>
+      {% set mp = b.movement_profile or '' %}
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.68rem;font-weight:{{ '600' if mp.endswith('_for') or mp.endswith('_against') else '400' }};color:{{ 'var(--win)' if mp.endswith('_for') else ('var(--loss)' if mp.endswith('_against') else 'var(--text-muted)') }};" title="{{ b.movement_pct ~ '% total pre-game move' if b.movement_pct is not none else 'Not enough pre-game snapshots yet' }}">
+        {% if b.movement_profile %}{{ b.movement_profile | replace('_for', ' (for)') | replace('_against', ' (against)') | replace('_', ' ') | title }}{% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not schedule %}
+<div class="card" style="padding:24px; text-align:center;">
+    <p style="color:var(--text-muted);">Unable to load MLB schedule — check connection and refresh.</p>
+</div>
+{% else %}
+
+{% for day in schedule %}
+
+<div class="day-header">
+    <h2>{{ day.date_display }}</h2>
+    <span class="game-count">{{ day.games | length }} game{{ 's' if day.games | length != 1 }}</span>
+    {% if day.refreshed_at %}
+    <span class="refresh-info">Updated {{ day.refreshed_at }} · <a href="{{ url_for('mlb_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+    {% endif %}
+</div>
+
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set ns = namespace(final_hdr=False) %}
+<div class="games-grid">
+{% for game in _live + _upcoming + _final %}
+{% if game.status == 'Final' and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
+{% endif %}
+
+{# build bet URLs once as variables for cleanliness #}
+{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_away_prob if game.model.adj_away_prob else game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
+{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
+
+<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
+
+    <!-- ── Header bar ── -->
+    <div class="game-header">
+        {% if game.status == 'Live' %}
+            <span class="status-live">● Live{% if game.inning_info %} · {{ game.inning_info }}{% endif %}</span>
+        {% elif game.status == 'Final' %}
+            <span class="status-final">Final</span>
+        {% else %}
+            <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
+        {% endif %}
+        {% if game.venue %}<span class="game-venue">{{ game.venue }}</span>{% endif %}
+        {% if game.weather %}
+        <span class="weather-badge">{{ game.weather.temp }}°F · {{ game.weather.conditions }}
+        {%- if game.weather.wind_mph %} ·
+          <span class="wind-info{% if game.weather.wind_mph >= 20 %} wind-strong{% elif game.weather.wind_mph >= 12 %} wind-mod{% endif %}">{{ game.weather.wind_dir }} {{ game.weather.wind_mph }}mph</span>
+        {%- endif %}</span>
+        {% endif %}
+        <div class="game-header-right">
+            {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
+        </div>
+    </div>
+
+    <!-- ── Open bet indicator ── -->
+    {% if game.open_bets %}
+    <div class="open-bet-strip">
+        {% for bet in game.open_bets %}
+        <span class="obi-badge">
+            📋 <strong>{{ bet.name }}</strong>
+            · ${{ '%.2f' % bet.stake }} at risk
+            · return ${{ '%.2f' % (bet.stake * bet.odds) }}
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ── Scoreboard ── -->
+    <div class="scoreboard">
+
+        <!-- Away -->
+        <div class="sb-team sb-away">
+            <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            <div class="sb-team-info">
+                <div class="sb-name">{{ game.away.name }}</div>
+                <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
+                <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }}</div>
+                {% if game.status != 'Final' %}
+                <a href="{{ bet_away_url }}" class="btn-bet-team sb-bet-mobile">{{ game.away.abbr }}</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Center: score + desktop bet buttons -->
+        <div class="sb-center">
+            {% if game.status in ('Live', 'Final') %}
+            <div class="sb-score">
+                <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
+                <span class="sb-score-sep">–</span>
+                <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
+            </div>
+            {% else %}
+            <div class="sb-vs">vs</div>
+            {% endif %}
+            {% if game.status != 'Final' %}
+            <div class="bet-pair desktop-bet">
+                <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbr }}</a>
+                <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbr }}</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Home -->
+        <div class="sb-team sb-home">
+            <div class="sb-team-info">
+                <div class="sb-name">{{ game.home.name }}</div>
+                <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
+                <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }}</div>
+                {% if game.status != 'Final' %}
+                <a href="{{ bet_home_url }}" class="btn-bet-team sb-bet-mobile">{{ game.home.abbr }}</a>
+                {% endif %}
+            </div>
+            <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+        </div>
+
+    </div><!-- /.scoreboard -->
+
+    <!-- ── Linescore ── -->
+    {% if game.linescore %}
+    <div class="linescore-wrap">
+        <table class="linescore">
+            <thead>
+                <tr>
+                    <th class="ls-team"></th>
+                    {% for inn in game.linescore.innings %}<th>{{ inn.num }}</th>{% endfor %}
+                    <th class="ls-total">R</th>
+                    <th class="ls-total">H</th>
+                    <th class="ls-total">E</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="ls-team">{{ game.away.abbr }}</td>
+                    {% for inn in game.linescore.innings %}
+                    <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.away_runs if inn.away_runs != '' else '–' }}</td>
+                    {% endfor %}
+                    <td class="ls-total">{{ game.linescore.totals.away.r }}</td>
+                    <td class="ls-total">{{ game.linescore.totals.away.h }}</td>
+                    <td class="ls-total">{{ game.linescore.totals.away.e }}</td>
+                </tr>
+                <tr>
+                    <td class="ls-team">{{ game.home.abbr }}</td>
+                    {% for inn in game.linescore.innings %}
+                    <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.home_runs if inn.home_runs != '' else '–' }}</td>
+                    {% endfor %}
+                    <td class="ls-total">{{ game.linescore.totals.home.r }}</td>
+                    <td class="ls-total">{{ game.linescore.totals.home.h }}</td>
+                    <td class="ls-total">{{ game.linescore.totals.home.e }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if game.status in ('Final', 'Live') %}<details class="final-stats-toggle" data-game-pk="{{ game.game_pk }}"><summary>Stats &amp; analysis</summary>
+    <div class="boxscore-panel" data-boxscore-for="{{ game.game_pk }}"></div>
+    {% endif %}
+    <!-- ── Pitchers ── -->
+    <div class="pitcher-section">
+        {% for team, col_class in [(game.away, 'col-away'), (game.home, 'col-home')] %}
+        <div class="pitcher-col {{ col_class }}">
+            {% if team.pitcher %}
+            <div class="pc-name">
+                {{ team.pitcher.name }}
+                {% if team.pitcher.throws %}<span style="font-size:0.65rem; color:var(--text-muted); font-weight:400; margin-left:4px;">{{ team.pitcher.throws }}HP</span>{% endif %}
+                {% if team.pitcher.injury %}<span class="injury-tag">{{ team.pitcher.injury }}</span>{% endif %}
+            </div>
+            <div class="pc-stats">
+                <span><b class="pc-stat-hi">{{ team.pitcher.x_era if team.pitcher.x_era else team.pitcher.era }}</b> {% if team.pitcher.x_era %}xERA{% else %}ERA{% endif %}</span>
+                <span><b class="pc-stat-hi">{{ team.pitcher.whip }}</b> WHIP</span>
+                <span><b class="pc-stat-hi">{{ team.pitcher.record }}</b></span>
+                {% if team.pitcher.bf and team.pitcher.bf > 0 %}
+                <span><b class="pc-stat-hi">{{ ((team.pitcher.k / team.pitcher.bf * 100) | round(1)) if team.pitcher.bf else '—' }}%</b> K%</span>
+                {% endif %}
+            </div>
+            {% if team.pitcher.last_starts %}
+            <div class="last-starts">
+                {% for s in team.pitcher.last_starts %}
+                <span class="start-tag {{ 'start-w' if s.result == 'W' else ('start-l' if s.result == 'L' else 'start-n') }}">
+                    {{ s.result }} {{ s.ip }}IP {{ s.er }}ER
+                </span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="pc-name" style="color:var(--text-muted);">SP TBD</div>
+            {% endif %}
+            {% if team.bullpen %}
+            <div class="bullpen-row">
+                <span class="bp-label">PEN</span>
+                {% if team.bullpen.era_last_14 is not none %}
+                <span class="{{ 'bp-good' if team.bullpen.era_last_14 < 3.5 else ('bp-out' if team.bullpen.era_last_14 > 4.5 else '') }}"><b>{{ '%.2f' % team.bullpen.era_last_14 }}</b> ERA/14d</span>
+                {% endif %}
+                <span class="{{ 'bp-warn' if team.bullpen.ip_last_3 > 6 else '' }}"><b>{{ team.bullpen.ip_last_3 }}</b> IP/3d</span>
+                {% if team.bullpen.closer_name %}
+                <span class="{{ 'bp-warn' if team.bullpen.closer_yesterday else 'bp-good' }}">{{ team.bullpen.closer_name }}: {{ 'yday' if team.bullpen.closer_yesterday else 'fresh' }}</span>
+                {% endif %}
+                {% if team.bullpen.top_unavail %}
+                <span class="bp-out">⊘ {{ team.bullpen.top_unavail | join(', ') }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ── Recent form + batting stats ── -->
+    <div class="form-row-section">
+        {% for team, fg_class in [(game.away, 'fg-away'), (game.home, 'fg-home')] %}
+        <div class="form-group {{ fg_class }}">
+            <span class="form-label">L10</span>
+            <div class="form-dots">
+                {% for r in team.form %}<span class="dot {{ 'dot-w' if r == 'W' else 'dot-l' }}">{{ r }}</span>{% endfor %}
+            </div>
+            <div class="batting-row">
+                <span>R/G <b>{{ team.runs_pg }}</b></span>
+                <span>OPS <b>{{ team.ops }}</b></span>
+                {% if team.x_woba_split %}
+                <span>vs {{ team.opp_throws }}HP xwOBA <b>{{ team.x_woba_split }}</b></span>
+                {% elif team.x_woba %}
+                <span>xwOBA <b>{{ team.x_woba }}</b></span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ── FanDuel + Model analysis ── -->
+    {% if game.odds or game.model %}
+    <div class="analysis-section">
+
+        {% if game.odds %}
+        <div class="analysis-row">
+            <span class="analysis-label">FanDuel</span>
+            <div class="analysis-data">
+                <span class="odds-team">
+                    <span>{{ game.away.abbr }}</span>
+                    <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
+                    {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
+                </span>
+                <span class="odds-sep">·</span>
+                <span class="odds-team">
+                    <span>{{ game.home.abbr }}</span>
+                    <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
+                    {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
+                </span>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if game.model %}
+        <div class="analysis-row">
+            <span class="analysis-label">Model</span>
+            <div class="analysis-data">
+                <span class="model-team {{ 'model-pick' if game.model.away_prob > game.model.home_prob }}">{{ game.away.abbr }} {{ (game.model.away_prob * 100) | round(1) }}%</span>
+                <span class="odds-sep">·</span>
+                <span class="model-team {{ 'model-pick' if game.model.home_prob > game.model.away_prob }}">{{ game.home.abbr }} {{ (game.model.home_prob * 100) | round(1) }}%</span>
+                {% if game.odds %}
+                {% if game.model.away_prob >= game.model.home_prob %}{% set edge = ((game.model.away_prob - game.odds.away_implied) * 100) | round(1) %}{% set edge_team = game.away.abbr %}{% else %}{% set edge = ((game.model.home_prob - game.odds.home_implied) * 100) | round(1) %}{% set edge_team = game.home.abbr %}{% endif %}
+                <span class="model-edge {{ 'edge-pos' if edge > 1 else ('edge-neg' if edge < -1 else 'edge-neutral') }}">{{ edge_team }} {{ '+' if edge > 0 }}{{ edge }}%</span>
+                {# Kelly grade: rendered from app.py's own k_label/k_cls (consensus-
+                   adjusted probability, same value the backend uses everywhere else)
+                   rather than recomputed here from the raw model probability — a
+                   second copy of this formula previously lived in this template and
+                   could disagree with the "real" one whenever the consensus-bucket
+                   calibration adjustment moved the probability meaningfully. #}
+                {% if game.rec %}
+                <span class="kelly-verdict {{ game.rec.k_cls }}" title="Model/market gap (consensus-adjusted): {{ game.rec.adj_edge | abs | round(1) }}%">{{ game.rec.k_label }}</span>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        <details class="model-factors">
+            <summary>factors <span class="factor-perspective">+% = {{ game.model.edge_abbr }} edge</span></summary>
+            {% for group_key, group_name in game.model.group_order %}
+            {% set rows = game.model.factor_groups_edge[group_key] %}
+            {% if rows %}
+            <div class="factor-group-hdr">{{ group_name }}</div>
+            <div class="factor-list">
+            {% for label, prob_pct in rows %}
+            <div class="factor-row">
+                <span class="factor-name">{{ label }}</span>
+                <span class="factor-bar-wrap"><span class="factor-bar {{ 'factor-pos' if prob_pct > 0 else 'factor-neg' }}" style="width:{{ [prob_pct | abs * 16, 80] | min }}px"></span></span>
+                <span class="factor-val {{ 'factor-pos' if prob_pct > 0 else 'factor-neg' }}">{{ '+' if prob_pct > 0 }}{{ prob_pct }}%</span>
+            </div>
+            {% endfor %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </details>
+        {% endif %}
+
+    </div>
+    {% endif %}
+    {% if game.status in ('Final', 'Live') %}</details>{% endif %}
+
+</div><!-- /.game-card -->
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endfor %}
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% include "_open_bets_scripts.html" with context %}
+<script>
+/* ── Click-to-sort by TS / US ─────────────────────────────── */
+(function() {
+    var table = document.getElementById('rec-table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths   = table.querySelectorAll('.rec-sort-th');
+    if (!tbody || !ths.length) return;
+
+    var sortKey = 'unf', sortDir = -1;  // default: Unified Score descending (matches server order)
+
+    function applySort() {
+        var rows = Array.from(tbody.querySelectorAll('tr[data-game]'));
+        rows.sort(function(a, b) {
+            var av = parseFloat(a.dataset[sortKey]) || 0;
+            var bv = parseFloat(b.dataset[sortKey]) || 0;
+            return (av - bv) * sortDir;
+        });
+        rows.forEach(function(row, i) {
+            tbody.appendChild(row);
+            var numCell = row.querySelector('.rec-num');
+            if (numCell) numCell.textContent = i + 1;
+        });
+        ths.forEach(function(th) {
+            var arrow = th.querySelector('.rec-sort-arrow');
+            if (th.dataset.sortKey === sortKey) {
+                th.style.color = 'var(--text)';
+                if (arrow) arrow.textContent = sortDir > 0 ? ' ▲' : ' ▼';
+            } else {
+                th.style.color = '';
+                if (arrow) arrow.textContent = '';
+            }
+        });
+    }
+
+    ths.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var key = th.dataset.sortKey;
+            if (key === sortKey) {
+                sortDir *= -1;
+            } else {
+                sortKey = key;
+                sortDir = -1;
+            }
+            applySort();
+        });
+    });
+
+    applySort();
+}());
+
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+
+/* ── Live box score (lazy-loaded on first expand of "Stats & analysis") ── */
+function _boxscoreRowsHtml(players, cols) {
+    if (!players.length) return '<div style="font-size:0.72rem;color:var(--text-muted);padding:4px 0;">No live stats yet</div>';
+    var head = '<tr>' + cols.map(function(c) { return '<th style="text-align:' + (c.key === 'name' ? 'left' : 'center') + ';font-size:0.68rem;color:var(--text-muted);font-weight:600;padding:2px 6px;">' + c.label + '</th>'; }).join('') + '</tr>';
+    var rows = players.map(function(p) {
+        return '<tr>' + cols.map(function(c) {
+            return '<td style="text-align:' + (c.key === 'name' ? 'left' : 'center') + ';font-size:0.75rem;padding:2px 6px;white-space:nowrap;">' + (p[c.key] !== undefined && p[c.key] !== null ? p[c.key] : '–') + '</td>';
+        }).join('') + '</tr>';
+    }).join('');
+    return '<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">' + head + rows + '</table>';
+}
+
+function _boxscoreSideHtml(side) {
+    if (!side) return '';
+    var battingCols  = [{key:'name', label:'Batter'}, {key:'pos', label:'Pos'}, {key:'ab', label:'AB'}, {key:'r', label:'R'}, {key:'h', label:'H'}, {key:'rbi', label:'RBI'}, {key:'bb', label:'BB'}, {key:'so', label:'K'}];
+    var pitchingCols = [{key:'name', label:'Pitcher'}, {key:'ip', label:'IP'}, {key:'h', label:'H'}, {key:'r', label:'R'}, {key:'er', label:'ER'}, {key:'bb', label:'BB'}, {key:'so', label:'K'}, {key:'pitches', label:'P'}];
+    return '<div style="font-size:0.78rem;font-weight:700;margin:6px 0 2px;">' + side.abbr + '</div>' +
+        _boxscoreRowsHtml(side.pitchers || [], pitchingCols) +
+        _boxscoreRowsHtml(side.batters  || [], battingCols);
+}
+
+function loadBoxscore(detailsEl) {
+    if (!detailsEl.open || detailsEl.dataset.boxscoreLoaded) return;
+    var gamePk = detailsEl.dataset.gamePk;
+    var panel = detailsEl.querySelector('.boxscore-panel[data-boxscore-for="' + gamePk + '"]');
+    if (!gamePk || !panel) return;
+    detailsEl.dataset.boxscoreLoaded = '1';
+    panel.innerHTML = '<div style="font-size:0.72rem;color:var(--text-muted);padding:6px 0;">Loading live stats…</div>';
+    fetch('/api/mlb/game/' + gamePk + '/boxscore')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+            if (!data) { panel.innerHTML = ''; return; }
+            panel.innerHTML = _boxscoreSideHtml(data.away) + _boxscoreSideHtml(data.home);
+        })
+        .catch(function() { panel.innerHTML = ''; });
+}
+
+document.querySelectorAll('.final-stats-toggle[data-game-pk]').forEach(function(el) {
+    el.addEventListener('toggle', function() { loadBoxscore(el); });
+});
+
+/* ── Refresh modal ───────────────────────────────────────── */
+var _refreshSource = null;
+
+function startRefresh(type) {
+    var modal  = document.getElementById('refreshModal');
+    var title  = document.getElementById('refreshModalTitle');
+    var steps  = document.getElementById('refreshSteps');
+    var footer = document.getElementById('refreshFooter');
+
+    title.textContent   = type === 'stats' ? 'Refreshing Stats…' : 'Refreshing Odds…';
+    steps.innerHTML     = '';
+    footer.style.display = 'none';
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+
+    if (_refreshSource) { _refreshSource.close(); _refreshSource = null; }
+    _refreshSource = new EventSource(
+        type === 'stats' ? '/api/refresh-stats/stream' : '/api/refresh-odds/stream'
+    );
+
+    var _currentRow = null;
+
+    _refreshSource.onmessage = function(e) {
+        var data;
+        try { data = JSON.parse(e.data); } catch(ex) { return; }
+
+        if (data.status === 'complete') {
+            _refreshSource.close();
+            _refreshSource = null;
+            title.textContent    = type === 'stats' ? '✓ Stats Refreshed' : '✓ Odds Refreshed';
+            footer.style.display = 'flex';
+            return;
+        }
+        if (data.status === 'error') {
+            _refreshSource.close();
+            _refreshSource = null;
+            var row = _makeRow(data.step, 'error');
+            steps.appendChild(row);
+            footer.style.display = 'flex';
+            return;
+        }
+        if (data.status === 'running') {
+            _currentRow = _makeRow(data.step, 'running');
+            steps.appendChild(_currentRow);
+            steps.scrollTop = steps.scrollHeight;
+        } else if (data.status === 'done' && _currentRow) {
+            var doneIcon = _currentRow.querySelector('.rfi');
+            doneIcon.style.animation = 'none';
+            doneIcon.textContent = '✓';
+            doneIcon.style.color = '#4ade80';
+            _currentRow.querySelector('.rft').style.opacity = '1';
+            _currentRow = null;
+        }
+    };
+
+    _refreshSource.onerror = function() {
+        if (_refreshSource) { _refreshSource.close(); _refreshSource = null; }
+        var row = _makeRow('Connection lost — check logs', 'error');
+        steps.appendChild(row);
+        footer.style.display = 'flex';
+    };
+}
+
+function _makeRow(text, status) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:0.8rem;';
+
+    var icon = document.createElement('span');
+    icon.className = 'rfi';
+    icon.style.cssText = 'width:16px;text-align:center;flex-shrink:0;font-size:0.85rem;';
+    if (status === 'running') {
+        icon.textContent = '⟳';
+        icon.style.color  = 'var(--text-muted)';
+        icon.style.display = 'inline-block';
+        icon.style.animation = 'rfi-spin 1s linear infinite';
+    } else if (status === 'error') {
+        icon.textContent = '✗';
+        icon.style.color  = '#f87171';
+    }
+
+    var label = document.createElement('span');
+    label.className = 'rft';
+    label.textContent = text;
+    label.style.opacity = status === 'running' ? '0.65' : '1';
+    label.style.color   = status === 'error' ? '#f87171' : 'var(--text)';
+
+    row.appendChild(icon);
+    row.appendChild(label);
+    return row;
+}
+
+function closeRefreshModal() {
+    if (_refreshSource) { _refreshSource.close(); _refreshSource = null; }
+    document.getElementById('refreshModal').style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeRefreshModal();
+});
+
+/* ── Trust Score Radar Chart ──────────────────────────── */
+(function () {
+  var _tt = null;
+
+  function _rad(deg) { return deg * Math.PI / 180; }
+
+  function _axisPoint(cx, cy, r, i, n) {
+    var a = _rad(-90 + i * (360 / (n || 4)));
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  }
+
+  function _esc(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function _svgRadar(d) {
+    var W = 180, H = 175, cx = 90, cy = 92, maxR = 54, lblR = 54 + 19;
+    /* 4 axes: Consensus (top) · Edge (right) · Calib (bottom-right) · Fav/Dog (bottom-left) */
+    var N = 4;
+    var vals   = [d.c, d.e, d.k, d.f];
+    var labels = [
+      {t: 'Consensus', s: d.cl},
+      {t: 'Edge',      s: d.el},
+      {t: 'Calib',     s: d.kl},
+      {t: 'Fav/Dog',   s: d.fl},
+    ];
+
+    var svg = '<svg width="' + W + '" height="' + H + '" overflow="visible" xmlns="http://www.w3.org/2000/svg">';
+
+    /* background rings */
+    [0.25, 0.5, 0.75, 1.0].forEach(function (ring) {
+      var pts = Array.from({length: N}, function(_, i) {
+        var p = _axisPoint(cx, cy, ring * maxR, i, N);
+        return p[0].toFixed(1) + ',' + p[1].toFixed(1);
+      }).join(' ');
+      svg += '<polygon points="' + pts + '" fill="none" stroke="#3a3a4a" stroke-width="' + (ring === 1 ? '1' : '0.5') + '"/>';
+    });
+
+    /* axis spokes */
+    for (var i = 0; i < N; i++) {
+      var ep = _axisPoint(cx, cy, maxR, i, N);
+      svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ep[0].toFixed(1) + '" y2="' + ep[1].toFixed(1) + '" stroke="#3a3a4a" stroke-width="0.5"/>';
+    }
+
+    /* data polygon */
+    var dpts = vals.map(function (v, i) {
+      return _axisPoint(cx, cy, Math.max(0, Math.min(1, v || 0)) * maxR, i, N);
+    });
+    svg += '<polygon points="' + dpts.map(function (p) { return p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ') + '" fill="#f97316" fill-opacity="0.22" stroke="#f97316" stroke-width="1.5"/>';
+
+    /* data dots */
+    dpts.forEach(function (p) {
+      svg += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.5" fill="#f97316"/>';
+    });
+
+    /* axis labels */
+    labels.forEach(function (lbl, i) {
+      var lp = _axisPoint(cx, cy, lblR, i, N);
+      var anchor = Math.abs(lp[0] - cx) < 6 ? 'middle' : (lp[0] < cx ? 'end' : 'start');
+      var x = lp[0].toFixed(1), y = lp[1].toFixed(1);
+      svg += '<text x="' + x + '" y="' + y + '" dy="-1" text-anchor="' + anchor + '" fill="#888" font-size="7.5" font-family="system-ui,sans-serif">' + _esc(lbl.t) + '</text>';
+      svg += '<text x="' + x + '" y="' + y + '" dy="8" text-anchor="' + anchor + '" fill="#ccc" font-size="7" font-family="system-ui,sans-serif">' + _esc(lbl.s) + '</text>';
+    });
+
+    svg += '</svg>';
+    return svg;
+  }
+
+  function _getOrCreateTooltip() {
+    if (!_tt) {
+      _tt = document.createElement('div');
+      _tt.style.cssText = [
+        'position:fixed', 'z-index:9999', 'pointer-events:none',
+        'background:#12121e', 'border:1px solid #3a3a4a', 'border-radius:8px',
+        'padding:10px 12px 8px', 'box-shadow:0 6px 24px rgba(0,0,0,0.65)',
+        'display:none',
+      ].join(';');
+      document.body.appendChild(_tt);
+    }
+    return _tt;
+  }
+
+  function _positionTooltip(el) {
+    var tt = _tt;
+    if (!tt) return;
+    var r   = el.getBoundingClientRect();
+    var ttW = tt.offsetWidth  || 200;
+    var ttH = tt.offsetHeight || 210;
+    var x = r.left + r.width / 2 - ttW / 2;
+    var y = r.top - ttH - 8;
+    if (y < 4) y = r.bottom + 8;
+    if (x < 4) x = 4;
+    if (x + ttW > window.innerWidth - 4) x = window.innerWidth - ttW - 4;
+    tt.style.left = x + 'px';
+    tt.style.top  = y + 'px';
+  }
+
+  var _hoverEl = null;
+
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target;
+    while (el && el !== document.body) {
+      if (el.hasAttribute && el.hasAttribute('data-ts-detail')) break;
+      el = el.parentElement;
+    }
+    if (!el || !el.hasAttribute('data-ts-detail')) return;
+    var raw = el.getAttribute('data-ts-detail');
+    if (!raw) return;
+    try {
+      var d = JSON.parse(raw);
+      if (!d || d.score === undefined) return;
+      _hoverEl = el;
+      var tt = _getOrCreateTooltip();
+      tt.innerHTML = '<div style="font-size:0.72rem;font-weight:700;color:#f97316;text-align:center;margin-bottom:6px;">Factor Breakdown (Trust Score: ' + d.score + ')</div>' + _svgRadar(d);
+      tt.style.display = 'block';
+      _positionTooltip(el);
+    } catch (_e) {}
+  });
+
+  document.addEventListener('mouseout', function (e) {
+    if (!_hoverEl) return;
+    var rel = e.relatedTarget;
+    while (rel) {
+      if (rel === _hoverEl) return;
+      rel = rel.parentElement;
+    }
+    _hoverEl = null;
+    if (_tt) _tt.style.display = 'none';
+  });
+
+  document.addEventListener('scroll', function () {
+    if (_tt && _tt.style.display !== 'none' && _hoverEl) _positionTooltip(_hoverEl);
+  }, true);
+})();
+
+/* ── Bet Top 3 Modal ──────────────────────────────────────── */
+var _top3Bets = [];
+var _top3Bankroll = 0;
+
+function openTop3Modal() {
+  var bkEl = document.getElementById('top3-bankroll-val');
+  _top3Bankroll = bkEl ? (parseFloat(bkEl.dataset.bankroll) || 0) : 0;
+
+  document.getElementById('top3Modal').style.display = 'flex';
+  _recalcTop3();
+}
+
+function _recalcTop3() {
+  var n = parseInt(document.getElementById('bet-n-select').value) || 3;
+
+  var rows = Array.from(document.querySelectorAll('#rec-table tbody tr[data-game]'));
+  // Include Preview games, and any Live game whose scheduled start is still in the future
+  // (catches API warmup false-positives that slipped through the server-side fix)
+  var now = Date.now();
+  //
+  // Positive-edge filter applies ONLY when N=1. Backtested on resolved games
+  // (2026-06-29 analysis): Top 1 ROI goes 9.4% -> 36.1% when restricted to
+  // positive-edge picks. But Top 2/3/5 got WORSE filtered (roughly half the
+  // unfiltered ROI) — excluding negative-edge games backfills those slots with
+  // lower-Unified-Score alternatives that have performed worse historically.
+  // Conclusion: for N=2+, Unified Score's calibration (45%) and line-move (25%)
+  // components are already capturing real signal the raw edge number misses —
+  // trust the ranking as-is. Don't generalize this filter to N=2+ without
+  // re-running that backtest; the red border still flags negative edge for
+  // visual context, it's just not a hard exclusion past N=1.
+  var filterPositiveEdge = (n === 1);
+  var candidates = rows.filter(function(r) {
+    if (!r.dataset.amerOdds || !r.dataset.prob) return false;
+    // Both starting pitchers must be announced — excluded for every N, not just
+    // N=1, since SP-dependent factors are running on team-average fallbacks
+    // until then (see sp_confirmed comment in app.py).
+    if (r.dataset.spConfirmed === '0') return false;
+    if (filterPositiveEdge && (parseFloat(r.dataset.edge) || 0) <= 0) return false;
+    if (r.dataset.status === 'Preview') return true;
+    if (r.dataset.status === 'Live') {
+      var startMs = r.dataset.utc ? new Date(r.dataset.utc).getTime() : 0;
+      return startMs > now;
+    }
+    return false;
+  });
+  if (!candidates.length) {
+    alert(filterPositiveEdge ? 'No positive-edge games available to bet.' : 'No upcoming games with both starting pitchers announced.');
+    closeTop3Modal();
+    return;
+  }
+
+  // Sort by Unified Score descending — best pick first. Slice position also
+  // doubles as the day rank used by the Kelly rank booster below.
+  candidates.sort(function(a, b) {
+    return (parseFloat(b.dataset.unf) || 0) - (parseFloat(a.dataset.unf) || 0);
+  });
+
+  var top = candidates.slice(0, n);
+  var btnCount = top.length;
+  document.getElementById('top3-place-btn').textContent = 'Place ' + (btnCount === 1 ? '1 Bet' : 'All ' + btnCount + ' Bets');
+  document.getElementById('top3-modal-title').textContent = 'Bet Top ' + btnCount;
+  document.getElementById('top3-modal-subtitle').textContent = 'Sequential Kelly · ranked by Unified Score · best pick first';
+
+  _top3Bets = top.map(function(row, idx) {
+    return {
+      amerOdds:    parseFloat(row.dataset.amerOdds),
+      prob:        parseFloat(row.dataset.prob),
+      pickName:    row.dataset.pickName || row.dataset.game,
+      side:        row.dataset.side,
+      homeName:    row.dataset.homeName,
+      awayName:    row.dataset.awayName,
+      utc:         row.dataset.utc,
+      edge:        row.dataset.edge,
+      unf:         parseInt(row.dataset.unf) || 0,
+      unfRank:     idx + 1,
+      scoreLabel:  'US',
+      scoreValue:  parseInt(row.dataset.unf) || 0,
+      game:        row.dataset.game,
+    };
+  });
+
+  _renderTop3();
+}
+
+// Kelly rank booster — top Unified Score pick of the day wins at a notably
+// higher rate than the rest of the slate, so it gets a bigger slice of the
+// Kelly cap; #2-3 a smaller bump; #4+ unboosted (1x = settings Kelly %).
+function _rankBooster(unfRank) {
+  if (unfRank === 1) return 1.5;
+  if (unfRank <= 3)  return 1.25;
+  return 1.0;
+}
+
+function _renderTop3() {
+  var capEl = document.getElementById('top3-bankroll-val');
+  var PERCENT_CAP = capEl ? (parseFloat(capEl.dataset.kellyCap) || 0.05) : 0.05;
+
+  var container = document.getElementById('top3-bets');
+  container.innerHTML = '';
+  var runningBankroll = _top3Bankroll;
+  var totalStaked = 0;
+
+  _top3Bets.forEach(function(bet, idx) {
+    var boost = _rankBooster(bet.unfRank);
+    var boostedCap = PERCENT_CAP * boost;
+    var decOdds = americanToDecimal(bet.amerOdds);
+    var kelly = decOdds ? computeKelly(runningBankroll, boostedCap, decOdds, bet.prob) : {amount: 0.10};
+    var stake = kelly.amount;
+
+    // Store computed stake back on the bet so placeTop3() can read it
+    bet._stake = stake;
+    bet._bankrollBefore = runningBankroll;
+
+    var rankLabel = ['①','②','③','④','⑤'][idx] || ('#' + (idx+1));
+    var edgeStr = bet.edge ? ((parseFloat(bet.edge) > 0 ? '+' : '') + bet.edge + '% edge') : '';
+    var amerStr = (bet.amerOdds > 0 ? '+' : '') + bet.amerOdds;
+    var boostStr = boost > 1 ? ('<span style="font-size:0.66rem;color:var(--orange);margin-left:8px;font-weight:700;">' + boost + 'x Kelly · US #' + bet.unfRank + '</span>') : '';
+
+    var row = document.createElement('div');
+    row.style.cssText = 'background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;';
+    row.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">' +
+        '<div>' +
+          '<span style="font-size:1.0rem;font-weight:800;margin-right:7px;">' + rankLabel + '</span>' +
+          '<span style="font-size:0.85rem;font-weight:700;">' + bet.pickName + '</span>' +
+          '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:8px;">' + amerStr + '</span>' +
+          (edgeStr ? '<span style="font-size:0.70rem;color:var(--win);margin-left:8px;font-weight:600;">' + edgeStr + '</span>' : '') +
+          boostStr +
+        '</div>' +
+        '<span style="font-size:0.68rem;color:var(--text-muted);">' + bet.scoreLabel + '&nbsp;' + bet.scoreValue + '</span>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;">' +
+        '<div style="font-size:0.70rem;color:var(--text-muted);min-width:120px;">Bankroll&nbsp;<strong style="color:var(--text);">$' + runningBankroll.toFixed(2) + '</strong></div>' +
+        '<div style="display:flex;align-items:center;gap:6px;flex:1;">' +
+          '<span style="font-size:0.70rem;color:var(--text-muted);white-space:nowrap;">Kelly stake</span>' +
+          '<input type="number" class="top3-stake-input" data-idx="' + idx + '" step="0.01" min="0.01" value="' + stake.toFixed(2) + '"' +
+            ' style="width:90px;padding:5px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.82rem;font-weight:700;">' +
+        '</div>' +
+      '</div>';
+    container.appendChild(row);
+
+    runningBankroll = Math.max(0, runningBankroll - stake);
+    totalStaked += stake;
+  });
+
+  document.getElementById('top3-total').textContent = '$' + totalStaked.toFixed(2);
+  document.getElementById('top3-remaining').textContent = '$' + runningBankroll.toFixed(2);
+
+  // Re-render totals when stakes are edited
+  container.querySelectorAll('.top3-stake-input').forEach(function(inp) {
+    inp.addEventListener('input', _updateTop3Totals);
+  });
+}
+
+function _updateTop3Totals() {
+  var inputs = document.querySelectorAll('.top3-stake-input');
+  var total = 0;
+  inputs.forEach(function(inp) {
+    total += parseFloat(inp.value) || 0;
+  });
+  document.getElementById('top3-total').textContent = '$' + total.toFixed(2);
+  var rem = Math.max(0, _top3Bankroll - total);
+  document.getElementById('top3-remaining').textContent = '$' + rem.toFixed(2);
+}
+
+function closeTop3Modal() {
+  document.getElementById('top3Modal').style.display = 'none';
+}
+
+function placeTop3(isPaper) {
+  var inputs = document.querySelectorAll('.top3-stake-input');
+  var betsPayload = _top3Bets.map(function(bet, idx) {
+    var stake = parseFloat(inputs[idx] ? inputs[idx].value : bet._stake) || bet._stake;
+    return {
+      name:         bet.pickName,
+      odds:         americanToDecimal(bet.amerOdds),
+      prob:         bet.prob,
+      stake:        Math.round(stake * 100) / 100,
+      sport:        'MLB',
+      bet_type:     'Moneyline',
+      side:         bet.side,
+      home_name:    bet.homeName,
+      away_name:    bet.awayName,
+      game_time_utc: bet.utc,
+    };
+  });
+
+  var placeBtn  = document.getElementById('top3-place-btn');
+  var paperBtn  = document.getElementById('top3-paper-btn');
+  placeBtn.disabled = true;
+  paperBtn.disabled = true;
+  placeBtn.textContent = 'Placing…';
+
+  fetch('/api/place-top3', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({bets: betsPayload, is_paper: isPaper}),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok) {
+      closeTop3Modal();
+      window.location.reload();
+    } else {
+      alert('Error: ' + (data.error || 'Unknown error'));
+      placeBtn.disabled = false;
+      paperBtn.disabled = false;
+      placeBtn.textContent = 'Place All ' + _top3Bets.length + ' Bets';
+    }
+  })
+  .catch(function() {
+    alert('Network error — bets not placed.');
+    placeBtn.disabled = false;
+    paperBtn.disabled = false;
+  });
+}
+</script>
+{% endblock %}

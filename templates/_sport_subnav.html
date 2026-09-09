@@ -1,0 +1,20 @@
+{# Sub-nav for a sport's "section" — Schedule / Model / History — shown as a
+   second nav row only on pages within that sport's section. Driven by the
+   `subnav_sport` variable each route passes in (e.g. 'MLB'); routes for
+   sports without their own Model/History pages yet just don't set it, so
+   this partial only ever renders for sports actually built out this far.
+
+   To extend to a new sport once it has recs/model/history worth linking:
+   add an entry here and have that sport's routes start passing
+   subnav_sport=<CODE>. #}
+{% set _subnav_map = {
+    'MLB': {'schedule_endpoint': 'mlb_schedule', 'icon': '⚾'},
+    'NHL': {'schedule_endpoint': 'nhl_schedule', 'icon': '🏒'},
+    'NFL': {'schedule_endpoint': 'nfl_schedule', 'icon': '🏈'},
+} %}
+{% if subnav_sport in _subnav_map %}
+{% set _sn = _subnav_map[subnav_sport] %}
+<a href="{{ url_for(_sn.schedule_endpoint) }}"{% if request.endpoint == _sn.schedule_endpoint %} class="active"{% endif %}>{{ _sn.icon }} Schedule</a>
+<a href="{{ url_for('model_performance', sport=subnav_sport) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
+<a href="{{ url_for('history', sport=subnav_sport) }}"{% if request.endpoint == 'history' %} class="active"{% endif %}>📜 History</a>
+{% endif %}

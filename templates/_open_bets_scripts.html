@@ -1,0 +1,214 @@
+{# Shared JS for _open_bets_section.html — close-bet modal, cashout, and live
+   score polling. Included inside each page's own {% block scripts %} rather
+   than duplicated, for the same reason the markup partial is shared.
+   Expects `closing_suggestions` in context ({bet_id: american_odds}). #}
+<script>
+// Convert bet card game times to local timezone
+document.querySelectorAll('.bc-time[data-utc]').forEach(function(el) {
+    try {
+        var d = new Date(el.getAttribute('data-utc'));
+        if (isNaN(d)) return;
+        var m = d.getMonth() + 1;
+        var day = d.getDate();
+        var t = d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}).toLowerCase();
+        el.textContent = m + '/' + day + ' ' + t;
+    } catch(e) {}
+});
+
+var _closingSuggestions = {{ (closing_suggestions or {}) | tojson }};
+var _cbmBetId   = null;
+var _cbmStake   = 0;
+var _cbmOutcome = 'win';
+
+function openCloseBetModal(btn) {
+    // Accept either a button element (new) or legacy (betId, betName) call signature
+    var betId, betName, stake, entryAmer, currAmer;
+    if (typeof btn === 'object' && btn !== null && btn.dataset) {
+        betId    = btn.dataset.id;
+        betName  = btn.dataset.name;
+        stake    = parseFloat(btn.dataset.stake) || 0;
+        entryAmer = btn.dataset.entryAmer || '';
+        currAmer  = btn.dataset.currAmer  || '';
+    } else {
+        // legacy: openCloseBetModal(id, name)
+        betId    = btn;
+        betName  = arguments[1] || '';
+        stake    = 0;
+        entryAmer = '';
+        currAmer  = '';
+    }
+    _cbmBetId = betId;
+    _cbmStake = stake;
+
+    document.getElementById('close_bet_name').textContent = betName;
+    document.getElementById('cbm-winloss-form').action = '/close_open/' + betId;
+
+    // Auto-fill closing line if available
+    var cl   = document.getElementById('modal_closing_line');
+    var note = document.getElementById('modal_cl_note');
+    var suggested = _closingSuggestions[betId];
+    if (suggested !== undefined) {
+        cl.value = (suggested > 0 ? '+' : '') + suggested;
+        if (note) note.textContent = 'Auto-filled from FanDuel at game start — edit if needed.';
+    } else {
+        cl.value = '';
+        if (note) note.textContent = 'Will be auto-filled from FanDuel history when game starts.';
+    }
+
+    // Cashout line context
+    document.getElementById('cbm-co-stake').textContent = stake ? '$' + stake.toFixed(2) : '—';
+    var lineRow = document.getElementById('cbm-co-line-row');
+    if (entryAmer && currAmer) {
+        var eStr = (parseFloat(entryAmer) > 0 ? '+' : '') + entryAmer;
+        var cStr = (parseFloat(currAmer)  > 0 ? '+' : '') + currAmer;
+        document.getElementById('cbm-co-line').textContent = eStr + ' → ' + cStr;
+        lineRow.style.display = 'flex';
+    } else {
+        lineRow.style.display = 'none';
+    }
+    document.getElementById('cbm-co-amount').value = '';
+    document.getElementById('cbm-co-pnl').textContent = '';
+    document.getElementById('cbm-co-amount').oninput = function() {
+        var amt = parseFloat(this.value) || 0;
+        var pnl = amt - _cbmStake;
+        var el  = document.getElementById('cbm-co-pnl');
+        el.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' vs stake';
+        el.style.color = pnl >= 0 ? 'var(--win)' : 'var(--loss)';
+    };
+
+    setCbmOutcome('win');
+    document.getElementById('closeBetModal').style.display = 'flex';
+}
+
+function setCbmOutcome(outcome) {
+    _cbmOutcome = outcome;
+    var opts = ['win', 'loss', 'cashout'];
+    var colors = {win: 'var(--win)', loss: 'var(--loss)', cashout: '#6366f1'};
+    opts.forEach(function(o) {
+        var btn = document.getElementById('cbm-opt-' + o);
+        if (o === outcome) {
+            btn.style.background = o === 'win' ? 'rgba(21,128,61,0.18)'
+                                 : o === 'loss' ? 'rgba(239,68,68,0.14)'
+                                 : 'rgba(99,102,241,0.14)';
+            btn.style.color = colors[o];
+        } else {
+            btn.style.background = 'var(--bg-card-2)';
+            btn.style.color = 'var(--text-muted)';
+        }
+    });
+
+    var wlForm  = document.getElementById('cbm-winloss-form');
+    var coFields = document.getElementById('cbm-cashout-fields');
+    if (outcome === 'cashout') {
+        wlForm.style.display   = 'none';
+        coFields.style.display = 'block';
+        setTimeout(function() { document.getElementById('cbm-co-amount').focus(); }, 50);
+    } else {
+        wlForm.style.display   = 'block';
+        coFields.style.display = 'none';
+        document.getElementById('cbm-outcome-hidden').value = outcome;
+        document.getElementById('cbm-submit-btn').textContent = outcome === 'win' ? 'Confirm Win' : 'Confirm Loss';
+    }
+}
+
+function closeCloseBetModal() {
+    document.getElementById('closeBetModal').style.display = 'none';
+    _cbmBetId = null;
+}
+
+function confirmCashout() {
+    var amount = parseFloat(document.getElementById('cbm-co-amount').value);
+    if (!amount || amount <= 0) { alert('Enter the cashout amount from your sportsbook.'); return; }
+    var btn = document.getElementById('cbm-co-confirm');
+    btn.disabled = true;
+    btn.textContent = 'Processing…';
+    fetch('/api/cashout/' + _cbmBetId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cashout_amount: amount}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { closeCloseBetModal(); window.location.reload(); }
+        else { alert('Error: ' + (d.error || 'Unknown')); btn.disabled = false; btn.textContent = 'Confirm Cashout'; }
+    })
+    .catch(function() { alert('Network error.'); btn.disabled = false; btn.textContent = 'Confirm Cashout'; });
+}
+
+// ── Live score polling ────────────────────────────────────────────────────────
+(function () {
+  // Renders a 3-base diamond SVG + out dots for MLB live games.
+  // b = {first, second, third, outs}
+  function renderDiamond(b) {
+    var on  = '#FB4F14', off = 'rgba(148,163,184,0.18)';
+    var so  = '#FB4F14', sof = 'rgba(148,163,184,0.35)';
+    // Each 8×8 rect rotated 45° has half-diagonal ≈ 5.7px — keep centers ≥ 7px from each edge.
+    // viewBox 0 0 40 30: 2nd=(20,7), 1st=(34,20), 3rd=(6,20)
+    function sq(cx, cy, occ) {
+      return '<rect x="' + (cx - 4) + '" y="' + (cy - 4) + '" width="8" height="8"'
+        + ' transform="rotate(45 ' + cx + ' ' + cy + ')"'
+        + ' fill="' + (occ ? on : off) + '"'
+        + ' stroke="' + (occ ? so : sof) + '" stroke-width="1.2" rx="1"/>';
+    }
+    var svg = '<svg width="36" height="28" viewBox="0 0 36 28" style="display:block;">'
+      + sq(18,  7, b.second)   // 2nd — top center
+      + sq(30, 19, b.first)    // 1st — right
+      + sq(6,  19, b.third)    // 3rd — left
+      + '</svg>';
+    var dots = '<div style="display:flex;gap:3px;justify-content:center;">';
+    for (var i = 0; i < 2; i++) {  // only 2 dots — 3 outs ends the inning
+      var filled = i < (b.outs || 0);
+      dots += '<div style="width:5px;height:5px;border-radius:50%;'
+        + 'background:' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.22)') + ';'
+        + 'border:1px solid ' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.35)') + ';"></div>';
+    }
+    dots += '</div>';
+    return '<div class="bc-diamond-wrap">' + svg + dots + '</div>';
+  }
+
+  function refreshScores() {
+    fetch('/api/live-scores')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        Object.keys(data).forEach(function (betId) {
+          var el = document.querySelector('.bc-score[data-bet-id="' + betId + '"]');
+          if (!el) return;
+          var info    = data[betId];
+          var betSide = el.getAttribute('data-bet-side') || '';
+          var isLive  = info.status === 'Live';
+          var as = info.away_score, hs = info.home_score;
+          var awayWin = (as !== null && hs !== null && as > hs);
+          var homeWin = (hs !== null && as !== null && hs > as);
+
+          el.className = 'bc-score ' + (isLive ? 'score-live' : 'score-final');
+
+          var statusHtml = '<div class="bc-score-status' + (isLive ? ' is-live' : '') + '">';
+          if (isLive) statusHtml += '<span class="live-dot"></span>';
+          statusHtml += (info.period || (isLive ? 'Live' : 'Final'));
+          if (info.live_implied != null) {
+            var imp = info.live_implied;
+            var impCls = imp >= 60 ? 'limp-good' : (imp <= 40 ? 'limp-bad' : 'limp-neutral');
+            statusHtml += '<span class="bc-live-implied ' + impCls + '">' + imp.toFixed(1) + '% win</span>';
+          }
+          statusHtml += '</div>';
+
+          var awayAbbr = '<span class="bc-team-abbr' + (betSide === 'away' ? ' is-bet' : '') + '">' + info.away_abbr + '</span>';
+          var awayNum  = '<span class="bc-team-num' + (awayWin ? ' winning' : '') + '">' + (as !== null ? as : '–') + '</span>';
+          var homeAbbr = '<span class="bc-team-abbr' + (betSide === 'home' ? ' is-bet' : '') + '">' + info.home_abbr + '</span>';
+          var homeNum  = '<span class="bc-team-num' + (homeWin ? ' winning' : '') + '">' + (hs !== null ? hs : '–') + '</span>';
+
+          var scoreRow = '<div class="bc-score-row">'
+            + '<div class="bc-team-block">' + awayAbbr + awayNum + '</div>'
+            + '<span class="bc-score-div">·</span>'
+            + '<div class="bc-team-block">' + homeAbbr + homeNum + '</div>'
+            + '</div>';
+
+          el.innerHTML = statusHtml + scoreRow + (isLive && info.bases ? renderDiamond(info.bases) : '');
+        });
+      })
+      .catch(function () {});
+  }
+  refreshScores();
+  setInterval(refreshScores, 120000);
+}());
+</script>

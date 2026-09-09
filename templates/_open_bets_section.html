@@ -1,0 +1,291 @@
+{# Shared open-bets section — used by the Dashboard (all sports) and any
+   sport-scoped page (e.g. /mlb) that wants to show its own open bets.
+   Extracted so the bet-card markup, close-bet modal, and live-score JS only
+   exist once — a second, drifted copy is exactly the kind of duplicate-logic
+   bug this app has already hit once (see the Kelly-grade fix).
+
+   Expected context variables:
+     open_bets            – list of non-paper OpenBet rows, already run
+                             through _annotate_open_bets()/_tier_open_bets()
+     paper_bets           – list of paper OpenBet rows (may be empty)
+     unit_size            – float, for the Stake/Return columns
+     closing_suggestions  – {bet_id: american_odds}, rendered into JS below
+     open_stats           – dict from _open_bets_summary_stats(), or None to
+                             skip the stat-card row entirely
+     heading              – e.g. "12 Open Bets" or "3 Open MLB Bets"
+     odds_last_fetch / odds_next_fetch – datetime or None
+     sync_next            – path to redirect back to after the sync button
+                             (e.g. request.path) — defaults to Dashboard if
+                             omitted
+#}
+
+{% if open_stats %}
+<div class="dashboard" style="margin-bottom:14px;">
+    <div class="stat-card">
+        <div class="stat-label">Avg Edge</div>
+        <div class="stat-value {% if open_stats.avg_edge is not none %}{{ 'status-win' if open_stats.avg_edge >= 2 else ('status-loss' if open_stats.avg_edge < 0 else '') }}{% endif %}">
+            {% if open_stats.avg_edge is not none %}{{ '+' if open_stats.avg_edge > 0 }}{{ open_stats.avg_edge }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">vs book implied</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg CLV</div>
+        <div class="stat-value {% if open_stats.avg_clv is not none %}{{ 'status-win' if open_stats.avg_clv >= 0 else 'status-loss' }}{% endif %}">
+            {% if open_stats.avg_clv is not none %}{{ '+' if open_stats.avg_clv > 0 }}{{ open_stats.avg_clv }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">{% if open_stats.positive_clv_pct is not none %}{{ open_stats.positive_clv_pct }}% positive{% else %}no live data{% endif %}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Positive CLV</div>
+        <div class="stat-value {% if open_stats.positive_clv_pct is not none %}{{ 'status-win' if open_stats.positive_clv_pct >= 50 else 'status-loss' }}{% endif %}">
+            {% if open_stats.positive_clv_pct is not none %}{{ open_stats.positive_clv_pct }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">of tracked lines</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Expected ROI</div>
+        <div class="stat-value {% if open_stats.expected_roi is not none %}{{ 'status-win' if open_stats.expected_roi >= 0 else 'status-loss' }}{% endif %}">
+            {% if open_stats.expected_roi is not none %}{{ '+' if open_stats.expected_roi > 0 }}{{ open_stats.expected_roi }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">avg EV across open bets</div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Open Bets -->
+<div class="day-header">
+    <h2>{{ heading if heading else (open_bets | length ~ ' Open Bet' ~ ('s' if open_bets | length != 1 else '')) }}</h2>
+    <span class="refresh-info">
+        {% if odds_last_fetch %}↻ {{ odds_last_fetch.strftime('%-I:%M%p') | lower }}{% else %}↻ —{% endif %}
+        &nbsp;·&nbsp;
+        {% if odds_next_fetch %}⏱ {{ odds_next_fetch.strftime('%-I:%M%p') | lower }}{% else %}⏱ —{% endif %}
+        ET
+        &nbsp;
+        <form method="post" action="{{ url_for('api_refresh_odds') }}" style="display:inline;">
+            {% if sync_next %}<input type="hidden" name="next" value="{{ sync_next }}">{% endif %}
+            <button type="submit" style="background:none;border:none;padding:0;color:var(--blue);font-size:0.78rem;font-weight:700;cursor:pointer;box-shadow:none;transform:none;" title="Force odds refresh">↺ sync</button>
+        </form>
+    </span>
+</div>
+{% if open_bets %}
+<div class="bet-cards-grid">
+{% for b in open_bets %}
+    <div class="bet-card">
+
+        <!-- Name + sport + tier + actions -->
+        <div class="bc-header">
+            <div class="bc-name-line">
+                <span class="bc-name">{{ b.name }}</span>
+                {% if b.sport %}<span class="bet-sport">{{ b.sport }}</span>{% endif %}
+                {% if b.tier %}<span class="tier-badge {{ b.tier_cls }}">{{ b.tier }}</span>{% endif %}
+            </div>
+            <div class="actions">
+                {% if b.game_key %}
+                {% if b.sport == 'MLB' %}<a href="{{ url_for('mlb_schedule') }}#gc-{{ b.game_key }}" class="action-link" title="View game">⚾</a>
+                {% elif b.sport == 'NHL' %}<a href="{{ url_for('nhl_schedule') }}#gc-{{ b.game_key }}" class="action-link" title="View game">🏒</a>
+                {% elif b.sport == 'NFL' %}<a href="{{ url_for('nfl_schedule') }}#gc-{{ b.game_key }}" class="action-link" title="View game">🏈</a>
+                {% endif %}
+                {% endif %}
+                <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="action-link" title="Edit">✏️</a>
+                <button type="button" class="small secondary" title="Save result"
+                    data-id="{{ b.id }}"
+                    data-name="{{ b.name | e }}"
+                    data-stake="{{ '%.2f' % b.stake }}"
+                    data-entry-amer="{{ b.original_american }}"
+                    data-curr-amer="{{ b.current_american if b.current_american is not none else '' }}"
+                    onclick="openCloseBetModal(this)">💾</button>
+                <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete this bet?');" style="display:inline-block;">
+                    <button type="submit" class="danger small" title="Delete">🗑️</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Time + CLV -->
+        <div class="bc-meta">
+            {% if b.eventstart %}<span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
+            {% if b.live_clv is not none %}
+            {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
+            <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
+            {% endif %}
+        </div>
+
+        <!-- Analytics row -->
+        {% if b.book_implied is not none %}
+        <div class="bc-analytics">
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Model</span>
+                <span class="bc-ana-val">{{ (b.prob * 100) | round(1) }}%</span>
+            </div>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Book</span>
+                <span class="bc-ana-val">{{ b.book_implied }}%</span>
+            </div>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Edge</span>
+                <span class="bc-ana-val {{ 'status-win' if b.edge_pct and b.edge_pct > 0 else ('status-loss' if b.edge_pct and b.edge_pct < 0 else '') }}">{% if b.edge_pct is not none %}{{ '+' if b.edge_pct > 0 }}{{ b.edge_pct }}%{% else %}—{% endif %}</span>
+            </div>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">EV</span>
+                <span class="bc-ana-val {{ 'status-win' if b.ev_pct and b.ev_pct > 0 else ('status-loss' if b.ev_pct and b.ev_pct < 0 else '') }}">{% if b.ev_pct is not none %}{{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%{% else %}—{% endif %}</span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Live score (populated by JS) -->
+        <div class="bc-score" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
+
+        <!-- Financials (units) -->
+        <div class="bc-financials">
+            <div class="bc-fin-item">
+                <span class="bc-fin-label">Stake</span>
+                <span class="bc-fin-val">{{ '%.2f' % (b.stake / unit_size) }}u</span>
+            </div>
+            <div class="bc-fin-item">
+                <span class="bc-fin-label">Return</span>
+                <span class="bc-fin-val">{{ '%.2f' % (b.stake * b.odds / unit_size) }}u</span>
+            </div>
+            <div class="bc-fin-item">
+                {% if b.closing_american is not none %}
+                <span class="bc-fin-label">Closed</span>
+                <span class="bc-fin-val">
+                    <span class="line-cell">
+                        <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
+                        <span class="line-arrow">→</span>
+                        <span class="line-curr {{ 'status-win' if b.closing_clv_pos else 'status-loss' }}">{{ '+' if b.closing_american > 0 }}{{ b.closing_american }}</span>
+                    </span>
+                </span>
+                {% else %}
+                <span class="bc-fin-label">Line</span>
+                <span class="bc-fin-val">
+                    {% if b.original_american is not none %}
+                    <span class="line-cell">
+                        <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
+                        {% if b.current_american is not none %}
+                        <span class="line-arrow">→</span>
+                        <span class="line-curr">{{ '+' if b.current_american > 0 }}{{ b.current_american }}</span>
+                        {% if b.line_move %}{% set mv = b.line_move %}
+                        <span class="line-move {{ 'move-up' if mv > 0 else 'move-dn' }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>
+                        {% endif %}
+                        {% endif %}
+                    </span>
+                    {% else %}—{% endif %}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+{% endfor %}
+</div>
+{% else %}
+<div class="small" style="padding:16px 4px; text-align:center; color:var(--text-muted);">
+    No open bets. <a href="{{ url_for('new_bet') }}" style="color:var(--orange); font-weight:700; text-decoration:none;">Place your first bet →</a>
+</div>
+{% endif %}
+
+<!-- Tracked Picks (paper bets) -->
+{% if paper_bets %}
+<div class="card" style="margin-bottom:14px;">
+    <div class="section-header" style="margin-bottom:12px;">
+        <h2>Tracked Picks <span class="paper-badge">Paper</span></h2>
+        <span class="small">no bankroll impact · for model training</span>
+    </div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Pick</th>
+                <th>Sport</th>
+                <th>Odds</th>
+                <th>Prob</th>
+                <th>Game Time</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for b in paper_bets %}
+        <tr>
+            <td style="font-weight:600;">{{ b.name }}</td>
+            <td>{% if b.sport %}<span class="small" style="color:var(--blue);">{{ b.sport }}</span>{% else %}—{% endif %}</td>
+            <td>{{ b.odds | round(3) }}</td>
+            <td>{{ (b.prob * 100) | round(1) }}%</td>
+            <td class="small">{% if b.eventstart %}{{ b.eventstart.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
+            <td>
+                <div class="actions">
+                    <button class="small" onclick="openCloseBetModal({{ b.id }}, '{{ b.name | replace("'","\\'")}}')" style="background:transparent;color:var(--win);border:1px solid rgba(21,128,61,0.3);">Result</button>
+                    <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" style="display:inline;">
+                        <button class="danger small">✕</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Close Bet Modal -->
+<div id="closeBetModal" class="modal-overlay" onclick="if(event.target===this)closeCloseBetModal()">
+    <div class="modal">
+        <button class="modal-close" onclick="closeCloseBetModal()" aria-label="Close">&#215;</button>
+        <h2 style="margin-bottom:4px;">Save Result</h2>
+        <p id="close_bet_name" class="small" style="margin-bottom:16px;color:var(--silver);"></p>
+
+        <!-- Outcome selector -->
+        <div style="display:flex;gap:0;margin-bottom:18px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
+            <button type="button" id="cbm-opt-win" onclick="setCbmOutcome('win')"
+                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;border-right:1px solid var(--border);cursor:pointer;transition:background 0.15s;">
+                Win
+            </button>
+            <button type="button" id="cbm-opt-loss" onclick="setCbmOutcome('loss')"
+                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;border-right:1px solid var(--border);cursor:pointer;transition:background 0.15s;">
+                Loss
+            </button>
+            <button type="button" id="cbm-opt-cashout" onclick="setCbmOutcome('cashout')"
+                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;cursor:pointer;transition:background 0.15s;">
+                Cashout
+            </button>
+        </div>
+
+        <!-- Win / Loss fields -->
+        <form id="cbm-winloss-form" method="post" action="">
+            <div class="form-row">
+                <label>Closing Line <span style="font-weight:400;text-transform:none;letter-spacing:0;">(American odds)</span></label>
+                <input id="modal_closing_line" name="closing_line" type="text" inputmode="text" placeholder="e.g. -215">
+                <div id="modal_cl_note" class="small" style="color:var(--text-muted);min-height:1.1em;"></div>
+            </div>
+            <div class="form-row">
+                <label>Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
+                <textarea name="notes" rows="2" style="resize:vertical;font-family:inherit;font-size:0.9rem;padding:9px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text);width:100%;"></textarea>
+            </div>
+            <input type="hidden" name="outcome" id="cbm-outcome-hidden" value="win">
+            <button type="submit" id="cbm-submit-btn" style="width:100%;margin-top:4px;">Confirm Win</button>
+        </form>
+
+        <!-- Cashout fields -->
+        <div id="cbm-cashout-fields" style="display:none;">
+            <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px;">
+                <div id="cbm-co-line-row" style="display:none;justify-content:space-between;font-size:0.8rem;">
+                    <span style="color:var(--text-muted);">Line movement</span>
+                    <span id="cbm-co-line" style="font-weight:600;font-family:monospace;"></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:0.8rem;">
+                    <span style="color:var(--text-muted);">Stake</span>
+                    <span id="cbm-co-stake" style="font-weight:600;"></span>
+                </div>
+                <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <label style="font-size:0.82rem;color:var(--text-muted);white-space:nowrap;">Cashout amount</label>
+                    <input id="cbm-co-amount" type="number" step="0.01" min="0.01" placeholder="Enter FanDuel offer"
+                           style="width:140px;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.88rem;font-weight:700;text-align:right;">
+                </div>
+                <div style="display:flex;justify-content:flex-end;">
+                    <span id="cbm-co-pnl" style="font-size:0.78rem;font-weight:700;"></span>
+                </div>
+            </div>
+            <button type="button" id="cbm-co-confirm" onclick="confirmCashout()"
+                    style="width:100%;padding:10px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;font-size:0.85rem;font-weight:700;cursor:pointer;">
+                Confirm Cashout
+            </button>
+        </div>
+    </div>
+</div>

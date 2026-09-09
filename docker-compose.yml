@@ -1,0 +1,31 @@
+services:
+  sports-betting:
+    build: .
+    ports:
+      - "5034:5000"
+    # Use public resolvers instead of inheriting the host's DNS — if the host
+    # runs Tailscale, MagicDNS overrides /etc/resolv.conf to 100.100.100.100,
+    # and a tailscaled hiccup (reconnect, key rotation) breaks resolution for
+    # ordinary external hostnames too, not just Tailscale-internal ones.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      # SQLite data persists here across rebuilds
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/bets.db
+      # Get your free key at https://the-odds-api.com (500 req/month)
+      - ODDS_API_KEY=${ODDS_API_KEY:-}
+      # Get your free key at https://openweathermap.org/api_keys
+      - WEATHER_API_KEY=${WEATHER_API_KEY:-}
+      # Shared secret for GET /api/lifeos/games (LifeOS's Sports page). Set the same
+      # value in both apps' .env — generate with: openssl rand -base64 32
+      - LIFEOS_API_TOKEN=${LIFEOS_API_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

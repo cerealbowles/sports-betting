@@ -3,3 +3,7 @@ Flask-SQLAlchemy==3.0.5
 SQLAlchemy==2.0.21
 Werkzeug==2.3.7
 Flask-Migrate==4.0.4
+requests>=2.31.0
+gunicorn>=21.2.0
+APScheduler>=3.10.0
+Pillow>=10.0.0

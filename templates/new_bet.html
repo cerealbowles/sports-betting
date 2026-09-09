@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}New Bet — Spooky Sports{% endblock %}
+
+{% block content %}
+<!-- Hidden bankroll values for client-side Kelly calc -->
+<span id="bankroll_value" style="display:none;">{{ settings.bankroll }}</span>
+<span id="percent_cap_value" style="display:none;">{{ settings.percent_bankroll }}</span>
+
+<div class="card" style="max-width:520px; margin:0 auto 14px;">
+    <div class="section-header" style="margin-bottom:14px;">
+        <h2>New Bet</h2>
+        <a href="{{ url_for('mlb_schedule') }}" style="color:var(--blue); font-size:0.8rem; font-weight:700; text-decoration:none;">⚾ Pick MLB game →</a>
+    </div>
+
+    <div class="form-row">
+        <label>Bet Name</label>
+        <input id="bet_name" type="text" required placeholder="e.g. Avalanche ML">
+    </div>
+    <div class="form-row">
+        <label>Event Start</label>
+        <input id="eventstart" type="datetime-local">
+    </div>
+    <div class="form-row">
+        <label>Sport</label>
+        <input id="sport" type="text" placeholder="NHL, NFL, MLB...">
+    </div>
+    <div class="form-row">
+        <label>Type</label>
+        <select id="bet_type">
+            <option value="Moneyline">Moneyline</option>
+            <option value="Spread">Spread</option>
+            <option value="Over/Under">Over/Under</option>
+            <option value="Player">Player</option>
+        </select>
+    </div>
+    <div id="paper_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:var(--blue-dim); border:1px solid rgba(37,99,235,0.22); border-radius:var(--radius-sm); font-size:0.8rem; color:var(--blue); font-weight:700;">
+        📋 Paper Pick — no bankroll impact
+        <span style="font-weight:400; color:var(--text-muted); margin-left:6px;">Result logged for model training only</span>
+    </div>
+    <div id="game_context_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:rgba(35,97,146,0.09); border:1px solid rgba(35,97,146,0.22); border-radius:var(--radius-sm); font-size:0.78rem;">
+        <div style="font-weight:700; margin-bottom:4px; color:var(--text);" id="ctx_title"></div>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; color:var(--text-muted);">
+            <span id="ctx_fd"></span>
+            <span id="ctx_model"></span>
+            <span id="ctx_edge" style="font-weight:700;"></span>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <label>American Odds</label>
+        <input id="american_odds" type="text" inputmode="text" required placeholder="-120 or +150">
+        <div class="small">Decimal: <strong id="converted_decimal">—</strong></div>
+        <div id="edge_display" class="small" style="min-height:1.1em;"></div>
+    </div>
+    <div class="form-row">
+        <label>Win Probability (0–1)</label>
+        <div style="display:flex; gap:8px; align-items:flex-start;">
+            <div style="flex:0 0 120px;">
+                <input id="prob" type="number" step="0.01" inputmode="decimal" value="0.5" required style="width:100%;">
+                <div id="prob_source" class="small" style="margin-top:3px; color:var(--blue); min-height:1.1em;"></div>
+            </div>
+            <div id="empirical_info" class="small" style="flex:1; min-width:0; padding-top:9px;">Calc: —</div>
+        </div>
+    </div>
+    <div class="form-row">
+        <label>Recommended Stake</label>
+        <div><strong id="recommended_stake">—</strong></div>
+    </div>
+    <div class="form-row">
+        <label>Actual Stake</label>
+        <input id="actual_stake" type="number" step="0.01" inputmode="decimal" required placeholder="0.00">
+    </div>
+
+    <div class="form-row">
+        <label>Notes <span style="font-weight:400; text-transform:none; letter-spacing:0;">(optional — your reasoning)</span></label>
+        <textarea id="notes" rows="2" style="resize:vertical; font-family:inherit; padding:9px 12px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--bg-input); color:var(--text); width:100%;" placeholder="e.g. Home pitcher on short rest, road team strong in divisional games"></textarea>
+    </div>
+
+    <input type="hidden" id="odds_hidden" value="">
+    <form id="betForm" method="post" action="{{ url_for('add_open') }}">
+        <input type="hidden" id="form_name"       name="name">
+        <input type="hidden" id="form_eventstart" name="eventstart">
+        <input type="hidden" id="form_odds"       name="odds">
+        <input type="hidden" id="form_prob"       name="prob">
+        <input type="hidden" id="form_stake"      name="stake">
+        <input type="hidden" id="form_sport"      name="sport">
+        <input type="hidden" id="form_type"       name="bet_type">
+        <input type="hidden" id="form_notes"      name="notes">
+        <input type="hidden" id="form_home_name"    name="home_name">
+        <input type="hidden" id="form_away_name"    name="away_name">
+        <input type="hidden" id="form_bet_side"     name="bet_side">
+        <input type="hidden" id="form_is_paper"     name="is_paper" value="0">
+        <input type="hidden" id="form_eventstartutc" name="eventstartutc">
+        <input type="hidden" id="form_next"           name="next" value="">
+        <button type="submit" id="submit_btn" style="width:100%; margin-top:4px;">Place Bet</button>
+    </form>
+</div>
+
+<!-- Pre-fill from schedule links (?name=&sport=&eventstartutc=&odds=&implied=&model_prob=) -->
+<script>
+(function () {
+    function utcToDatetimeLocal(utcStr) {
+        var d = new Date(utcStr);
+        if (isNaN(d)) return '';
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+             + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    var params     = new URLSearchParams(window.location.search);
+    var name       = params.get('name');
+    var sport      = params.get('sport');
+    var utc        = params.get('eventstartutc');
+    var oddsAmer   = params.get('odds');
+    var implied    = params.get('implied');
+    var modelProb  = params.get('model_prob');
+    var homeName   = params.get('home_name');
+    var awayName   = params.get('away_name');
+    var betSide    = params.get('bet_side');
+    var isPaper    = params.get('paper') === '1';
+    var unfRank    = params.get('unf_rank');
+
+    // Set immediately (not deferred) so it's available before any
+    // updateEmpiricalInfo() call fires, including main.js's unconditional one.
+    window.currentUnfRank = unfRank ? parseInt(unfRank) : null;
+
+    if (!name && !sport && !utc) return;
+
+    function fill() {
+        if (name)  { var el = document.getElementById('bet_name');   if (el) el.value = name; }
+        if (sport) { var el = document.getElementById('sport');      if (el) { el.value = sport; if (!modelProb && typeof updateEmpiricalInfo === 'function') updateEmpiricalInfo(true); } }
+        if (utc)   { var el = document.getElementById('eventstart'); if (el) el.value = utcToDatetimeLocal(utc); }
+
+        // Pre-fill American odds and trigger the Kelly / edge recalc
+        if (oddsAmer) {
+            var oddsEl = document.getElementById('american_odds');
+            if (oddsEl) {
+                oddsEl.value = (parseFloat(oddsAmer) > 0 ? '+' : '') + parseInt(oddsAmer);
+                oddsEl.dispatchEvent(new Event('input'));
+            }
+        }
+
+        // Pre-fill prob with model estimate if provided
+        if (modelProb) {
+            var probEl = document.getElementById('prob');
+            if (probEl) {
+                probEl.value = parseFloat(modelProb).toFixed(2);
+                probEl.dispatchEvent(new Event('input'));
+            }
+        }
+
+        // Blend in the Unified Score rank-bucket win rate, overriding the raw
+        // model prob above with model+rank-history blend (server computes this).
+        if (window.currentUnfRank && typeof updateEmpiricalInfo === 'function') {
+            updateEmpiricalInfo(true);
+        }
+
+        // Show context banner when we have at least odds or model data
+        if (oddsAmer || modelProb) {
+            var banner = document.getElementById('game_context_banner');
+            if (banner) {
+                banner.style.display = 'block';
+
+                var titleEl = document.getElementById('ctx_title');
+                if (titleEl && name) titleEl.textContent = name;
+
+                var fdEl = document.getElementById('ctx_fd');
+                if (fdEl && oddsAmer && implied) {
+                    var sign = parseFloat(oddsAmer) > 0 ? '+' : '';
+                    fdEl.textContent = 'FanDuel: ' + sign + parseInt(oddsAmer)
+                                     + ' · ' + (parseFloat(implied) * 100).toFixed(1) + '% implied';
+                }
+
+                var modelEl = document.getElementById('ctx_model');
+                if (modelEl && modelProb) {
+                    modelEl.textContent = 'Model: ' + (parseFloat(modelProb) * 100).toFixed(1) + '%';
+                }
+
+                var edgeEl = document.getElementById('ctx_edge');
+                if (edgeEl && modelProb && implied) {
+                    var edge = ((parseFloat(modelProb) - parseFloat(implied)) * 100).toFixed(1);
+                    var pos  = parseFloat(edge) > 0;
+                    edgeEl.textContent = 'Edge: ' + (pos ? '+' : '') + edge + '%';
+                    edgeEl.style.color = pos ? '#4ade80' : '#f87171';
+                }
+            }
+        }
+
+        if (homeName) { var el = document.getElementById('form_home_name');    if (el) el.value = homeName; }
+        if (awayName) { var el = document.getElementById('form_away_name');    if (el) el.value = awayName; }
+        if (betSide)  { var el = document.getElementById('form_bet_side');     if (el) el.value = betSide; }
+        if (utc)      { var el = document.getElementById('form_eventstartutc'); if (el) el.value = utc; }
+
+        var nextUrl = params.get('next');
+        if (nextUrl) { var el = document.getElementById('form_next'); if (el) el.value = nextUrl; }
+
+        if (isPaper) {
+            var pb = document.getElementById('form_is_paper');
+            if (pb) pb.value = '1';
+            var paperBanner = document.getElementById('paper_banner');
+            if (paperBanner) paperBanner.style.display = 'block';
+            // Hide stake field — paper bets have no stake
+            var stakeRow = document.getElementById('actual_stake');
+            if (stakeRow && stakeRow.closest('.form-row')) {
+                stakeRow.closest('.form-row').style.display = 'none';
+            }
+            var submitBtn = document.getElementById('submit_btn');
+            if (submitBtn) submitBtn.textContent = 'Save Paper Pick';
+        }
+
+        window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fill);
+    } else {
+        fill();
+    }
+}());
+</script>
+{% endblock %}
