@@ -18,6 +18,7 @@ import mlb_api
 import mlb_model
 import nhl_api
 import nfl_api
+import cfb_api
 
 # app.py
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
@@ -1491,7 +1492,7 @@ def compute_chart_data(closed_bets):
 
 
 # Routes
-_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl'}
+_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf'}
 
 
 def _annotate_open_bets(open_bets):
@@ -2162,7 +2163,7 @@ def close_open(bet_id):
   if closing_line is None and b.game_key and b.bet_side and b.eventstart:
     try:
       import odds_history as _oh
-      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl'}
+      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf'}
       sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
       es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
       snap = _oh.get_closing_line(sk, b.game_key, es)
@@ -2547,9 +2548,12 @@ def mlb_schedule():
                          sync_next='/mlb', subnav_sport='MLB')
 
 _SPORT_META = {
+
   'MLB': {'emoji': '⚾', 'schedule_endpoint': 'mlb_schedule', 'baseline': '~54% (home field)'},
   'NHL': {'emoji': '🏒', 'schedule_endpoint': 'nhl_schedule', 'baseline': '~54% (home ice)'},
   'NFL': {'emoji': '🏈', 'schedule_endpoint': 'nfl_schedule', 'baseline': '~57% (home field)'},
+  'CFB': {'emoji': '🎓', 'schedule_endpoint': 'cfb_schedule', 'baseline': '~59% (home field)'},
+
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
 
@@ -3387,6 +3391,12 @@ def nfl_schedule():
   _upsert_predictions(week_ctx['days'], 'NFL')
   return render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL')
 
+@app.route('/cfb')
+def cfb_schedule():
+  schedule = cfb_api.build_schedule_context()
+  _upsert_predictions(schedule, 'CFB')
+  return render_template('cfb_schedule.html', schedule=schedule, subnav_sport='CFB')
+
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():
     """SSE stream: clears the MLB stats cache, fetches every data source in order,
@@ -3705,7 +3715,7 @@ def api_live_scores():
     Called by the dashboard every 2 minutes to update score badges.
     """
     from odds_api import _normalize
-    import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl
+    import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl, cfb_api as _cfb
     from flask import jsonify
 
     open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
@@ -3728,6 +3738,11 @@ def api_live_scores():
     if 'NFL' in sports_needed:
         try:
             score_map.update(_nfl.get_live_scores())
+        except Exception:
+            pass
+    if 'CFB' in sports_needed:
+        try:
+            score_map.update(_cfb.get_live_scores())
         except Exception:
             pass
 
@@ -4262,7 +4277,8 @@ def _warm_all_caches(send_daily: bool = False):
     # enough to roll up into a per-game category instead of raw odds.
     for name, fn in [('MLB', mlb_api.build_schedule_context),
                      ('NHL', nhl_api.build_schedule_context),
-                     ('NFL', nfl_api.build_schedule_context)]:
+                     ('NFL', nfl_api.build_schedule_context),
+                     ('CFB', cfb_api.build_schedule_context)]:
         try:
             result = fn()
             if result:
