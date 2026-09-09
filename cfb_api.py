@@ -1,6 +1,7 @@
 import time
 import requests
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, date as _date
 from zoneinfo import ZoneInfo
 import odds_api
@@ -76,6 +77,31 @@ def _parse_rank(competitor):
         return int((competitor.get('curatedRank') or {}).get('current', 99))
     except (TypeError, ValueError):
         return 99
+
+
+# ESPN's `team.conferenceId` → FBS conference name. Hardcoded rather than
+# fetched live: confirmed against the standings endpoint
+# (site.api.espn.com/.../standings?group=80) and conference realignment is
+# an offseason event, not something that needs a live lookup on every page
+# load. Non-FBS opponents (buy games) carry conference ids outside this map
+# — those fall back to 'FCS' in _conference_name below.
+_CFB_CONFERENCES = {
+    '151': 'American',
+    '1':   'ACC',
+    '4':   'Big 12',
+    '5':   'Big Ten',
+    '12':  'C-USA',
+    '18':  'Independent',
+    '15':  'MAC',
+    '17':  'Mountain West',
+    '9':   'Pac-12',
+    '8':   'SEC',
+    '37':  'Sun Belt',
+}
+
+
+def _conference_name(conference_id):
+    return _CFB_CONFERENCES.get(str(conference_id), 'FCS')
 
 
 def _get_cfb_season():
@@ -209,6 +235,18 @@ def _get_game_summary(event_id):
     return _cached_get(ESPN_CFB_SUMMARY, {'event': event_id}, f'cfb_summary_{event_id}', _TTL['summary'])
 
 
+def _prefetch_game_summaries(events):
+    """Warms _get_game_summary's cache for every event in parallel — a full
+    FBS week runs 60-90 games (vs. the NFL's ~16), so fetching summaries
+    one at a time on the week page would be the dominant cost of the load.
+    Same fix nfl_api.py applies for the same reason."""
+    event_ids = [e.get('id') for e in events if e.get('id')]
+    if not event_ids:
+        return
+    with ThreadPoolExecutor(max_workers=min(len(event_ids), 8)) as pool:
+        list(pool.map(_get_game_summary, event_ids))
+
+
 def _parse_weather(summary):
     """None for domes/retractable roofs — ESPN omits the weather block entirely for those."""
     if not summary:
@@ -279,9 +317,138 @@ def get_live_scores():
 
 # ── Schedule context ───────────────────────────────────────────────────────────
 
-def build_schedule_context():
-    """Returns today's FBS games from ESPN with model predictions. Empty list during offseason."""
+def _build_game(event, team_stats, game_log, cfb_odds_map):
+    """Builds one game's full display dict — teams, model, odds, weather.
+    Shared by build_schedule_context() (the daily-digest cache warmer) and
+    build_week_schedule_context() (the /cfb page) so both render off the
+    same data shape, same split as nfl_api.py's _build_game."""
     from odds_api import _normalize
+
+    comp = event.get('competitions', [{}])[0]
+    venue_obj = comp.get('venue', {})
+    venue = venue_obj.get('fullName', '')
+    if venue_obj.get('city'):
+        venue += f", {venue_obj['city']}"
+
+    status_obj = comp.get('status', {}).get('type', {})
+    state = status_obj.get('state', 'pre')
+    if state == 'in':
+        status = 'Live'
+    elif state == 'post':
+        status = 'Final'
+    else:
+        status = 'Preview'
+
+    teams = {}
+    for competitor in comp.get('competitors', []):
+        side = competitor.get('homeAway', 'home')
+        team = competitor.get('team', {})
+        records = competitor.get('records', [])
+        overall = _parse_record(records, 'overall')
+        home_r  = _parse_record(records, 'Home')
+        away_r  = _parse_record(records, 'Road')
+        w, l = _record_to_wl(overall)
+
+        if side == 'home':
+            split_summary = home_r
+            split_label   = 'Home'
+        else:
+            split_summary = away_r
+            split_label   = 'Away'
+
+        split_w, split_l = _record_to_wl(split_summary)
+
+        team_id = team.get('id')
+        rank    = _parse_rank(competitor)
+        teams[side] = {
+            'id':          team_id,
+            'name':        team.get('displayName', ''),
+            'abbrev':      team.get('abbreviation', ''),
+            'abbr':        team.get('abbreviation', ''),   # alias used in model template
+            # NCAA teams use ESPN's numeric team id in the logo CDN path,
+            # not abbreviation — abbreviations aren't unique/clean across
+            # 130+ FBS schools the way they are for the NFL's 32 teams.
+            'logo_url':    f"https://a.espncdn.com/i/teamlogos/ncaa/500/{team_id}.png" if team_id else '',
+            'wins':        w,
+            'losses':      l,
+            'ot_losses':   None,
+            'split_w':     split_w,
+            'split_l':     split_l,
+            'split_label': split_label,
+            'side':        side,
+            'form':        [],
+            'score':       competitor.get('score'),
+            'ppg':         None,
+            'ppg_allowed': None,
+            'rest_days':   None,
+            'rank':        rank,
+            'rank_display': rank if rank <= 25 else None,
+            'conference':  _conference_name(team.get('conferenceId')),
+        }
+
+    away = teams.get('away', {})
+    home = teams.get('home', {})
+
+    summary = _get_game_summary(event.get('id'))
+    weather = _parse_weather(summary)
+
+    # Enrich with season stats, recent form, and rest days entering *this*
+    # game's date — not "today", since a week view renders games that
+    # haven't happened yet (or already have, for past weeks).
+    game_date_et = _event_date_et(event.get('date', ''))
+    for team in (home, away):
+        name = team.get('name', '')
+        ts   = team_stats.get(name, {})
+        team['ppg']         = ts.get('ppg')
+        team['ppg_allowed'] = ts.get('ppg_allowed')
+        team['form']        = _team_recent_form(game_log, name)
+        team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
+
+    # Run the model
+    try:
+        model = cfb_model.predict(home, away, game_time_utc=event.get('date', ''))
+    except Exception:
+        model = None
+
+    game_odds = odds_api.lookup_game_odds(cfb_odds_map, home.get('name', ''), away.get('name', ''),
+                                           game_date=event.get('date', '')[:13] or None)
+
+    espn_odds = (comp.get('odds') or [{}])[0]
+    odds_line  = espn_odds.get('details', '')
+    over_under = espn_odds.get('overUnder')
+
+    a_ab = away.get('abbrev', '')
+    h_ab = home.get('abbrev', '')
+
+    return {
+        'game_id':       event.get('id'),
+        'game_time_utc': event.get('date', ''),
+        'status':        status,
+        'venue':         venue,
+        'away':          away,
+        'home':          home,
+        'odds_line':     odds_line,
+        'over_under':    over_under,
+        'odds':          game_odds,
+        'model':         model,
+        'weather':       weather,
+        'bet_name':      f"{a_ab} @ {h_ab}",
+        'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
+        'is_top25':      bool(home.get('rank_display') or away.get('rank_display')),
+        # ESPN season.type: 1=preseason (spring games), 2=regular, 3=postseason.
+        # _upsert_predictions uses this to skip writing preseason/bowl games into
+        # game_predictions so they don't corrupt the Model Performance page's
+        # regular-season accuracy/calibration tracking — bowls have opt-outs and
+        # roster-churn dynamics the model has no signal for, same reasoning
+        # nfl_api.py applies to preseason.
+        'is_preseason':  event.get('season', {}).get('type') != 2,
+    }
+
+
+def build_schedule_context():
+    """Returns today's FBS games from ESPN with model predictions. Empty list
+    during offseason. Used by the daily-digest cache warmer, not the /cfb
+    page itself (see build_week_schedule_context)."""
     today_str = _today_et()
     data = _cached_get(ESPN_CFB, {'groups': _FBS_GROUP, 'limit': 400}, f'cfb_{today_str}', _TTL['scoreboard'])
     if not data:
@@ -295,129 +462,13 @@ def build_schedule_context():
     if not today_events:
         return []
 
-    # Fetch season-level stats once for all games
-    season     = _get_cfb_season()
-    game_log   = _get_season_game_log(season)
-    team_stats = _compute_team_season_stats(game_log)
+    season       = _get_cfb_season()
+    game_log     = _get_season_game_log(season)
+    team_stats   = _compute_team_season_stats(game_log)
+    cfb_odds_map = odds_api.get_odds_map('cfb')
 
-    games = []
-    for event in today_events:
-        comp = event.get('competitions', [{}])[0]
-        venue_obj = comp.get('venue', {})
-        venue = venue_obj.get('fullName', '')
-        if venue_obj.get('city'):
-            venue += f", {venue_obj['city']}"
-
-        status_obj = comp.get('status', {}).get('type', {})
-        state = status_obj.get('state', 'pre')
-        if state == 'in':
-            status = 'Live'
-        elif state == 'post':
-            status = 'Final'
-        else:
-            status = 'Preview'
-
-        teams = {}
-        for competitor in comp.get('competitors', []):
-            side = competitor.get('homeAway', 'home')
-            team = competitor.get('team', {})
-            records = competitor.get('records', [])
-            overall = _parse_record(records, 'overall')
-            home_r  = _parse_record(records, 'Home')
-            away_r  = _parse_record(records, 'Road')
-            w, l = _record_to_wl(overall)
-
-            if side == 'home':
-                split_summary = home_r
-                split_label   = 'Home'
-            else:
-                split_summary = away_r
-                split_label   = 'Away'
-
-            split_w, split_l = _record_to_wl(split_summary)
-
-            team_id = team.get('id')
-            rank    = _parse_rank(competitor)
-            teams[side] = {
-                'id':          team_id,
-                'name':        team.get('displayName', ''),
-                'abbrev':      team.get('abbreviation', ''),
-                'abbr':        team.get('abbreviation', ''),   # alias used in model template
-                # NCAA teams use ESPN's numeric team id in the logo CDN path,
-                # not abbreviation — abbreviations aren't unique/clean across
-                # 130+ FBS schools the way they are for the NFL's 32 teams.
-                'logo_url':    f"https://a.espncdn.com/i/teamlogos/ncaa/500/{team_id}.png" if team_id else '',
-                'wins':        w,
-                'losses':      l,
-                'ot_losses':   None,
-                'split_w':     split_w,
-                'split_l':     split_l,
-                'split_label': split_label,
-                'side':        side,
-                'form':        [],
-                'score':       competitor.get('score'),
-                'ppg':         None,
-                'ppg_allowed': None,
-                'rest_days':   None,
-                'rank':        rank,
-                'rank_display': rank if rank <= 25 else None,
-            }
-
-        away = teams.get('away', {})
-        home = teams.get('home', {})
-
-        summary = _get_game_summary(event.get('id'))
-        weather = _parse_weather(summary)
-
-        # Enrich with season stats, recent form, and rest days
-        for team, is_home in ((home, True), (away, False)):
-            name = team.get('name', '')
-            ts   = team_stats.get(name, {})
-            team['ppg']         = ts.get('ppg')
-            team['ppg_allowed'] = ts.get('ppg_allowed')
-            team['form']        = _team_recent_form(game_log, name)
-            team['rest_days']   = _team_rest_days(game_log, name, today_str)
-
-        # Run the model
-        try:
-            model = cfb_model.predict(home, away, game_time_utc=event.get('date', ''))
-        except Exception:
-            model = None
-
-        # Odds
-        cfb_odds_map = odds_api.get_odds_map('cfb')
-        game_odds    = odds_api.lookup_game_odds(cfb_odds_map, home.get('name', ''), away.get('name', ''),
-                                                  game_date=event.get('date', '')[:13] or None)
-
-        espn_odds = (comp.get('odds') or [{}])[0]
-        odds_line  = espn_odds.get('details', '')
-        over_under = espn_odds.get('overUnder')
-
-        a_ab = away.get('abbrev', '')
-        h_ab = home.get('abbrev', '')
-
-        games.append({
-            'game_id':       event.get('id'),
-            'game_time_utc': event.get('date', ''),
-            'status':        status,
-            'venue':         venue,
-            'away':          away,
-            'home':          home,
-            'odds_line':     odds_line,
-            'over_under':    over_under,
-            'odds':          game_odds,
-            'model':         model,
-            'weather':       weather,
-            'bet_name':      f"{a_ab} @ {h_ab}",
-            'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
-            # ESPN season.type: 1=preseason (spring games), 2=regular, 3=postseason.
-            # _upsert_predictions uses this to skip writing preseason/bowl games into
-            # game_predictions so they don't corrupt the Model Performance page's
-            # regular-season accuracy/calibration tracking — bowls have opt-outs and
-            # roster-churn dynamics the model has no signal for, same reasoning
-            # nfl_api.py applies to preseason.
-            'is_preseason':  event.get('season', {}).get('type') != 2,
-        })
+    _prefetch_game_summaries(today_events)
+    games = [_build_game(event, team_stats, game_log, cfb_odds_map) for event in today_events]
 
     try:
         date_display = datetime.now(_ET).strftime('%a, %b %-d')
@@ -425,3 +476,68 @@ def build_schedule_context():
         date_display = today_str
 
     return [{'date': today_str, 'date_display': date_display, 'games': games}]
+
+
+# ── Week schedule context ─────────────────────────────────────────────────────
+
+_REG_SEASON_WEEKS = 15   # matches _get_season_game_log's range(1, 16)
+
+
+def get_current_week():
+    """(season, week_number) for the week containing "now" — falls back to
+    week 1 if ESPN's scoreboard doesn't return a week (e.g. deep offseason)."""
+    season = _get_cfb_season()
+    data = _cached_get(ESPN_CFB, {'groups': _FBS_GROUP, 'limit': 400}, f'cfb_{_today_et()}', _TTL['scoreboard'])
+    week = (data or {}).get('week', {}).get('number') or 1
+    return season, week
+
+
+def build_week_schedule_context(week=None):
+    """Returns a full FBS week's games grouped by day — same shape as
+    build_schedule_context() (a list of {date, date_display, games}) under
+    'days', so game-card rendering is identical to the old daily view.
+    `week=None` uses the current week. Clamped to the 15-week regular season."""
+    season, current_week = get_current_week()
+    if week is None:
+        week = current_week
+    week = max(1, min(_REG_SEASON_WEEKS, week))
+
+    data = _cached_get(
+        ESPN_CFB,
+        # Regular season only (seasontype=2) — matches _get_season_game_log's
+        # convention; a "week" concept doesn't apply the same way to bowls.
+        {'seasontype': 2, 'week': week, 'season': season, 'dates': season,
+         'groups': _FBS_GROUP, 'limit': 400},
+        f'cfb_week_sched_{season}_{week}',
+        _TTL['scoreboard'],
+    )
+    events = (data or {}).get('events', [])
+
+    game_log     = _get_season_game_log(season)
+    team_stats   = _compute_team_season_stats(game_log)
+    cfb_odds_map = odds_api.get_odds_map('cfb')
+
+    _prefetch_game_summaries(events)
+    by_date = defaultdict(list)
+    for event in events:
+        by_date[_event_date_et(event.get('date', ''))].append(
+            _build_game(event, team_stats, game_log, cfb_odds_map)
+        )
+
+    today_str = _today_et()
+    days = []
+    for d in sorted(by_date.keys()):
+        try:
+            date_display = datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %-d')
+        except Exception:
+            date_display = d
+        days.append({'date': d, 'date_display': date_display, 'games': by_date[d], 'is_today': d == today_str})
+
+    return {
+        'week':            week,
+        'season':          season,
+        'is_current_week': week == current_week,
+        'prev_week':       week - 1 if week > 1 else None,
+        'next_week':       week + 1 if week < _REG_SEASON_WEEKS else None,
+        'days':            days,
+    }
