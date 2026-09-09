@@ -2548,10 +2548,12 @@ def mlb_schedule():
                          sync_next='/mlb', subnav_sport='MLB')
 
 _SPORT_META = {
+
   'MLB': {'emoji': '⚾', 'schedule_endpoint': 'mlb_schedule', 'baseline': '~54% (home field)'},
   'NHL': {'emoji': '🏒', 'schedule_endpoint': 'nhl_schedule', 'baseline': '~54% (home ice)'},
   'NFL': {'emoji': '🏈', 'schedule_endpoint': 'nfl_schedule', 'baseline': '~57% (home field)'},
   'CFB': {'emoji': '🎓', 'schedule_endpoint': 'cfb_schedule', 'baseline': '~59% (home field)'},
+
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
 
