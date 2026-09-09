@@ -3393,9 +3393,87 @@ def nfl_schedule():
 
 @app.route('/cfb')
 def cfb_schedule():
-  schedule = cfb_api.build_schedule_context()
-  _upsert_predictions(schedule, 'CFB')
-  return render_template('cfb_schedule.html', schedule=schedule, subnav_sport='CFB')
+  from urllib.parse import urlencode as _urlencode
+
+  week = request.args.get('week', type=int)
+  week_ctx = cfb_api.build_week_schedule_context(week)
+  _upsert_predictions(week_ctx['days'], 'CFB')
+
+  # Today's Recommendations: a lightweight edge-ranked list, not MLB's full
+  # trust-score/unified-score system — CFB has no season of backtested
+  # GamePrediction history to calibrate that against yet. Ranks by model
+  # edge vs. the vig-free market price and requires a positive Kelly
+  # fraction, which naturally pushes lopsided ranked-vs-cupcake games (where
+  # the market is already priced near-certain and there's no real edge left)
+  # to the bottom instead of needing an explicit odds cutoff. Scoped to the
+  # displayed week (not "today") to match the week-view page below.
+  conferences = set()
+  recommended = []
+  for day in week_ctx['days']:
+    for game in day.get('games', []):
+      home_t, away_t = game.get('home') or {}, game.get('away') or {}
+      if home_t.get('conference'):
+        conferences.add(home_t['conference'])
+      if away_t.get('conference'):
+        conferences.add(away_t['conference'])
+
+      if game.get('status') != 'Preview':
+        continue
+      model, odds = game.get('model'), game.get('odds')
+      if not model or not odds:
+        continue
+      hp, ap = model.get('home_prob', 0.5), model.get('away_prob', 0.5)
+      h_imp, a_imp = odds.get('home_implied'), odds.get('away_implied')
+      if h_imp is None or a_imp is None:
+        continue
+
+      if (hp - h_imp) >= (ap - a_imp):
+        pick_side, pick_team, pick_prob, mkt_implied, amer_odds = 'home', home_t, hp, h_imp, odds.get('home_best')
+      else:
+        pick_side, pick_team, pick_prob, mkt_implied, amer_odds = 'away', away_t, ap, a_imp, odds.get('away_best')
+      if amer_odds is None:
+        continue
+
+      k_b = (amer_odds / 100.0) if amer_odds > 0 else (-100.0 / amer_odds if amer_odds < 0 else 0)
+      k_f = ((k_b * pick_prob - (1 - pick_prob)) / k_b) if k_b > 0 else 0
+      if k_f <= 0:
+        continue
+      ev_pct = round((k_b * pick_prob - (1 - pick_prob)) * 100, 1)
+      edge = round((pick_prob - mkt_implied) * 100, 1)
+
+      if k_f >= 0.10:   k_label, k_cls = 'Strong', 'edge-pos'
+      elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
+      else:             k_label, k_cls = 'Lean',   'edge-neutral'
+
+      qs = _urlencode({
+          'name':          f"{pick_team.get('abbrev', '')} ML",
+          'sport':         'CFB',
+          'eventstartutc': game.get('game_time_utc', ''),
+          'odds':          amer_odds,
+          'implied':       mkt_implied,
+          'model_prob':    pick_prob,
+          'home_name':     home_t.get('name', ''),
+          'away_name':     away_t.get('name', ''),
+          'bet_side':      pick_side,
+      })
+      recommended.append({
+          'game':         game,
+          'pick_side':    pick_side,
+          'pick_abbr':    pick_team.get('abbrev', ''),
+          'pick_rank':    pick_team.get('rank_display'),
+          'amer_odds':    amer_odds,
+          'edge':         edge,
+          'ev_pct':       ev_pct,
+          'k_label':      k_label,
+          'k_cls':        k_cls,
+          'bet_url':      f"{url_for('new_bet')}?{qs}",
+      })
+
+  recommended.sort(key=lambda r: -r['edge'])
+  recommended = recommended[:15]
+
+  return render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
+                         recommended=recommended, conferences=sorted(conferences))
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():
@@ -4468,4 +4546,4 @@ if (os.environ.get('WERKZEUG_RUN_MAIN') != 'false'
 
 
 if __name__ == '__main__':
-  app.run(host="0.0.0.0", port=5000, debug=True)
+  app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)), debug=True)

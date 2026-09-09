@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}College Football Today — Spooky Sports{% endblock %}
+{% block title %}CFB Week {{ week_ctx.week }} — Spooky Sports{% endblock %}
 
 {% block head %}
 <style>
@@ -30,25 +30,126 @@
     font-size: 0.68rem; font-weight: 700; color: var(--orange);
     margin-right: 3px;
 }
+.conf-tag { color: var(--text-muted); }
+.cfb-filter-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.cfb-filter-btn {
+    font-size: 0.75rem; padding: 5px 11px;
+    background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); cursor: pointer; font-weight: 600;
+}
+.cfb-filter-btn.filter-active {
+    background: var(--orange-dim); border-color: var(--orange); color: var(--orange);
+}
+.cfb-filter-select {
+    font-size: 0.75rem; padding: 5px 9px;
+    background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); cursor: pointer; font-weight: 600;
+}
+.cfb-filter-count { font-size: 0.72rem; color: var(--text-muted); }
+.rec-col-hide { }
+@media (max-width: 600px) {
+    .rec-col-hide { display: none; }
+}
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="schedule-body">
 
-{% if not schedule %}
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('cfb_schedule', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week_ctx.week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('cfb_schedule', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+{% if not week_ctx.days %}
 <div class="card offseason-card">
     <div class="offseason-icon">🏈</div>
-    <div class="offseason-title">No college football games today</div>
+    <div class="offseason-title">No games found for Week {{ week_ctx.week }}</div>
     <div class="offseason-sub">The FBS regular season runs late August – early December.<br>Check back when games are on the slate.</div>
+    {% if not week_ctx.is_current_week %}
+    <div class="offseason-sub"><a href="{{ url_for('cfb_schedule') }}" class="refresh-link">Jump to the current week</a></div>
+    {% endif %}
 </div>
 
 {% else %}
-{% for day in schedule %}
-<div class="day-header">
-    <h2>{{ day.date_display }}</h2>
+
+{% if recommended %}
+<div class="card" style="margin-bottom:14px;">
+  <div class="section-header" style="margin-bottom:10px;">
+    <h2>This Week's Recommendations</h2>
+    <span class="small">sorted by model edge · positive-Kelly picks only, top 15</span>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+    <thead>
+      <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
+        <th style="padding:5px 8px;text-align:left;">#</th>
+        <th style="padding:5px 8px;text-align:left;">Pick</th>
+        <th style="padding:5px 8px;text-align:left;">Matchup</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
+        <th style="padding:5px 8px;text-align:center;">Verdict</th>
+        <th style="padding:5px 8px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in recommended %}
+    {% set g = r.game %}
+    <tr data-cfb-filterable="1" data-top25="{{ '1' if g.is_top25 else '0' }}"
+        data-conf-home="{{ g.home.conference }}" data-conf-away="{{ g.away.conference }}"
+        style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px;color:var(--text-muted);">{{ loop.index }}</td>
+      <td style="padding:6px 8px;font-weight:800;color:var(--orange);">
+        {% if r.pick_rank %}<span class="rank-badge">#{{ r.pick_rank }}</span>{% endif %}{{ r.pick_abbr }}
+      </td>
+      <td style="padding:6px 8px;">{{ g.away.abbrev }} @ {{ g.home.abbrev }}
+        {% if g.game_time_utc %}<span class="game-time" data-utc="{{ g.game_time_utc }}" style="font-size:0.7rem;color:var(--text-muted);margin-left:6px;">—</span>{% endif %}
+      </td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
+      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
+      <td style="padding:6px 8px;text-align:right;"><a href="{{ r.bet_url }}" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;">Bet</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if conferences %}
+<div class="cfb-filter-bar">
+    <button type="button" id="cfb-filter-top25" class="cfb-filter-btn">🏆 Top 25 Only</button>
+    <select id="cfb-filter-conf" class="cfb-filter-select">
+        <option value="">All Conferences</option>
+        {% for c in conferences %}
+        <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+    </select>
+    <span class="cfb-filter-count" id="cfb-filter-count"></span>
+</div>
+{% endif %}
+
+{% for day in week_ctx.days %}
+<div class="day-header{{ ' day-header-today' if day.is_today }}">
+    <h2>{{ day.date_display }}{% if day.is_today %} <span class="today-badge">Today</span>{% endif %}</h2>
     <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
-    <span class="refresh-info"><a href="{{ url_for('cfb_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+    <span class="refresh-info"><a href="{{ url_for('cfb_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
 
 {% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
@@ -64,7 +165,9 @@
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
 {% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
 
-<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
+<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;"
+     data-cfb-filterable="1" data-top25="{{ '1' if game.is_top25 else '0' }}"
+     data-conf-home="{{ game.home.conference }}" data-conf-away="{{ game.away.conference }}">
 
     <!-- ── Header bar ── -->
     <div class="game-header">
@@ -97,7 +200,7 @@
             <div class="sb-team-info">
                 <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
                 <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
-                <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }}</div>
+                <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }} <span class="conf-tag">· {{ game.away.conference }}</span></div>
                 {% if game.status != 'Final' %}
                 <a href="{{ bet_away_url }}" class="btn-bet-team sb-bet-mobile">{{ game.away.abbrev }}</a>
                 {% endif %}
@@ -128,7 +231,7 @@
             <div class="sb-team-info">
                 <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
                 <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
-                <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }}</div>
+                <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }} <span class="conf-tag">· {{ game.home.conference }}</span></div>
                 {% if game.status != 'Final' %}
                 <a href="{{ bet_home_url }}" class="btn-bet-team sb-bet-mobile">{{ game.home.abbrev }}</a>
                 {% endif %}
@@ -239,5 +342,39 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
         el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
     } catch(e) {}
 });
+
+(function() {
+    var top25Btn = document.getElementById('cfb-filter-top25');
+    var confSel  = document.getElementById('cfb-filter-conf');
+    var countEl  = document.getElementById('cfb-filter-count');
+    if (!top25Btn && !confSel) return;
+    var items = document.querySelectorAll('[data-cfb-filterable]');
+    var cards = document.querySelectorAll('.game-card[data-cfb-filterable]');
+    var top25Active = false;
+
+    function apply() {
+        var conf = confSel ? confSel.value : '';
+        var shownCards = 0;
+        items.forEach(function(el) {
+            var show = true;
+            if (top25Active && el.getAttribute('data-top25') !== '1') show = false;
+            if (conf && el.getAttribute('data-conf-home') !== conf && el.getAttribute('data-conf-away') !== conf) show = false;
+            el.style.display = show ? '' : 'none';
+            if (show && el.classList.contains('game-card')) shownCards++;
+        });
+        if (countEl) {
+            countEl.textContent = (top25Active || conf) ? (shownCards + ' of ' + cards.length + ' games shown') : '';
+        }
+    }
+
+    if (top25Btn) {
+        top25Btn.addEventListener('click', function() {
+            top25Active = !top25Active;
+            top25Btn.classList.toggle('filter-active', top25Active);
+            apply();
+        });
+    }
+    if (confSel) confSel.addEventListener('change', apply);
+})();
 </script>
 {% endblock %}
