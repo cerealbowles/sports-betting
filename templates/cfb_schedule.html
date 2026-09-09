@@ -1,7 +1,68 @@
-{# Single NFL game card. Expects `game` in context — included once per
-   game per day in nfl_schedule.html's week view. #}
-{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=NFL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
-{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=NFL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
+{% extends "base.html" %}
+{% block title %}College Football Today — Spooky Sports{% endblock %}
+
+{% block head %}
+<style>
+.cfb-odds-badge {
+    font-size: 0.68rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--orange-dim); color: var(--orange);
+    border: 1px solid rgba(251,79,20,0.22);
+}
+.offseason-card { text-align: center; padding: 32px 16px; }
+.offseason-icon { font-size: 2.5rem; margin-bottom: 12px; }
+.offseason-title { color: var(--silver); font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+.offseason-sub   { color: var(--text-muted); font-size: 0.85rem; }
+.wind-mod    { color: #f59e0b; font-weight: 600; }
+.wind-strong { color: #ef4444; font-weight: 700; }
+.cfb-stats-row {
+    font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.cfb-stats-row b { color: var(--silver); }
+.fg-home .cfb-stats-row { justify-content: flex-end; }
+.kelly-verdict {
+    font-size: 0.62rem; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px;
+    white-space: nowrap; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.rank-badge {
+    font-size: 0.68rem; font-weight: 700; color: var(--orange);
+    margin-right: 3px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% if not schedule %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🏈</div>
+    <div class="offseason-title">No college football games today</div>
+    <div class="offseason-sub">The FBS regular season runs late August – early December.<br>Check back when games are on the slate.</div>
+</div>
+
+{% else %}
+{% for day in schedule %}
+<div class="day-header">
+    <h2>{{ day.date_display }}</h2>
+    <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
+    <span class="refresh-info"><a href="{{ url_for('cfb_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+</div>
+
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set ns = namespace(final_hdr=False) %}
+<div class="games-grid">
+{% for game in _live + _upcoming + _final %}
+{% if game.status == 'Final' and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
+{% endif %}
+
+{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
+{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
 
 <div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
 
@@ -9,11 +70,6 @@
     <div class="game-header">
         {% if game.status == 'Live' %}
             <span class="status-live">● Live</span>
-            {% if game.live_state and game.live_state.period %}
-            <span class="live-qtr-clock">Q{{ game.live_state.period }}{% if game.live_state.display_clock %} · {{ game.live_state.display_clock }}{% endif %}</span>
-            {% elif game.live_state and game.live_state.clock_text %}
-            <span class="live-qtr-clock">{{ game.live_state.clock_text }}</span>
-            {% endif %}
         {% elif game.status == 'Final' %}
             <span class="status-final">Final</span>
         {% else %}
@@ -28,7 +84,7 @@
         {%- if game.weather.precip_pct %} · <span class="wind-info wind-mod">☔ {{ game.weather.precip_pct }}%</span>{%- endif %}</span>
         {% endif %}
         <div class="game-header-right">
-            {% if game.odds_line %}<span class="nfl-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
+            {% if game.odds_line %}<span class="cfb-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
         </div>
     </div>
 
@@ -39,12 +95,9 @@
         <div class="sb-team sb-away">
             <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
             <div class="sb-team-info">
-                <div class="sb-name">{{ game.away.name }}{% if game.status == 'Live' and game.live_state and game.live_state.possession_away %} <span class="poss-ico" title="Has the ball">🏈</span>{% endif %}</div>
+                <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
                 <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
                 <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }}</div>
-                {% if game.status == 'Live' and game.live_state and game.live_state.away_timeouts is not none %}
-                <div class="timeout-dots" title="{{ game.live_state.away_timeouts }} timeout{{ 's' if game.live_state.away_timeouts != 1 }} left">{% for i in range(3) %}<span class="to-dot{{ ' to-used' if i >= game.live_state.away_timeouts }}"></span>{% endfor %}</div>
-                {% endif %}
                 {% if game.status != 'Final' %}
                 <a href="{{ bet_away_url }}" class="btn-bet-team sb-bet-mobile">{{ game.away.abbrev }}</a>
                 {% endif %}
@@ -62,15 +115,6 @@
             {% else %}
             <div class="sb-vs">vs</div>
             {% endif %}
-            {% if game.status == 'Live' and game.live_state and (game.live_state.down_distance or game.live_state.clock_text) %}
-            <div class="live-situation">
-                {% if game.live_state.down_distance %}
-                <span class="live-down-distance{{ ' live-redzone' if game.live_state.is_redzone }}">{{ game.live_state.down_distance }}{% if game.live_state.field_pos %} · {{ game.live_state.field_pos }}{% endif %}</span>
-                {% else %}
-                <span class="live-down-distance">{{ game.live_state.clock_text }}</span>
-                {% endif %}
-            </div>
-            {% endif %}
             {% if game.status != 'Final' %}
             <div class="bet-pair desktop-bet">
                 <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
@@ -82,12 +126,9 @@
         <!-- Home -->
         <div class="sb-team sb-home">
             <div class="sb-team-info">
-                <div class="sb-name">{{ game.home.name }}{% if game.status == 'Live' and game.live_state and game.live_state.possession_home %} <span class="poss-ico" title="Has the ball">🏈</span>{% endif %}</div>
+                <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
                 <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
                 <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }}</div>
-                {% if game.status == 'Live' and game.live_state and game.live_state.home_timeouts is not none %}
-                <div class="timeout-dots" title="{{ game.live_state.home_timeouts }} timeout{{ 's' if game.live_state.home_timeouts != 1 }} left">{% for i in range(3) %}<span class="to-dot{{ ' to-used' if i >= game.live_state.home_timeouts }}"></span>{% endfor %}</div>
-                {% endif %}
                 {% if game.status != 'Final' %}
                 <a href="{{ bet_home_url }}" class="btn-bet-team sb-bet-mobile">{{ game.home.abbrev }}</a>
                 {% endif %}
@@ -107,7 +148,7 @@
                 {% for r in team.form %}<span class="dot {{ 'dot-w' if r == 'W' else 'dot-l' }}">{{ r }}</span>{% endfor %}
                 {% if not team.form %}<span style="color:var(--text-muted);font-size:0.7rem;">—</span>{% endif %}
             </div>
-            <div class="nfl-stats-row">
+            <div class="cfb-stats-row">
                 {% if team.ppg is not none %}
                 <span>PPG <b>{{ team.ppg }}</b></span>
                 <span>Def <b>{{ team.ppg_allowed }}</b></span>
@@ -116,24 +157,6 @@
                 <span>Rest <b>{{ team.rest_days }}d</b></span>
                 {% endif %}
             </div>
-            {% if team.injuries %}
-            <details class="injury-toggle">
-                <summary>
-                    {% set _out = team.injuries | selectattr('status', 'equalto', 'Out') | list %}
-                    {% set _other = team.injuries | rejectattr('status', 'equalto', 'Out') | list %}
-                    🚑 {% if _out %}{{ _out | length }} out{% endif %}{% if _out and _other %}, {% endif %}{% if _other %}{{ _other | length }} ques.{% endif %}
-                </summary>
-                <div class="injury-list">
-                    {% for p in team.injuries %}
-                    <div class="injury-row">
-                        <span class="injury-name">{{ p.name }}</span>
-                        <span class="injury-pos">{{ p.pos }}</span>
-                        <span class="injury-status injury-status-{{ p.status | lower }}">{{ p.status }}</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </details>
-            {% endif %}
         </div>
         {% endfor %}
     </div>
@@ -197,3 +220,24 @@
     {% if game.status == 'Final' %}</details>{% endif %}
 
 </div><!-- /.game-card -->
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endfor %}
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+</script>
+{% endblock %}

@@ -1702,3 +1702,10 @@ a.action-link:hover { color: var(--silver); }
     letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px;
     background: var(--orange-dim); color: var(--orange);
 }
+.day-header-today h2 { color: var(--orange); }
+.today-badge {
+    font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px;
+    background: var(--orange-dim); color: var(--orange);
+    vertical-align: middle;
+}

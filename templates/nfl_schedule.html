@@ -1,22 +1,41 @@
 {% extends "base.html" %}
-{% block title %}NFL Today — Spooky Sports{% endblock %}
+{% block title %}NFL Week {{ week_ctx.week }} — Spooky Sports{% endblock %}
 
 {% block content %}
 <div class="schedule-body">
 
-{% if not schedule %}
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('nfl_schedule', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week_ctx.week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('nfl_schedule', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+{% if not week_ctx.days %}
 <div class="card offseason-card">
     <div class="offseason-icon">🏈</div>
-    <div class="offseason-title">No NFL games today</div>
-    <div class="offseason-sub">The NFL regular season runs September – January.<br>Check back when the season kicks off.</div>
+    <div class="offseason-title">No games found for Week {{ week_ctx.week }}</div>
+    {% if not week_ctx.is_current_week %}
+    <div class="offseason-sub"><a href="{{ url_for('nfl_schedule') }}" class="refresh-link">Jump to the current week</a></div>
+    {% endif %}
 </div>
 
 {% else %}
-{% for day in schedule %}
-<div class="day-header">
-    <h2>{{ day.date_display }}</h2>
+{% for day in week_ctx.days %}
+<div class="day-header{{ ' day-header-today' if day.is_today }}">
+    <h2>{{ day.date_display }}{% if day.is_today %} <span class="today-badge">Today</span>{% endif %}</h2>
     <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
-    <span class="refresh-info"><a href="{{ url_for('nfl_week') }}" class="refresh-link">Full week ▸</a> · <a href="{{ url_for('nfl_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+    <span class="refresh-info"><a href="{{ url_for('nfl_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
 
 {% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
