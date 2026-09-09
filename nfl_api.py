@@ -296,9 +296,162 @@ def get_live_scores():
 
 # ── Schedule context ───────────────────────────────────────────────────────────
 
+def _build_game(event, team_stats, game_log, nfl_odds_map):
+    """Builds one game's full display dict — teams, live state, model, odds,
+    weather, injuries. Shared by build_schedule_context() (today) and
+    build_week_schedule_context() (a full week) so both views render
+    identically off templates/_nfl_game_card.html."""
+    from odds_api import _normalize
+
+    comp = event.get('competitions', [{}])[0]
+    venue_obj = comp.get('venue', {})
+    venue = venue_obj.get('fullName', '')
+    if venue_obj.get('city'):
+        venue += f", {venue_obj['city']}"
+
+    status_obj = comp.get('status', {}).get('type', {})
+    state = status_obj.get('state', 'pre')
+    if state == 'in':
+        status = 'Live'
+    elif state == 'post':
+        status = 'Final'
+    else:
+        status = 'Preview'
+
+    teams = {}
+    for competitor in comp.get('competitors', []):
+        side = competitor.get('homeAway', 'home')
+        team = competitor.get('team', {})
+        records = competitor.get('records', [])
+        overall = _parse_record(records, 'overall')
+        home_r  = _parse_record(records, 'Home')
+        away_r  = _parse_record(records, 'Road')
+        w, l = _record_to_wl(overall)
+
+        if side == 'home':
+            split_summary = home_r
+            split_label   = 'Home'
+        else:
+            split_summary = away_r
+            split_label   = 'Away'
+
+        split_w, split_l = _record_to_wl(split_summary)
+
+        abbrev = team.get('abbreviation', '')
+        teams[side] = {
+            'id':          team.get('id'),   # ESPN team id — needed to match situation.possession below
+            'name':        team.get('displayName', ''),
+            'abbrev':      abbrev,
+            'abbr':        abbrev,   # alias used in model template
+            'logo_url':    f"https://a.espncdn.com/i/teamlogos/nfl/500/{abbrev.lower()}.png",
+            'wins':        w,
+            'losses':      l,
+            'ot_losses':   None,
+            'split_w':     split_w,
+            'split_l':     split_l,
+            'split_label': split_label,
+            'side':        side,
+            'form':        [],
+            'score':       competitor.get('score'),
+            'ppg':         None,
+            'ppg_allowed': None,
+            'rest_days':   None,
+            'injuries':    [],
+        }
+
+    away = teams.get('away', {})
+    home = teams.get('home', {})
+
+    summary    = _get_game_summary(event.get('id'))
+    weather    = _parse_weather(summary)
+    injury_map = _parse_injuries(summary)
+    home['injuries'] = injury_map.get(home.get('id'), [])
+    away['injuries'] = injury_map.get(away.get('id'), [])
+
+    # ── Live game state — quarter, clock, down/distance, possession,
+    # field position, red zone, timeouts. ESPN's `situation` object is
+    # only present while state == 'in'; it goes away between plays'
+    # snapshots occasionally (e.g. right at a quarter change), so every
+    # field here is optional and the template only shows what's
+    # present. Field names below are ESPN's standard (undocumented but
+    # widely-used) football scoreboard schema — not yet verified
+    # against a real live NFL game since this was built in the
+    # off-season; if anything renders oddly once week 1 kicks off,
+    # check the actual payload shape first before assuming the model
+    # or template is wrong.
+    live_state = None
+    if state == 'in':
+        live_status = comp.get('status', {}) or {}
+        situation   = comp.get('situation', {}) or {}
+        poss_id     = situation.get('possession')
+        live_state = {
+            'period':        live_status.get('period'),
+            'display_clock': live_status.get('displayClock'),
+            'clock_text':    status_obj.get('shortDetail') or status_obj.get('detail'),
+            'down_distance': situation.get('shortDownDistanceText') or situation.get('downDistanceText'),
+            'field_pos':     situation.get('possessionText'),
+            'is_redzone':    bool(situation.get('isRedZone')),
+            'home_timeouts': situation.get('homeTimeouts'),
+            'away_timeouts': situation.get('awayTimeouts'),
+            'possession_home': bool(poss_id) and poss_id == home.get('id'),
+            'possession_away': bool(poss_id) and poss_id == away.get('id'),
+        }
+
+    # Enrich with season stats, recent form, and rest days entering *this*
+    # game's date — not "today", since a week view renders games that
+    # haven't happened yet (or already have, for past weeks).
+    game_date_et = _event_date_et(event.get('date', ''))
+    for team in (home, away):
+        name = team.get('name', '')
+        ts   = team_stats.get(name, {})
+        team['ppg']         = ts.get('ppg')
+        team['ppg_allowed'] = ts.get('ppg_allowed')
+        team['form']        = _team_recent_form(game_log, name)
+        team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
+
+    # Run the model
+    try:
+        model = nfl_model.predict(home, away, game_time_utc=event.get('date', ''))
+    except Exception:
+        model = None
+
+    game_odds = odds_api.lookup_game_odds(nfl_odds_map, home.get('name', ''), away.get('name', ''),
+                                           game_date=event.get('date', '')[:13] or None)
+
+    espn_odds  = (comp.get('odds') or [{}])[0]
+    odds_line  = espn_odds.get('details', '')
+    over_under = espn_odds.get('overUnder')
+
+    a_ab = away.get('abbrev', '')
+    h_ab = home.get('abbrev', '')
+
+    return {
+        'game_id':       event.get('id'),
+        'game_time_utc': event.get('date', ''),
+        'status':        status,
+        'venue':         venue,
+        'away':          away,
+        'home':          home,
+        'odds_line':     odds_line,
+        'over_under':    over_under,
+        'odds':          game_odds,
+        'model':         model,
+        'weather':       weather,
+        'bet_name':      f"{a_ab} @ {h_ab}",
+        'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
+        'live_state':    live_state,
+        # ESPN season.type: 1=preseason, 2=regular, 3=postseason. Still
+        # shown live (useful to see today's score even in August), but
+        # _upsert_predictions uses this to skip writing preseason games
+        # into game_predictions — backup-heavy, min-effort preseason
+        # results would otherwise corrupt the Model Performance page's
+        # regular-season accuracy/calibration tracking.
+        'is_preseason':  event.get('season', {}).get('type') == 1,
+    }
+
+
 def build_schedule_context():
     """Returns today's NFL games from ESPN with model predictions. Empty list during offseason."""
-    from odds_api import _normalize
     today_str = _today_et()
     data = _cached_get(ESPN_NFL, {}, f'nfl_{today_str}', _TTL['scoreboard'])
     if not data:
@@ -312,157 +465,12 @@ def build_schedule_context():
     if not today_events:
         return []
 
-    # Fetch season-level stats once for all games
-    season     = _get_nfl_season()
-    game_log   = _get_season_game_log(season)
-    team_stats = _compute_team_season_stats(game_log)
+    season       = _get_nfl_season()
+    game_log     = _get_season_game_log(season)
+    team_stats   = _compute_team_season_stats(game_log)
+    nfl_odds_map = odds_api.get_odds_map('nfl')
 
-    games = []
-    for event in today_events:
-        comp = event.get('competitions', [{}])[0]
-        venue_obj = comp.get('venue', {})
-        venue = venue_obj.get('fullName', '')
-        if venue_obj.get('city'):
-            venue += f", {venue_obj['city']}"
-
-        status_obj = comp.get('status', {}).get('type', {})
-        state = status_obj.get('state', 'pre')
-        if state == 'in':
-            status = 'Live'
-        elif state == 'post':
-            status = 'Final'
-        else:
-            status = 'Preview'
-
-        teams = {}
-        for competitor in comp.get('competitors', []):
-            side = competitor.get('homeAway', 'home')
-            team = competitor.get('team', {})
-            records = competitor.get('records', [])
-            overall = _parse_record(records, 'overall')
-            home_r  = _parse_record(records, 'Home')
-            away_r  = _parse_record(records, 'Road')
-            w, l = _record_to_wl(overall)
-
-            if side == 'home':
-                split_summary = home_r
-                split_label   = 'Home'
-            else:
-                split_summary = away_r
-                split_label   = 'Away'
-
-            split_w, split_l = _record_to_wl(split_summary)
-
-            abbrev = team.get('abbreviation', '')
-            teams[side] = {
-                'id':          team.get('id'),   # ESPN team id — needed to match situation.possession below
-                'name':        team.get('displayName', ''),
-                'abbrev':      abbrev,
-                'abbr':        abbrev,   # alias used in model template
-                'logo_url':    f"https://a.espncdn.com/i/teamlogos/nfl/500/{abbrev.lower()}.png",
-                'wins':        w,
-                'losses':      l,
-                'ot_losses':   None,
-                'split_w':     split_w,
-                'split_l':     split_l,
-                'split_label': split_label,
-                'side':        side,
-                'form':        [],
-                'score':       competitor.get('score'),
-                'ppg':         None,
-                'ppg_allowed': None,
-                'rest_days':   None,
-                'injuries':    [],
-            }
-
-        away = teams.get('away', {})
-        home = teams.get('home', {})
-
-        summary   = _get_game_summary(event.get('id'))
-        weather   = _parse_weather(summary)
-        injury_map = _parse_injuries(summary)
-        home['injuries'] = injury_map.get(home.get('id'), [])
-        away['injuries'] = injury_map.get(away.get('id'), [])
-
-        # ── Live game state — quarter, clock, down/distance, possession,
-        # field position, red zone, timeouts. ESPN's `situation` object is
-        # only present while state == 'in'; it goes away between plays'
-        # snapshots occasionally (e.g. right at a quarter change), so every
-        # field here is optional and the template only shows what's
-        # present. Field names below are ESPN's standard (undocumented but
-        # widely-used) football scoreboard schema — not yet verified
-        # against a real live NFL game since this was built in the
-        # off-season; if anything renders oddly once week 1 kicks off,
-        # check the actual payload shape first before assuming the model
-        # or template is wrong.
-        live_state = None
-        if state == 'in':
-            live_status = comp.get('status', {}) or {}
-            situation   = comp.get('situation', {}) or {}
-            poss_id     = situation.get('possession')
-            live_state = {
-                'period':        live_status.get('period'),
-                'display_clock': live_status.get('displayClock'),
-                'clock_text':    status_obj.get('shortDetail') or status_obj.get('detail'),
-                'down_distance': situation.get('shortDownDistanceText') or situation.get('downDistanceText'),
-                'field_pos':     situation.get('possessionText'),
-                'is_redzone':    bool(situation.get('isRedZone')),
-                'home_timeouts': situation.get('homeTimeouts'),
-                'away_timeouts': situation.get('awayTimeouts'),
-                'possession_home': bool(poss_id) and poss_id == home.get('id'),
-                'possession_away': bool(poss_id) and poss_id == away.get('id'),
-            }
-
-        # Enrich with season stats, recent form, and rest days
-        for team, is_home in ((home, True), (away, False)):
-            name = team.get('name', '')
-            ts   = team_stats.get(name, {})
-            team['ppg']         = ts.get('ppg')
-            team['ppg_allowed'] = ts.get('ppg_allowed')
-            team['form']        = _team_recent_form(game_log, name)
-            team['rest_days']   = _team_rest_days(game_log, name, today_str)
-
-        # Run the model
-        try:
-            model = nfl_model.predict(home, away, game_time_utc=event.get('date', ''))
-        except Exception:
-            model = None
-
-        # Odds
-        nfl_odds_map = odds_api.get_odds_map('nfl')
-        game_odds    = odds_api.lookup_game_odds(nfl_odds_map, home.get('name', ''), away.get('name', ''),
-                                                  game_date=event.get('date', '')[:13] or None)
-
-        espn_odds = (comp.get('odds') or [{}])[0]
-        odds_line  = espn_odds.get('details', '')
-        over_under = espn_odds.get('overUnder')
-
-        a_ab = away.get('abbrev', '')
-        h_ab = home.get('abbrev', '')
-
-        games.append({
-            'game_id':       event.get('id'),
-            'game_time_utc': event.get('date', ''),
-            'status':        status,
-            'venue':         venue,
-            'away':          away,
-            'home':          home,
-            'odds_line':     odds_line,
-            'over_under':    over_under,
-            'odds':          game_odds,
-            'model':         model,
-            'weather':       weather,
-            'bet_name':      f"{a_ab} @ {h_ab}",
-            'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
-            'live_state':    live_state,
-            # ESPN season.type: 1=preseason, 2=regular, 3=postseason. Still
-            # shown live (useful to see today's score even in August), but
-            # _upsert_predictions uses this to skip writing preseason games
-            # into game_predictions — backup-heavy, min-effort preseason
-            # results would otherwise corrupt the Model Performance page's
-            # regular-season accuracy/calibration tracking.
-            'is_preseason':  event.get('season', {}).get('type') == 1,
-        })
+    games = [_build_game(event, team_stats, game_log, nfl_odds_map) for event in today_events]
 
     try:
         date_display = datetime.now(_ET).strftime('%a, %b %-d')
@@ -470,3 +478,65 @@ def build_schedule_context():
         date_display = today_str
 
     return [{'date': today_str, 'date_display': date_display, 'games': games}]
+
+
+# ── Week schedule context ─────────────────────────────────────────────────────
+
+_REG_SEASON_WEEKS = 18
+
+
+def get_current_week():
+    """(season, week_number) for the week containing "now" — falls back to
+    week 1 if ESPN's scoreboard doesn't return a week (e.g. deep offseason)."""
+    season = _get_nfl_season()
+    data = _cached_get(ESPN_NFL, {}, f'nfl_{_today_et()}', _TTL['scoreboard'])
+    week = (data or {}).get('week', {}).get('number') or 1
+    return season, week
+
+
+def build_week_schedule_context(week=None):
+    """Returns a full NFL week's games grouped by day — same shape as
+    build_schedule_context() (a list of {date, date_display, games}) under
+    'days', so the game-card rendering is identical to the daily view.
+    `week=None` uses the current week. Clamped to the 18-week regular season."""
+    season, current_week = get_current_week()
+    if week is None:
+        week = current_week
+    week = max(1, min(_REG_SEASON_WEEKS, week))
+
+    data = _cached_get(
+        ESPN_NFL,
+        # Regular season only (seasontype=2) — matches _get_season_game_log's
+        # convention; a "week" concept doesn't apply the same way to preseason.
+        {'seasontype': 2, 'week': week, 'season': season, 'dates': season, 'limit': 20},
+        f'nfl_week_sched_{season}_{week}',
+        _TTL['scoreboard'],
+    )
+    events = (data or {}).get('events', [])
+
+    game_log     = _get_season_game_log(season)
+    team_stats   = _compute_team_season_stats(game_log)
+    nfl_odds_map = odds_api.get_odds_map('nfl')
+
+    by_date = defaultdict(list)
+    for event in events:
+        by_date[_event_date_et(event.get('date', ''))].append(
+            _build_game(event, team_stats, game_log, nfl_odds_map)
+        )
+
+    days = []
+    for d in sorted(by_date.keys()):
+        try:
+            date_display = datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %-d')
+        except Exception:
+            date_display = d
+        days.append({'date': d, 'date_display': date_display, 'games': by_date[d]})
+
+    return {
+        'week':            week,
+        'season':          season,
+        'is_current_week': week == current_week,
+        'prev_week':       week - 1 if week > 1 else None,
+        'next_week':       week + 1 if week < _REG_SEASON_WEEKS else None,
+        'days':            days,
+    }

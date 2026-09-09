@@ -1601,3 +1601,104 @@ a.action-link:hover { color: var(--silver); }
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ── NFL game card — shared by nfl_schedule.html (today) and
+   nfl_week.html (full week) via templates/_nfl_game_card.html ──────── */
+.nfl-odds-badge {
+    font-size: 0.68rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--orange-dim); color: var(--orange);
+    border: 1px solid rgba(251,79,20,0.22);
+}
+.offseason-card { text-align: center; padding: 32px 16px; }
+.offseason-icon { font-size: 2.5rem; margin-bottom: 12px; }
+.offseason-title { color: var(--silver); font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+.offseason-sub   { color: var(--text-muted); font-size: 0.85rem; }
+.wind-mod    { color: #f59e0b; font-weight: 600; }
+.wind-strong { color: #ef4444; font-weight: 700; }
+.nfl-stats-row {
+    font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.nfl-stats-row b { color: var(--silver); }
+.fg-home .nfl-stats-row { justify-content: flex-end; }
+.injury-toggle {
+    margin-top: 4px;
+}
+.injury-toggle summary {
+    font-size: 0.66rem; color: var(--text-muted);
+    cursor: pointer; user-select: none;
+}
+.injury-toggle summary:hover { color: var(--text); }
+.fg-home .injury-toggle summary { text-align: right; }
+.injury-list {
+    display: flex; flex-direction: column; gap: 3px;
+    margin-top: 4px;
+}
+.fg-home .injury-list { align-items: flex-end; }
+.injury-row {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.66rem;
+}
+.injury-name { color: var(--silver); }
+.injury-pos  { color: var(--text-muted); }
+.injury-status {
+    font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+}
+.injury-status-out         { color: #b91c1c; background: rgba(185,28,28,0.09); }
+.injury-status-doubtful    { color: #b45309; background: rgba(180,83,9,0.09); }
+.injury-status-questionable{ color: #92700c; background: rgba(146,112,12,0.09); }
+.kelly-verdict {
+    font-size: 0.62rem; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px;
+    white-space: nowrap; text-transform: uppercase; letter-spacing: 0.3px;
+}
+
+/* ── Live game state — quarter/clock, down/distance, possession, timeouts ── */
+.live-qtr-clock {
+    font-size: 0.72rem; font-weight: 700; color: var(--text-muted);
+}
+.live-situation { text-align: center; margin-top: 4px; }
+.live-down-distance {
+    display: inline-block;
+    font-size: 0.68rem; font-weight: 700; color: var(--text-muted);
+    padding: 2px 9px; border-radius: 999px; background: var(--bg-card-2);
+    border: 1px solid var(--border); white-space: nowrap;
+}
+.live-down-distance.live-redzone {
+    color: #b91c1c; background: rgba(185,28,28,0.09); border-color: rgba(185,28,28,0.25);
+}
+.poss-ico { font-size: 0.7rem; }
+.timeout-dots { display: flex; gap: 3px; margin-top: 3px; }
+.fg-home .timeout-dots, .sb-home .timeout-dots { justify-content: flex-end; }
+.to-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--orange); display: inline-block;
+}
+.to-dot.to-used { background: rgba(0,0,0,0.12); }
+
+/* ── NFL week schedule nav (nfl_week.html) ───────────────────────────── */
+.week-nav-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 14px;
+}
+.week-nav-btn {
+    font-size: 0.78rem; font-weight: 700; color: var(--silver);
+    text-decoration: none; padding: 6px 12px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.week-nav-btn:hover { border-color: var(--border-strong); }
+.week-nav-btn.week-nav-disabled {
+    color: var(--text-muted); opacity: 0.4; pointer-events: none;
+}
+.week-nav-title {
+    font-size: 1rem; font-weight: 800; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+}
+.week-current-badge {
+    font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px;
+    background: var(--orange-dim); color: var(--orange);
+}

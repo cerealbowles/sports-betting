@@ -3386,6 +3386,13 @@ def nfl_schedule():
   _upsert_predictions(schedule, 'NFL')
   return render_template('nfl_schedule.html', schedule=schedule, subnav_sport='NFL')
 
+@app.route('/nfl/week')
+def nfl_week():
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_schedule_context(week)
+  _upsert_predictions(week_ctx['days'], 'NFL')
+  return render_template('nfl_week.html', week_ctx=week_ctx, subnav_sport='NFL')
+
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():
     """SSE stream: clears the MLB stats cache, fetches every data source in order,
