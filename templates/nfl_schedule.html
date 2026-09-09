@@ -21,6 +21,33 @@
 }
 .nfl-stats-row b { color: var(--silver); }
 .fg-home .nfl-stats-row { justify-content: flex-end; }
+.injury-toggle {
+    margin-top: 4px;
+}
+.injury-toggle summary {
+    font-size: 0.66rem; color: var(--text-muted);
+    cursor: pointer; user-select: none;
+}
+.injury-toggle summary:hover { color: var(--text); }
+.fg-home .injury-toggle summary { text-align: right; }
+.injury-list {
+    display: flex; flex-direction: column; gap: 3px;
+    margin-top: 4px;
+}
+.fg-home .injury-list { align-items: flex-end; }
+.injury-row {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.66rem;
+}
+.injury-name { color: var(--silver); }
+.injury-pos  { color: var(--text-muted); }
+.injury-status {
+    font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+}
+.injury-status-out         { color: #b91c1c; background: rgba(185,28,28,0.09); }
+.injury-status-doubtful    { color: #b45309; background: rgba(180,83,9,0.09); }
+.injury-status-questionable{ color: #92700c; background: rgba(146,112,12,0.09); }
 .kelly-verdict {
     font-size: 0.62rem; font-weight: 700;
     padding: 2px 5px; border-radius: 3px;
@@ -100,10 +127,11 @@
         {% endif %}
         {% if game.venue %}<span class="game-venue">{{ game.venue }}</span>{% endif %}
         {% if game.weather %}
-        <span class="weather-badge">{{ game.weather.temp }}°F · {{ game.weather.conditions }}
-        {%- if game.weather.wind_mph %} ·
-          <span class="wind-info{% if game.weather.wind_mph >= 20 %} wind-strong{% elif game.weather.wind_mph >= 12 %} wind-mod{% endif %}">{{ game.weather.wind_dir }} {{ game.weather.wind_mph }}mph</span>
-        {%- endif %}</span>
+        <span class="weather-badge">{{ game.weather.temp }}°F
+        {%- if game.weather.gust_mph %} ·
+          <span class="wind-info{% if game.weather.gust_mph >= 20 %} wind-strong{% elif game.weather.gust_mph >= 12 %} wind-mod{% endif %}">Gust {{ game.weather.gust_mph }}mph</span>
+        {%- endif %}
+        {%- if game.weather.precip_pct %} · <span class="wind-info wind-mod">☔ {{ game.weather.precip_pct }}%</span>{%- endif %}</span>
         {% endif %}
         <div class="game-header-right">
             {% if game.odds_line %}<span class="nfl-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
@@ -194,6 +222,24 @@
                 <span>Rest <b>{{ team.rest_days }}d</b></span>
                 {% endif %}
             </div>
+            {% if team.injuries %}
+            <details class="injury-toggle">
+                <summary>
+                    {% set _out = team.injuries | selectattr('status', 'equalto', 'Out') | list %}
+                    {% set _other = team.injuries | rejectattr('status', 'equalto', 'Out') | list %}
+                    🚑 {% if _out %}{{ _out | length }} out{% endif %}{% if _out and _other %}, {% endif %}{% if _other %}{{ _other | length }} ques.{% endif %}
+                </summary>
+                <div class="injury-list">
+                    {% for p in team.injuries %}
+                    <div class="injury-row">
+                        <span class="injury-name">{{ p.name }}</span>
+                        <span class="injury-pos">{{ p.pos }}</span>
+                        <span class="injury-status injury-status-{{ p.status | lower }}">{{ p.status }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
         </div>
         {% endfor %}
     </div>

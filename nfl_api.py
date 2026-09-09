@@ -4,7 +4,6 @@ from collections import defaultdict
 from datetime import datetime, timezone, date as _date
 from zoneinfo import ZoneInfo
 import odds_api
-import weather_api
 import nfl_model
 
 _ET = ZoneInfo('America/New_York')
@@ -24,7 +23,8 @@ def _event_date_et(date_str):
     except ValueError:
         return ''
 
-ESPN_NFL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+ESPN_NFL         = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+ESPN_NFL_SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary"
 
 _cache = {}
 # scoreboard was 1800s (30 min) — far too stale for the new live game-state
@@ -33,7 +33,9 @@ _cache = {}
 # this same cached page. 120s matches get_live_scores()'s existing TTL for
 # the open-bets ticker, which already polls this same ESPN endpoint that
 # often with no issues.
-_TTL = {'scoreboard': 120, 'season_log': 3600}
+# summary (weather + injuries) doesn't need live-game freshness — 10 min
+# is plenty and keeps this to one extra request per game per refresh cycle.
+_TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600}
 
 
 def _cached_get(url, params, key, ttl):
@@ -186,6 +188,58 @@ def _team_rest_days(games, team_name, game_date):
         return None
 
 
+# ── Per-game detail: weather + injury report ─────────────────────────────────────
+# Not present on the scoreboard payload — one extra cached request per game.
+
+_INJURY_STATUS_ORDER = {'Out': 0, 'Doubtful': 1, 'Questionable': 2}
+
+
+def _get_game_summary(event_id):
+    if not event_id:
+        return None
+    return _cached_get(ESPN_NFL_SUMMARY, {'event': event_id}, f'nfl_summary_{event_id}', _TTL['summary'])
+
+
+def _parse_weather(summary):
+    """None for domes/retractable roofs — ESPN omits the weather block entirely for those."""
+    if not summary:
+        return None
+    wx = (summary.get('gameInfo') or {}).get('weather')
+    if not wx or wx.get('temperature') is None:
+        return None
+    return {
+        'temp':       wx.get('temperature'),
+        'gust_mph':   wx.get('gust'),
+        'precip_pct': wx.get('precipitation') or None,
+    }
+
+
+def _parse_injuries(summary):
+    """{team_id: [{'name','pos','status'}, ...]}, current-week Out/Doubtful/Questionable only —
+    long-term IR/PUP entries are already-known season-long absences, not this week's news."""
+    result = {}
+    if not summary:
+        return result
+    for team_block in summary.get('injuries', []):
+        team_id = (team_block.get('team') or {}).get('id')
+        if not team_id:
+            continue
+        players = []
+        for inj in team_block.get('injuries', []):
+            status = inj.get('status', '')
+            if status not in _INJURY_STATUS_ORDER:
+                continue
+            athlete = inj.get('athlete') or {}
+            players.append({
+                'name':   athlete.get('displayName', ''),
+                'pos':    (athlete.get('position') or {}).get('abbreviation', ''),
+                'status': status,
+            })
+        players.sort(key=lambda p: _INJURY_STATUS_ORDER[p['status']])
+        result[team_id] = players
+    return result
+
+
 # ── Live scores ────────────────────────────────────────────────────────────────
 
 def get_live_scores():
@@ -318,10 +372,17 @@ def build_schedule_context():
                 'ppg':         None,
                 'ppg_allowed': None,
                 'rest_days':   None,
+                'injuries':    [],
             }
 
         away = teams.get('away', {})
         home = teams.get('home', {})
+
+        summary   = _get_game_summary(event.get('id'))
+        weather   = _parse_weather(summary)
+        injury_map = _parse_injuries(summary)
+        home['injuries'] = injury_map.get(home.get('id'), [])
+        away['injuries'] = injury_map.get(away.get('id'), [])
 
         # ── Live game state — quarter, clock, down/distance, possession,
         # field position, red zone, timeouts. ESPN's `situation` object is
@@ -390,7 +451,7 @@ def build_schedule_context():
             'over_under':    over_under,
             'odds':          game_odds,
             'model':         model,
-            'weather':       weather_api.get_game_weather(venue_obj.get('fullName', ''), 'nfl'),
+            'weather':       weather,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
             'live_state':    live_state,
