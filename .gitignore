@@ -14,5 +14,9 @@ nfl_refit_results.json
 nfl_training_2024.json
 nfl_training_2025.json
 nfl_training_combined.json
+cfb_refit_results.json
+cfb_training_2024.json
+cfb_training_2025.json
+cfb_training_combined.json
 refit_results.json
 team_bias_snapshot.json
