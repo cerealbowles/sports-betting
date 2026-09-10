@@ -32,6 +32,19 @@
         </div>
     </div>
 
+    <!-- ── Open bet indicator ── -->
+    {% if game.open_bets %}
+    <div class="open-bet-strip">
+        {% for bet in game.open_bets %}
+        <span class="obi-badge">
+            📋 <strong>{{ bet.name }}</strong>
+            · ${{ '%.2f' % bet.stake }} at risk
+            · return ${{ '%.2f' % (bet.stake * bet.odds) }}
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- ── Scoreboard ── -->
     <div class="scoreboard">
 

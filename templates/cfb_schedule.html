@@ -59,6 +59,9 @@
 {% block content %}
 <div class="schedule-body">
 
+<!-- ── Live CFB Bets ────────────────────────────────────── -->
+{% include "_open_bets_section.html" with context %}
+
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
     <a href="{{ url_for('cfb_schedule', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
@@ -190,6 +193,19 @@
             {% if game.odds_line %}<span class="cfb-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
         </div>
     </div>
+
+    <!-- ── Open bet indicator ── -->
+    {% if game.open_bets %}
+    <div class="open-bet-strip">
+        {% for bet in game.open_bets %}
+        <span class="obi-badge">
+            📋 <strong>{{ bet.name }}</strong>
+            · ${{ '%.2f' % bet.stake }} at risk
+            · return ${{ '%.2f' % (bet.stake * bet.odds) }}
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- ── Scoreboard ── -->
     <div class="scoreboard">
@@ -377,4 +393,5 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     if (confSel) confSel.addEventListener('change', apply);
 })();
 </script>
+{% include "_open_bets_scripts.html" with context %}
 {% endblock %}

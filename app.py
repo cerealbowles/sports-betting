@@ -1606,6 +1606,62 @@ def _open_bets_summary_stats(real_open):
     }
 
 
+def _match_open_bets_to_games(days, sport=None):
+    """
+    Attaches game['open_bets'] = [OpenBet, ...] to each game in `days` (a
+    list of {'games': [...]} dicts, as produced by each sport's
+    build_schedule_context()/build_week_schedule_context()) so a placed bet
+    is visible — and closeable — right on its game card. Matches on
+    game_key first, falling back to a leading team-abbreviation match in the
+    bet name for bets placed manually or before game_key existed. Scoped to
+    `sport` when given so an abbreviation collision can't attach a bet to
+    the wrong sport's game.
+    """
+    from odds_api import _normalize
+    import re as _re
+
+    query = OpenBet.query
+    if sport:
+        query = query.filter_by(sport=sport)
+    all_open = query.all()
+
+    by_key = {}
+    for bet in all_open:
+        if bet.game_key:
+            by_key.setdefault(bet.game_key, []).append(bet)
+
+    by_abbr = {}
+    for bet in all_open:
+        if bet.game_key:
+            continue
+        m = _re.match(r'^([A-Z]{2,4})\b', bet.name or '')
+        if m:
+            by_abbr.setdefault(m.group(1).upper(), []).append(bet)
+
+    for day in days:
+        for game in day.get('games', []):
+            home, away = game.get('home') or {}, game.get('away') or {}
+            gk = f"{_normalize(home.get('name', ''))}_{_normalize(away.get('name', ''))}"
+            matched = list(by_key.get(gk, []))
+            utc_raw = game.get('game_time_utc', '')
+            if utc_raw:
+                try:
+                    utc_dt = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
+                    gk_ts = f"{gk}_{utc_dt.strftime('%Y-%m-%dT%H')}"
+                    for bet in by_key.get(gk_ts, []):
+                        if bet not in matched:
+                            matched.append(bet)
+                except Exception:
+                    pass
+            for abbr in (away.get('abbrev') or away.get('abbr'), home.get('abbrev') or home.get('abbr')):
+                if not abbr:
+                    continue
+                for bet in by_abbr.get(abbr.upper(), []):
+                    if bet not in matched:
+                        matched.append(bet)
+            game['open_bets'] = matched
+
+
 @app.context_processor
 def _inject_global_exposure():
     """
@@ -3389,7 +3445,34 @@ def nfl_schedule():
   week = request.args.get('week', type=int)
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
-  return render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL')
+  _match_open_bets_to_games(week_ctx['days'], sport='NFL')
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  nfl_bets       = OpenBet.query.filter_by(sport='NFL').order_by(
+      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
+  closing_suggestions = _annotate_open_bets(nfl_bets)
+  nfl_real_open  = [b for b in nfl_bets if not b.is_paper]
+  nfl_paper_open = [b for b in nfl_bets if b.is_paper]
+  _tier_open_bets(nfl_real_open)
+  open_stats = _open_bets_summary_stats(nfl_real_open)
+
+  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
+  _adj_bankroll = bankroll + _all_open_stats['open_staked']
+  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
+
+  import odds_api as _oa
+  odds_last_fetch = _oa.get_last_fetch_time()
+  odds_next_fetch = _oa.get_next_fetch_time()
+
+  return render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
+                         open_bets=nfl_real_open, paper_bets=nfl_paper_open,
+                         unit_size=unit_size, closing_suggestions=closing_suggestions,
+                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch,
+                         heading=f"{len(nfl_real_open)} Open NFL Bet{'s' if len(nfl_real_open) != 1 else ''}",
+                         sync_next='/nfl')
 
 @app.route('/cfb')
 def cfb_schedule():
@@ -3398,6 +3481,7 @@ def cfb_schedule():
   week = request.args.get('week', type=int)
   week_ctx = cfb_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'CFB')
+  _match_open_bets_to_games(week_ctx['days'], sport='CFB')
 
   # Today's Recommendations: a lightweight edge-ranked list, not MLB's full
   # trust-score/unified-score system — CFB has no season of backtested
@@ -3472,8 +3556,33 @@ def cfb_schedule():
   recommended.sort(key=lambda r: -r['edge'])
   recommended = recommended[:15]
 
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  cfb_bets       = OpenBet.query.filter_by(sport='CFB').order_by(
+      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
+  closing_suggestions = _annotate_open_bets(cfb_bets)
+  cfb_real_open  = [b for b in cfb_bets if not b.is_paper]
+  cfb_paper_open = [b for b in cfb_bets if b.is_paper]
+  _tier_open_bets(cfb_real_open)
+  open_stats = _open_bets_summary_stats(cfb_real_open)
+
+  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
+  _adj_bankroll = bankroll + _all_open_stats['open_staked']
+  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
+
+  import odds_api as _oa
+  odds_last_fetch = _oa.get_last_fetch_time()
+  odds_next_fetch = _oa.get_next_fetch_time()
+
   return render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
-                         recommended=recommended, conferences=sorted(conferences))
+                         recommended=recommended, conferences=sorted(conferences),
+                         open_bets=cfb_real_open, paper_bets=cfb_paper_open,
+                         unit_size=unit_size, closing_suggestions=closing_suggestions,
+                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch,
+                         heading=f"{len(cfb_real_open)} Open CFB Bet{'s' if len(cfb_real_open) != 1 else ''}",
+                         sync_next='/cfb')
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():
