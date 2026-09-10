@@ -338,134 +338,141 @@
 {# build bet URLs once as variables for cleanliness #}
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_away_prob if game.model.adj_away_prob else game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
 {% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
+{% if game.odds and game.odds.total_line %}
+{% set over_url %}{{ url_for('new_bet') }}?name={{ ('Over ' + game.odds.total_line|string) | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.over_odds %}&odds={{ game.odds.over_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&next=/mlb{% endset %}
+{% set under_url %}{{ url_for('new_bet') }}?name={{ ('Under ' + game.odds.total_line|string) | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.under_odds %}&odds={{ game.odds.under_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&next=/mlb{% endset %}
+{% endif %}
 
 <div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
 
-    <!-- ── Header bar ── -->
-    <div class="game-header">
-        {% if game.status == 'Live' %}
-            <span class="status-live">● Live{% if game.inning_info %} · {{ game.inning_info }}{% endif %}</span>
-        {% elif game.status == 'Final' %}
-            <span class="status-final">Final</span>
-        {% else %}
-            <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
-        {% endif %}
-        {% if game.venue %}<span class="game-venue">{{ game.venue }}</span>{% endif %}
-        {% if game.weather %}
-        <span class="weather-badge">{{ game.weather.temp }}°F · {{ game.weather.conditions }}
-        {%- if game.weather.wind_mph %} ·
-          <span class="wind-info{% if game.weather.wind_mph >= 20 %} wind-strong{% elif game.weather.wind_mph >= 12 %} wind-mod{% endif %}">{{ game.weather.wind_dir }} {{ game.weather.wind_mph }}mph</span>
-        {%- endif %}</span>
-        {% endif %}
-        <div class="game-header-right">
-            {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
-        </div>
-    </div>
+    <!-- ── Simplified, always-visible summary — tap to open full stats ── -->
+    <div class="game-card-summary" role="button" tabindex="0" aria-label="View stats and bet on {{ game.away.abbr }} at {{ game.home.abbr }}">
 
-    <!-- ── Open bet indicator ── -->
-    {% if game.open_bets %}
-    <div class="open-bet-strip">
-        {% for bet in game.open_bets %}
-        <span class="obi-badge">
-            📋 <strong>{{ bet.name }}</strong>
-            · ${{ '%.2f' % bet.stake }} at risk
-            · return ${{ '%.2f' % (bet.stake * bet.odds) }}
-        </span>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    <!-- ── Scoreboard ── -->
-    <div class="scoreboard">
-
-        <!-- Away -->
-        <div class="sb-team sb-away">
-            <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
-            <div class="sb-team-info">
-                <div class="sb-name">{{ game.away.name }}</div>
-                <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
-                <div class="sb-split">Away {{ game.away.split_w }}–{{ game.away.split_l }}</div>
-                {% if game.status != 'Final' %}
-                <a href="{{ bet_away_url }}" class="btn-bet-team sb-bet-mobile">{{ game.away.abbr }}</a>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Center: score + desktop bet buttons -->
-        <div class="sb-center">
-            {% if game.status in ('Live', 'Final') %}
-            <div class="sb-score">
-                <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
-                <span class="sb-score-sep">–</span>
-                <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
-            </div>
+        <!-- ── Header bar ── -->
+        <div class="game-header">
+            {% if game.status == 'Live' %}
+                <span class="status-live">● Live{% if game.inning_info %} · {{ game.inning_info }}{% endif %}</span>
+            {% elif game.status == 'Final' %}
+                <span class="status-final">Final</span>
             {% else %}
-            <div class="sb-vs">vs</div>
+                <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
-            {% if game.status != 'Final' %}
-            <div class="bet-pair desktop-bet">
-                <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbr }}</a>
-                <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbr }}</a>
+            <div class="game-header-right">
+                {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
             </div>
-            {% endif %}
         </div>
 
-        <!-- Home -->
-        <div class="sb-team sb-home">
-            <div class="sb-team-info">
-                <div class="sb-name">{{ game.home.name }}</div>
-                <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
-                <div class="sb-split">Home {{ game.home.split_w }}–{{ game.home.split_l }}</div>
-                {% if game.status != 'Final' %}
-                <a href="{{ bet_home_url }}" class="btn-bet-team sb-bet-mobile">{{ game.home.abbr }}</a>
+        <!-- ── Open bet indicator ── -->
+        {% if game.open_bets %}
+        <div class="open-bet-strip">
+            {% for bet in game.open_bets %}
+            <span class="obi-badge">
+                📋 <strong>{{ bet.name }}</strong>
+                · ${{ '%.2f' % bet.stake }} at risk
+                · return ${{ '%.2f' % (bet.stake * bet.odds) }}
+            </span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- ── Scoreboard ── -->
+        <div class="scoreboard">
+
+            <!-- Away -->
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ game.away.name }}</div>
+                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
+                </div>
+            </div>
+
+            <!-- Center: score -->
+            <div class="sb-center">
+                {% if game.status in ('Live', 'Final') %}
+                <div class="sb-score">
+                    <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
+                </div>
+                {% else %}
+                <div class="sb-vs">vs</div>
                 {% endif %}
             </div>
-            <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+
+            <!-- Home -->
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ game.home.name }}</div>
+                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
+                </div>
+                <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+
+        </div><!-- /.scoreboard -->
+
+    </div><!-- /.game-card-summary -->
+
+    <!-- ── Full stats + betting, moved into the details sheet on tap ── -->
+    <div class="game-card-details" id="gd-{{ game.game_key }}" hidden>
+
+        <div class="sheet-game-title">{{ game.away.abbr }} @ {{ game.home.abbr }}</div>
+
+        {% if game.venue or game.weather %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            {% if game.venue %}{{ game.venue }}{% endif %}
+            {% if game.weather %}{% if game.venue %} · {% endif %}{{ game.weather.temp }}°F · {{ game.weather.conditions }}
+            {%- if game.weather.wind_mph %} ·
+              <span class="wind-info{% if game.weather.wind_mph >= 20 %} wind-strong{% elif game.weather.wind_mph >= 12 %} wind-mod{% endif %}">{{ game.weather.wind_dir }} {{ game.weather.wind_mph }}mph</span>
+            {%- endif %}{% endif %}
+        </div>
+        {% endif %}
+
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
 
-    </div><!-- /.scoreboard -->
+        <!-- ── Linescore ── -->
+        {% if game.linescore %}
+        <div class="linescore-wrap">
+            <table class="linescore">
+                <thead>
+                    <tr>
+                        <th class="ls-team"></th>
+                        {% for inn in game.linescore.innings %}<th>{{ inn.num }}</th>{% endfor %}
+                        <th class="ls-total">R</th>
+                        <th class="ls-total">H</th>
+                        <th class="ls-total">E</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="ls-team">{{ game.away.abbr }}</td>
+                        {% for inn in game.linescore.innings %}
+                        <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.away_runs if inn.away_runs != '' else '–' }}</td>
+                        {% endfor %}
+                        <td class="ls-total">{{ game.linescore.totals.away.r }}</td>
+                        <td class="ls-total">{{ game.linescore.totals.away.h }}</td>
+                        <td class="ls-total">{{ game.linescore.totals.away.e }}</td>
+                    </tr>
+                    <tr>
+                        <td class="ls-team">{{ game.home.abbr }}</td>
+                        {% for inn in game.linescore.innings %}
+                        <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.home_runs if inn.home_runs != '' else '–' }}</td>
+                        {% endfor %}
+                        <td class="ls-total">{{ game.linescore.totals.home.r }}</td>
+                        <td class="ls-total">{{ game.linescore.totals.home.h }}</td>
+                        <td class="ls-total">{{ game.linescore.totals.home.e }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
 
-    <!-- ── Linescore ── -->
-    {% if game.linescore %}
-    <div class="linescore-wrap">
-        <table class="linescore">
-            <thead>
-                <tr>
-                    <th class="ls-team"></th>
-                    {% for inn in game.linescore.innings %}<th>{{ inn.num }}</th>{% endfor %}
-                    <th class="ls-total">R</th>
-                    <th class="ls-total">H</th>
-                    <th class="ls-total">E</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td class="ls-team">{{ game.away.abbr }}</td>
-                    {% for inn in game.linescore.innings %}
-                    <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.away_runs if inn.away_runs != '' else '–' }}</td>
-                    {% endfor %}
-                    <td class="ls-total">{{ game.linescore.totals.away.r }}</td>
-                    <td class="ls-total">{{ game.linescore.totals.away.h }}</td>
-                    <td class="ls-total">{{ game.linescore.totals.away.e }}</td>
-                </tr>
-                <tr>
-                    <td class="ls-team">{{ game.home.abbr }}</td>
-                    {% for inn in game.linescore.innings %}
-                    <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ inn.home_runs if inn.home_runs != '' else '–' }}</td>
-                    {% endfor %}
-                    <td class="ls-total">{{ game.linescore.totals.home.r }}</td>
-                    <td class="ls-total">{{ game.linescore.totals.home.h }}</td>
-                    <td class="ls-total">{{ game.linescore.totals.home.e }}</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if game.status in ('Final', 'Live') %}<details class="final-stats-toggle" data-game-pk="{{ game.game_pk }}"><summary>Stats &amp; analysis</summary>
-    <div class="boxscore-panel" data-boxscore-for="{{ game.game_pk }}"></div>
-    {% endif %}
-    <!-- ── Pitchers ── -->
+        {% if game.status in ('Final', 'Live') %}
+        <div class="boxscore-panel" data-game-pk="{{ game.game_pk }}"></div>
+        {% endif %}
+        <!-- ── Pitchers ── -->
     <div class="pitcher-section">
         {% for team, col_class in [(game.away, 'col-away'), (game.home, 'col-home')] %}
         <div class="pitcher-col {{ col_class }}">
@@ -604,7 +611,30 @@
 
     </div>
     {% endif %}
-    {% if game.status in ('Final', 'Live') %}</details>{% endif %}
+
+        <!-- ── Bet ── -->
+        {% if game.status != 'Final' %}
+        <div class="bet-type-section">
+            <div class="bet-type-row">
+                <span class="bet-type-label">Moneyline</span>
+                <div class="bet-type-chips">
+                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbr }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbr }}</a>
+                </div>
+            </div>
+            {% if game.odds and game.odds.total_line %}
+            <div class="bet-type-row">
+                <span class="bet-type-label">Over/Under</span>
+                <div class="bet-type-chips">
+                    <a href="{{ over_url }}" class="btn-bet-team">O {{ game.odds.total_line }}</a>
+                    <a href="{{ under_url }}" class="btn-bet-team">U {{ game.odds.total_line }}</a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div><!-- /.game-card-details -->
 
 </div><!-- /.game-card -->
 {% endfor %}
@@ -699,12 +729,11 @@ function _boxscoreSideHtml(side) {
         _boxscoreRowsHtml(side.batters  || [], battingCols);
 }
 
-function loadBoxscore(detailsEl) {
-    if (!detailsEl.open || detailsEl.dataset.boxscoreLoaded) return;
-    var gamePk = detailsEl.dataset.gamePk;
-    var panel = detailsEl.querySelector('.boxscore-panel[data-boxscore-for="' + gamePk + '"]');
-    if (!gamePk || !panel) return;
-    detailsEl.dataset.boxscoreLoaded = '1';
+function loadBoxscore(panel) {
+    if (!panel || panel.dataset.boxscoreLoaded) return;
+    var gamePk = panel.dataset.gamePk;
+    if (!gamePk) return;
+    panel.dataset.boxscoreLoaded = '1';
     panel.innerHTML = '<div style="font-size:0.72rem;color:var(--text-muted);padding:6px 0;">Loading live stats…</div>';
     fetch('/api/mlb/game/' + gamePk + '/boxscore')
         .then(function(r) { return r.ok ? r.json() : null; })
@@ -715,8 +744,12 @@ function loadBoxscore(detailsEl) {
         .catch(function() { panel.innerHTML = ''; });
 }
 
-document.querySelectorAll('.final-stats-toggle[data-game-pk]').forEach(function(el) {
-    el.addEventListener('toggle', function() { loadBoxscore(el); });
+/* Fired by main.js's openGameDetails() when a game's details sheet opens —
+   lazy-load the live box score right then instead of on a now-removed
+   nested <details> toggle (the sheet itself is the reveal gesture now). */
+document.addEventListener('gamedetailsopen', function(e) {
+    var panel = e.detail.el.querySelector('.boxscore-panel[data-game-pk]');
+    if (panel) loadBoxscore(panel);
 });
 
 /* ── Refresh modal ───────────────────────────────────────── */

@@ -657,6 +657,64 @@ body.embed-mode .container { padding-bottom: 0; }
   background: var(--bg-card);
 }
 
+/* The game-details sheet sits behind the bet-entry sheet so that tapping a
+   bet chip (which closes this one and opens the other) always resolves with
+   the bet form on top during the brief overlap. */
+#gameDetailsOverlay { z-index: 210; }
+
+.sheet-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px 16px;
+}
+
+.sheet-game-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text);
+  padding-bottom: 10px;
+}
+
+/* ── Simplified game card ───────────────────────────────
+   The card's always-visible summary (compact matchup) is tappable to open
+   the full-stats details sheet; everything else about the game lives in
+   .game-card-details, moved into that sheet on tap instead of being fetched
+   or cloned. */
+.game-card-summary { cursor: pointer; }
+.game-card-summary:active { opacity: 0.85; }
+.game-card-details[hidden] { display: none; }
+
+.bet-type-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bet-type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bet-type-label {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+.bet-type-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 @media (min-width: 768px) {
   .main-grid { grid-template-columns: 1fr 1fr; }
