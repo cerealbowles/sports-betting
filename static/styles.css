@@ -103,9 +103,11 @@ h1 {
 .mountain-range svg { width: 100%; height: 100%; }
 
 @media (max-width: 600px) {
+  /* Bottom nav now carries wayfinding, so the wordmark subtitle is pure
+     redundant chrome here — drop it rather than just shrinking it. */
   .site-header { padding-top: 6px; }
-  h1 { font-size: 1.5rem; }
-  .tagline { font-size: 0.62rem; letter-spacing: 1.8px; margin-top: 1px; margin-bottom: 3px; }
+  h1 { font-size: 1.25rem; }
+  .tagline { display: none; }
   .mountain-range { display: none; }
 }
 
@@ -162,17 +164,6 @@ h3 {
   gap: 2px;
   flex: 1;
 }
-.nav-sports {
-  display: flex;
-  gap: 2px;
-  border-top: 1px solid var(--border);
-  padding-top: 3px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.nav-sports::-webkit-scrollbar { display: none; }
 .site-nav a {
   color: var(--text-muted);
   text-decoration: none;
@@ -188,40 +179,51 @@ h3 {
 .site-nav a:hover { color: var(--text); background: var(--bg-card-2); }
 .site-nav a.active { color: var(--orange); background: var(--orange-dim); }
 
-
-/* Settings — pushed to far right, icon + label */
-.nav-settings-btn {
+/* ── Sport chip row ──────────────────────────────────────
+   Sport is a filter, not a nav destination — this replaces the old sport
+   tabs (which ate 4 of the 5 bottom-nav slots). Shown on every screen size,
+   unlike the bottom tab bar it replaces the sport-switching role of.
+   Generalized from the CFB Top-25/conference filter chip pattern. */
+.sport-chip-bar {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
+  gap: 6px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.sport-chip-bar::-webkit-scrollbar { display: none; }
+.sport-chip {
+  flex-shrink: 0;
+  background: var(--bg-card);
   color: var(--text-muted);
   text-decoration: none;
-  font-size: 0.83rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  padding: 9px 14px;
-  border-radius: 7px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
   white-space: nowrap;
-  flex-shrink: 0;
-  transition: color var(--transition), background var(--transition);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition), border-color var(--transition);
 }
-.nav-settings-btn:hover { color: var(--text); background: var(--bg-card-2); }
-.nav-settings-btn.active { color: var(--orange); background: var(--orange-dim); }
-
-@media (max-width: 600px) {
-  .nav-settings-label { display: none; }
-  .nav-settings-btn { padding: 9px 10px; }
+.sport-chip:hover { color: var(--text); border-color: var(--border-strong); }
+.sport-chip.sport-chip-active,
+.sport-chip.filter-active {
+  color: var(--orange);
+  background: var(--orange-dim);
+  border-color: rgba(251,79,20,0.3);
 }
 
 /* ── Bottom tab bar ──────────────────────────────────────
-   Mobile-only primary nav (sports + Settings), fixed to the bottom of the
-   viewport so switching doesn't require reaching to the top of a tall
-   phone screen. On mobile it replaces .nav-row-top-sports, which would
-   otherwise duplicate the same links; the Schedule/Model/History subnav
-   stays in the top nav since it's page-level, not app-level. */
+   Mobile-only primary nav (Today/Bets/Model/History/Settings), fixed to the
+   bottom of the viewport so switching doesn't require reaching to the top of
+   a tall phone screen. On mobile it replaces .nav-row-top, which would
+   otherwise duplicate the same links. */
 .bottom-tab-bar { display: none; }
 @media (max-width: 768px) {
-  .nav-row-top-sports { display: none; }
+  .nav-row-top { display: none; }
   .bottom-tab-bar {
     display: flex;
     position: fixed;
@@ -277,6 +279,9 @@ h3 {
   letter-spacing: 0.3px;
 }
 .exposure-val { font-weight: 700; color: var(--text); }
+/* Bankroll (always the first item) is the number that matters most — give it
+   more visual weight than the supporting Open/Committed stats next to it. */
+.exposure-item:first-child .exposure-val { font-size: 1.05rem; font-weight: 800; color: var(--orange); }
 .exposure-sub { color: var(--text-muted); font-weight: 500; }
 .exposure-hot { color: var(--orange); }
 .exposure-sep { color: var(--border-strong); }
@@ -583,12 +588,20 @@ a.action-link:hover { color: var(--silver); }
   .dashboard  { grid-column: 2 / 3; }
 }
 
+/* Tablet-width-only h1 size — phones (<=600px) get the smaller size and
+   hidden tagline from the max-width:600px block above instead; scoping this
+   to a range that excludes phones avoids a cascade fight between the two
+   media queries (this one appears later in the file and would otherwise
+   always win on phones too). */
+@media (min-width: 601px) and (max-width: 767px) {
+  h1 { font-size: 1.5rem; }
+}
+
 @media (max-width: 767px) {
   body {
     padding: 10px;
     padding-bottom: max(40px, calc(10px + env(safe-area-inset-bottom)));
   }
-  h1 { font-size: 1.5rem; }
 
   /* ── Prevent iOS auto-zoom on input focus (requires font-size >= 16px) ── */
   input[type="text"],

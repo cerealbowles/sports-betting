@@ -70,7 +70,7 @@
 {% if open_bets %}
 <div class="bet-cards-grid">
 {% for b in open_bets %}
-    <div class="bet-card">
+    <div class="bet-card" data-sport="{{ b.sport or '' }}">
 
         <!-- Name + sport + tier + actions -->
         <div class="bc-header">

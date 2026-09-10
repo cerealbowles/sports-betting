@@ -1,0 +1,28 @@
+{# Horizontal sport-switch chip row — sport is a filter, not a nav destination,
+   so it doesn't compete for a bottom-tab slot. Shown on every screen size (unlike
+   the old sport tabs, which were mobile-hidden in favor of the bottom tab bar).
+
+   Two link modes:
+     chip_mode='schedule' (default) — each chip links to that sport's own
+       schedule route (/mlb, /nhl, /nfl, /cfb). Used on the schedule pages.
+     chip_mode='query' — each chip links to the current endpoint with ?sport=
+       swapped in, preserving any other querystring params. Used on pages that
+       are themselves per-sport via a query param (e.g. /model).
+
+   Expected context variables:
+     active_sport — current sport code ('MLB'/'NHL'/'NFL'/'CFB')
+     chip_mode    — 'schedule' (default) or 'query'
+#}
+{% set _sports = [('MLB', '⚾'), ('NHL', '🏒'), ('NFL', '🏈'), ('CFB', '🎓')] %}
+{% set _schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
+<div class="sport-chip-bar">
+    {% for code, icon in _sports %}
+    {% if chip_mode == 'query' %}
+    {% set _qs = request.args.to_dict() %}
+    {% set _ = _qs.update({'sport': code}) %}
+    <a href="{{ url_for(request.endpoint, **_qs) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}</a>
+    {% else %}
+    <a href="{{ url_for(_schedule_endpoints[code]) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}</a>
+    {% endif %}
+    {% endfor %}
+</div>

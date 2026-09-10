@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Bets — Spooky Sports{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+<!-- Client-side sport filter — all sports' open bets are already loaded on
+     this one page, so switching sport here just toggles visibility instead
+     of navigating (unlike the schedule pages' _sport_chips.html). -->
+<div class="sport-chip-bar" id="bets-sport-filter">
+    <button type="button" class="sport-chip sport-chip-active" data-filter-sport="">All</button>
+    <button type="button" class="sport-chip" data-filter-sport="MLB">⚾ MLB</button>
+    <button type="button" class="sport-chip" data-filter-sport="NHL">🏒 NHL</button>
+    <button type="button" class="sport-chip" data-filter-sport="NFL">🏈 NFL</button>
+    <button type="button" class="sport-chip" data-filter-sport="CFB">🎓 CFB</button>
+</div>
+
+{% include "_open_bets_section.html" with context %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "_open_bets_scripts.html" with context %}
+<script>
+(function() {
+    var bar = document.getElementById('bets-sport-filter');
+    if (!bar) return;
+    var chips = bar.querySelectorAll('.sport-chip');
+    var cards = document.querySelectorAll('.bet-card[data-sport]');
+
+    bar.addEventListener('click', function(e) {
+        var chip = e.target.closest('.sport-chip');
+        if (!chip) return;
+        chips.forEach(function(c) { c.classList.remove('sport-chip-active'); });
+        chip.classList.add('sport-chip-active');
+        var sport = chip.getAttribute('data-filter-sport');
+        cards.forEach(function(card) {
+            card.style.display = (!sport || card.getAttribute('data-sport') === sport) ? '' : 'none';
+        });
+    });
+})();
+</script>
+{% endblock %}

@@ -1,7 +1,7 @@
 import warnings
 warnings.filterwarnings('ignore', message='.*timezone.*')
 
-from flask import Flask, request, redirect, url_for, render_template, abort, jsonify
+from flask import Flask, request, redirect, url_for, render_template, abort, jsonify, make_response, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect, text
 from datetime import datetime, timezone, timedelta
@@ -1701,6 +1701,34 @@ def _inject_global_exposure():
         return {'global_exposure': None}
 
 
+_SPORT_SCHEDULE_ENDPOINTS = {
+    'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule',
+    'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
+}
+
+
+@app.context_processor
+def _inject_nav_context():
+    """Exposes nav_last_sport — which sport's schedule the bottom-nav "Today"
+    and "Model" destinations should point at. Backed by a plain (unsigned,
+    non-sensitive) `last_sport` cookie set by each sport schedule route on
+    render (see _set_last_sport_cookie), since sport is now a filter rather
+    than its own nav destination and Today/Model need to remember where you
+    last were."""
+    sport = (request.cookies.get('last_sport') or 'MLB').upper()
+    if sport not in _SPORT_SCHEDULE_ENDPOINTS:
+        sport = 'MLB'
+    return {'nav_last_sport': sport}
+
+
+def _set_last_sport_cookie(resp, sport):
+    """1-year max_age — without an explicit expiry this would default to a
+    session cookie that mobile browsers routinely clear on full app close,
+    silently resetting the Today tab's destination on every cold start."""
+    resp.set_cookie('last_sport', sport, max_age=60 * 60 * 24 * 365)
+    return resp
+
+
 @app.route('/')
 def index():
   """Retired as a distinct cross-sport Dashboard — MLB is the effective
@@ -1775,6 +1803,40 @@ def history():
                          units_profit=units_profit, trend=trend,
                          sports_list=sports_list, initial_sport=initial_sport,
                          subnav_sport=(initial_sport or None))
+
+
+@app.route('/bets')
+def bets_page():
+  """Everything currently riding, across every sport, on one screen — the gap
+  the old per-sport-tabs nav left uncovered (NHL never even got its own
+  open-bets section). Reuses the same annotate/tier/summarize helpers every
+  sport schedule page already calls (_annotate_open_bets etc. are sport-
+  agnostic — see their docstrings), just without a sport filter on the query.
+  """
+  all_bets = OpenBet.query.order_by(
+      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
+  closing_suggestions = _annotate_open_bets(all_bets)
+  real_open  = [b for b in all_bets if not b.is_paper]
+  paper_open = [b for b in all_bets if b.is_paper]
+  _tier_open_bets(real_open)
+  open_stats = _open_bets_summary_stats(real_open)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+  _all_open_stats = compute_stats(all_bets, ClosedBet.query.all())
+  _adj_bankroll = bankroll + _all_open_stats['open_staked']
+  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
+
+  import odds_api as _oa
+  odds_last_fetch = _oa.get_last_fetch_time()
+  odds_next_fetch = _oa.get_next_fetch_time()
+
+  return render_template('bets.html', open_bets=real_open, paper_bets=paper_open,
+                         unit_size=unit_size, closing_suggestions=closing_suggestions,
+                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch,
+                         heading=f"{len(real_open)} Open Bet{'s' if len(real_open) != 1 else ''}",
+                         sync_next=url_for('bets_page'))
 
 
 @app.route('/import_bets', methods=['POST'])
@@ -1870,6 +1932,16 @@ def import_bets():
     skipped += 1
 
   return redirect(url_for('history', imported=imported, skipped=skipped))
+
+@app.route('/service-worker.js')
+def service_worker():
+  """Served from the root path (not /static/service-worker.js) so its default
+  scope is the whole app rather than just /static/ — a service worker's scope
+  is capped at its own directory unless the server sends a
+  Service-Worker-Allowed header, and this is simpler than adding that header."""
+  resp = make_response(send_from_directory('static', 'service-worker.js'))
+  resp.headers['Content-Type'] = 'application/javascript'
+  return resp
 
 @app.route('/settings')
 def settings_page():
@@ -2594,14 +2666,15 @@ def mlb_schedule():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
-  return render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
+  resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
                          bankroll=bankroll, kelly_cap=kelly_cap, pick_of_day=pick_of_day,
                          open_bets=mlb_real_open, paper_bets=mlb_paper_open,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(mlb_real_open)} Open MLB Bet{'s' if len(mlb_real_open) != 1 else ''}",
-                         sync_next='/mlb', subnav_sport='MLB')
+                         sync_next='/mlb', subnav_sport='MLB'))
+  return _set_last_sport_cookie(resp, 'MLB')
 
 _SPORT_META = {
 
@@ -3438,7 +3511,8 @@ def model_performance():
 def nhl_schedule():
   schedule = nhl_api.build_schedule_context()
   _upsert_predictions(schedule, 'NHL')
-  return render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL')
+  resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL'))
+  return _set_last_sport_cookie(resp, 'NHL')
 
 @app.route('/nfl')
 def nfl_schedule():
@@ -3466,13 +3540,14 @@ def nfl_schedule():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
-  return render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
+  resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
                          open_bets=nfl_real_open, paper_bets=nfl_paper_open,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(nfl_real_open)} Open NFL Bet{'s' if len(nfl_real_open) != 1 else ''}",
-                         sync_next='/nfl')
+                         sync_next='/nfl'))
+  return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/cfb')
 def cfb_schedule():
@@ -3575,14 +3650,15 @@ def cfb_schedule():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
-  return render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
+  resp = make_response(render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
                          recommended=recommended, conferences=sorted(conferences),
                          open_bets=cfb_real_open, paper_bets=cfb_paper_open,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(cfb_real_open)} Open CFB Bet{'s' if len(cfb_real_open) != 1 else ''}",
-                         sync_next='/cfb')
+                         sync_next='/cfb'))
+  return _set_last_sport_cookie(resp, 'CFB')
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():

@@ -6,13 +6,21 @@
     <title>{% block title %}Spooky Sports{% endblock %}</title>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <meta name="theme-color" content="#FB4F14">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Spooky Sports">
     {% block head %}{% endblock %}
 </head>
 <body>
+{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
+{% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
+{% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
 <div class="container">
 
     <div class="site-header">
-        <a href="{{ url_for('mlb_schedule') }}" class="site-logo-link">
+        <a href="{{ _today_href }}" class="site-logo-link">
             <h1>Spooky Sports</h1>
         </a>
         <div class="tagline">Colorado · Kelly Criterion Tracker</div>
@@ -30,23 +38,15 @@
     </div>
 
     <nav class="site-nav">
-        <div class="nav-row-top nav-row-top-sports">
+        <div class="nav-row-top">
             <div class="nav-main">
-                <a href="{{ url_for('mlb_schedule') }}"{% if request.endpoint == 'mlb_schedule' %} class="active"{% endif %}>⚾ MLB</a>
-                <a href="{{ url_for('nhl_schedule') }}"{% if request.endpoint == 'nhl_schedule' %} class="active"{% endif %}>🏒 NHL</a>
-                <a href="{{ url_for('nfl_schedule') }}"{% if request.endpoint == 'nfl_schedule' %} class="active"{% endif %}>🏈 NFL</a>
-                <a href="{{ url_for('cfb_schedule') }}"{% if request.endpoint == 'cfb_schedule' %} class="active"{% endif %}>🎓 CFB</a>
+                <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}>📅 Today</a>
+                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}>💰 Bets</a>
+                <a href="{{ url_for('model_performance', sport=nav_last_sport) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
+                <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}>📜 History</a>
+                <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}>⚙️ Settings</a>
             </div>
-            <a href="{{ url_for('settings_page') }}" class="nav-settings-btn{% if request.endpoint == 'settings_page' %} active{% endif %}" title="Settings" aria-label="Settings">
-                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4a.484.484 0 0 0-.48.41l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.05.24.27.41.49.41h4c.22 0 .44-.17.47-.41l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.47.47 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
-                <span class="nav-settings-label">Settings</span>
-            </a>
         </div>
-        {% if subnav_sport %}
-        <div class="nav-sports nav-subnav">
-            {% include "_sport_subnav.html" %}
-        </div>
-        {% endif %}
     </nav>
 
     {% if global_exposure %}
@@ -75,17 +75,17 @@
 </div>
 
 <nav class="bottom-tab-bar" aria-label="Primary">
-    <a href="{{ url_for('mlb_schedule') }}" class="btb-item{% if request.endpoint == 'mlb_schedule' %} active{% endif %}">
-        <span class="btb-icon">⚾</span><span class="btb-label">MLB</span>
+    <a href="{{ _today_href }}" class="btb-item{% if _today_active %} active{% endif %}">
+        <span class="btb-icon">📅</span><span class="btb-label">Today</span>
     </a>
-    <a href="{{ url_for('nhl_schedule') }}" class="btb-item{% if request.endpoint == 'nhl_schedule' %} active{% endif %}">
-        <span class="btb-icon">🏒</span><span class="btb-label">NHL</span>
+    <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint == 'bets_page' %} active{% endif %}">
+        <span class="btb-icon">💰</span><span class="btb-label">Bets</span>
     </a>
-    <a href="{{ url_for('nfl_schedule') }}" class="btb-item{% if request.endpoint == 'nfl_schedule' %} active{% endif %}">
-        <span class="btb-icon">🏈</span><span class="btb-label">NFL</span>
+    <a href="{{ url_for('model_performance', sport=nav_last_sport) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
+        <span class="btb-icon">📈</span><span class="btb-label">Model</span>
     </a>
-    <a href="{{ url_for('cfb_schedule') }}" class="btb-item{% if request.endpoint == 'cfb_schedule' %} active{% endif %}">
-        <span class="btb-icon">🎓</span><span class="btb-label">CFB</span>
+    <a href="{{ url_for('history') }}" class="btb-item{% if request.endpoint == 'history' %} active{% endif %}">
+        <span class="btb-icon">📜</span><span class="btb-label">History</span>
     </a>
     <a href="{{ url_for('settings_page') }}" class="btb-item{% if request.endpoint == 'settings_page' %} active{% endif %}">
         <span class="btb-icon">⚙️</span><span class="btb-label">Settings</span>
@@ -93,5 +93,12 @@
 </nav>
 
 {% block scripts %}{% endblock %}
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/service-worker.js');
+    });
+}
+</script>
 </body>
 </html>
