@@ -51,23 +51,38 @@ def predict(home, away, game_time_utc=None):
     _add('Home field', 0.24)
 
     # ── 2. Overall win-percentage differential ────────────────────────────────
-    h_wp = _pct(home.get('wins', 0), home.get('losses', 0))
-    a_wp = _pct(away.get('wins', 0), away.get('losses', 0))
+    # 'blend_win_pct' (set by nfl_api._apply_prior_season_blend) mixes in last
+    # season's final record for teams with <EARLY_SEASON_GAMES games played
+    # this season — otherwise every team defaults to an identical 0-0 (50%)
+    # record in week 1, and this factor (and #3-5 below) contribute exactly
+    # 0 for every early-season game. Backtested on 2023->2024 and 2024->2025
+    # weeks 1-4: prior-season data picked the correct winner more often than
+    # the flat 50/50 default.
+    h_wp = home.get('blend_win_pct')
+    if h_wp is None:
+        h_wp = _pct(home.get('wins', 0), home.get('losses', 0))
+    a_wp = away.get('blend_win_pct')
+    if a_wp is None:
+        a_wp = _pct(away.get('wins', 0), away.get('losses', 0))
     _add('Win percentage', (h_wp - a_wp) * 2.0)
 
     # ── 3. Home / road split record ───────────────────────────────────────────
-    h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
-    a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
+    h_split = home.get('blend_split_pct')
+    if h_split is None:
+        h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
+    a_split = away.get('blend_split_pct')
+    if a_split is None:
+        a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
     _add('Home/road record', (h_split - a_split) * 0.8)
 
     # ── 4. Offensive efficiency — points scored per game ─────────────────────
-    h_ppg = _safe_float(home.get('ppg'), LEAGUE_PPG)
-    a_ppg = _safe_float(away.get('ppg'), LEAGUE_PPG)
+    h_ppg = _safe_float(home.get('blend_ppg', home.get('ppg')), LEAGUE_PPG)
+    a_ppg = _safe_float(away.get('blend_ppg', away.get('ppg')), LEAGUE_PPG)
     _add('Points per game', (h_ppg - a_ppg) * 0.05)
 
     # ── 5. Defensive efficiency — points allowed per game ────────────────────
-    h_ppga = _safe_float(home.get('ppg_allowed'), LEAGUE_PPG)
-    a_ppga = _safe_float(away.get('ppg_allowed'), LEAGUE_PPG)
+    h_ppga = _safe_float(home.get('blend_ppg_allowed', home.get('ppg_allowed')), LEAGUE_PPG)
+    a_ppga = _safe_float(away.get('blend_ppg_allowed', away.get('ppg_allowed')), LEAGUE_PPG)
     _add('Points allowed/G', (a_ppga - h_ppga) * 0.05)
 
     # ── 6. Recent form — last 3 games ─────────────────────────────────────────
