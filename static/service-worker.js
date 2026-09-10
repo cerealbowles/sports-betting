@@ -7,7 +7,7 @@
 // offline error is shown; a branded offline.html is a reasonable v2 addition,
 // deliberately deferred here to keep this pass scoped to installability.
 
-const CACHE_NAME = 'spooky-shell-v1';
+const CACHE_NAME = 'spooky-shell-v2';
 const SHELL_ASSETS = [
   '/static/styles.css',
   '/static/main.js',

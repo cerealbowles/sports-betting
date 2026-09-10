@@ -9,7 +9,9 @@
 <div class="card" style="max-width:520px; margin:0 auto 14px;">
     <div class="section-header" style="margin-bottom:14px;">
         <h2>New Bet</h2>
+        {% if request.args.get('embed') != '1' %}
         <a href="{{ url_for('mlb_schedule') }}" style="color:var(--blue); font-size:0.8rem; font-weight:700; text-decoration:none;">⚾ Pick MLB game →</a>
+        {% endif %}
     </div>
 
     <div class="form-row">
