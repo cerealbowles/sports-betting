@@ -59,6 +59,8 @@
 {% block content %}
 <div class="schedule-body">
 
+{% with active_sport = 'CFB' %}{% include "_sport_chips.html" %}{% endwith %}
+
 <!-- ── Live CFB Bets ────────────────────────────────────── -->
 {% include "_open_bets_section.html" with context %}
 

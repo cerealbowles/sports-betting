@@ -112,6 +112,8 @@
 {% block content %}
 <div class="schedule-body">
 
+{% with active_sport = 'MLB' %}{% include "_sport_chips.html" %}{% endwith %}
+
 <!-- ── Live MLB Bets ────────────────────────────────────── -->
 {% include "_open_bets_section.html" with context %}
 

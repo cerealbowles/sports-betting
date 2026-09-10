@@ -41,6 +41,8 @@
 {% block content %}
 <div class="schedule-body">
 
+{% with active_sport = 'NHL' %}{% include "_sport_chips.html" %}{% endwith %}
+
 {% if not schedule %}
 <div class="card" style="padding:24px; text-align:center;">
     <p style="color:var(--text-muted);">No NHL games today, or unable to reach the NHL API. Try refreshing.</p>

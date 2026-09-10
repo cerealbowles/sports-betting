@@ -4,6 +4,8 @@
 {% block content %}
 <div class="schedule-body">
 
+{% with active_sport = 'NFL' %}{% include "_sport_chips.html" %}{% endwith %}
+
 <!-- ── Live NFL Bets ────────────────────────────────────── -->
 {% include "_open_bets_section.html" with context %}
 
