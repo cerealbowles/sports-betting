@@ -208,6 +208,20 @@ def _build_team_info(team_data, side, standings, form, goalie):
     }
 
 
+def get_today_game_count():
+    """Cheap today's-game count for the sport-chip badge — reuses the same
+    cached raw schedule fetch as build_schedule_context() without paying for
+    any of its standings/form/odds/injury enrichment."""
+    today = _today_et()
+    data = _get_schedule_raw()
+    if not data:
+        return 0
+    for day in data.get('gameWeek', []):
+        if day.get('date') == today:
+            return len(day.get('games', []))
+    return 0
+
+
 def build_schedule_context():
     """Returns today's NHL games ready for the template."""
     from odds_api import _normalize

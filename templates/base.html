@@ -43,7 +43,7 @@
         <div class="nav-row-top">
             <div class="nav-main">
                 <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}>📅 Today</a>
-                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}>💰 Bets</a>
+                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}>💰 Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</a>
                 <a href="{{ url_for('model_performance', sport=nav_last_sport) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
                 <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}>📜 History</a>
                 <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}>⚙️ Settings</a>
@@ -83,7 +83,7 @@
         <span class="btb-icon">📅</span><span class="btb-label">Today</span>
     </a>
     <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint == 'bets_page' %} active{% endif %}">
-        <span class="btb-icon">💰</span><span class="btb-label">Bets</span>
+        <span class="btb-icon">💰</span><span class="btb-label">Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</span>
     </a>
     <a href="{{ url_for('model_performance', sport=nav_last_sport) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
         <span class="btb-icon">📈</span><span class="btb-label">Model</span>

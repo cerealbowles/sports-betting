@@ -445,6 +445,18 @@ def _build_game(event, team_stats, game_log, cfb_odds_map):
     }
 
 
+def get_today_game_count():
+    """Cheap today's-game count for the sport-chip badge — shares the same
+    cached scoreboard fetch/cache key as build_schedule_context() without
+    paying for any of its team-stats/odds/model enrichment."""
+    today_str = _today_et()
+    data = _cached_get(ESPN_CFB, {'groups': _FBS_GROUP, 'limit': 400}, f'cfb_{today_str}', _TTL['scoreboard'])
+    if not data:
+        return 0
+    events = data.get('events', [])
+    return len([e for e in events if _event_date_et(e.get('date', '')) == today_str])
+
+
 def build_schedule_context():
     """Returns today's FBS games from ESPN with model predictions. Empty list
     during offseason. Used by the daily-digest cache warmer, not the /cfb
