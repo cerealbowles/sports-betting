@@ -581,6 +581,82 @@ a.action-link:hover { color: var(--silver); }
   box-shadow: none;
 }
 
+/* ── Embed mode (bet form loaded inside the bottom-sheet iframe) ──────
+   Strips the page chrome that base.html normally renders (header, nav,
+   exposure strip, bottom tab bar) so only the form itself shows. */
+body.embed-mode {
+  padding: 10px 14px max(14px, env(safe-area-inset-bottom));
+}
+body.embed-mode .container { padding-bottom: 0; }
+
+/* ── Bet bottom sheet ───────────────────────────────────
+   Slides up from the bottom over the current page when a "bet" link is
+   tapped, instead of navigating to a new page. Hosts an iframe pointed at
+   the existing /new-bet form (loaded with ?embed=1) so all of that form's
+   pre-fill/Kelly-calc JS keeps working unmodified. */
+.sheet-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 16, 0.82);
+  z-index: 220;
+  align-items: flex-end;
+  justify-content: center;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.sheet-overlay.open { display: flex; animation: fadeIn 0.14s ease; }
+
+.bottom-sheet {
+  background: var(--bg-card);
+  width: 100%;
+  max-width: 560px;
+  height: min(88vh, 820px);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  overflow: hidden;
+}
+.sheet-overlay.open .bottom-sheet { transform: translateY(0); }
+
+.sheet-handle-wrap { display: flex; justify-content: center; padding: 8px 0 2px; flex: 0 0 auto; }
+.sheet-handle { width: 36px; height: 4px; border-radius: 999px; background: var(--border-strong); }
+
+.sheet-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  font-size: 1.2rem;
+  min-width: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sheet-close:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+  transform: none;
+  box-shadow: none;
+}
+
+.bet-sheet-iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  background: var(--bg-card);
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 @media (min-width: 768px) {
   .main-grid { grid-template-columns: 1fr 1fr; }

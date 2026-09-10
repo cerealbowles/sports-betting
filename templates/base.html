@@ -13,12 +13,14 @@
     <meta name="apple-mobile-web-app-title" content="Spooky Sports">
     {% block head %}{% endblock %}
 </head>
-<body>
+{% set _embed = request.args.get('embed') == '1' %}
+<body{% if _embed %} class="embed-mode"{% endif %}>
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
 {% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
 {% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
 <div class="container">
 
+    {% if not _embed %}
     <div class="site-header">
         <a href="{{ _today_href }}" class="site-logo-link">
             <h1>Spooky Sports</h1>
@@ -69,11 +71,13 @@
         {% endif %}
     </div>
     {% endif %}
+    {% endif %}
 
     {% block content %}{% endblock %}
 
 </div>
 
+{% if not _embed %}
 <nav class="bottom-tab-bar" aria-label="Primary">
     <a href="{{ _today_href }}" class="btb-item{% if _today_active %} active{% endif %}">
         <span class="btb-icon">📅</span><span class="btb-label">Today</span>
@@ -91,6 +95,18 @@
         <span class="btb-icon">⚙️</span><span class="btb-label">Settings</span>
     </a>
 </nav>
+
+<!-- Bet bottom sheet: swipes up over the current page instead of navigating
+     to /new-bet. The sheet's iframe loads the bet form with embed=1 so
+     base.html skips its own chrome inside the sheet. -->
+<div class="sheet-overlay" id="betSheetOverlay" onclick="closeBetSheetOutside(event)">
+    <div class="bottom-sheet" id="betSheet">
+        <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
+        <button type="button" class="sheet-close" onclick="closeBetSheet()" aria-label="Close">✕</button>
+        <iframe id="betSheetFrame" class="bet-sheet-iframe" src="about:blank" title="Place bet"></iframe>
+    </div>
+</div>
+{% endif %}
 
 {% block scripts %}{% endblock %}
 <script>

@@ -14,7 +14,71 @@ if (e.target === e.currentTarget) {
 }
 }
 document.addEventListener('keydown', function(e) {
-if (e.key === 'Escape') { closeAddClosedModal(); closeCloseBetModal(); }
+if (e.key === 'Escape') { closeAddClosedModal(); closeCloseBetModal(); closeBetSheet(); }
+});
+
+/* ── Bet bottom sheet ─────────────────────────────────
+   Tapping any "bet" link (.btn-bet-team, present on every sport's game
+   card) opens the existing /new-bet form in a sheet that slides up over
+   the current page instead of navigating away. The sheet just hosts an
+   iframe pointed at /new-bet?...&embed=1 — the form's own pre-fill/Kelly
+   JS (below) runs inside that iframe unmodified. */
+var betSheetCloseTimer = null;
+
+function openBetSheet(url) {
+var overlay = document.getElementById('betSheetOverlay');
+var frame   = document.getElementById('betSheetFrame');
+if (!overlay || !frame) { window.location.href = url; return; }
+clearTimeout(betSheetCloseTimer);
+var sep = url.indexOf('?') === -1 ? '?' : '&';
+frame.src = url + sep + 'embed=1&next=' + encodeURIComponent(window.location.pathname + window.location.search);
+overlay.style.display = 'flex';
+overlay.offsetHeight; // force reflow so the slide-up transition runs
+overlay.classList.add('open');
+document.body.style.overflow = 'hidden';
+}
+
+function closeBetSheet() {
+var overlay = document.getElementById('betSheetOverlay');
+if (!overlay || !overlay.classList.contains('open')) return;
+overlay.classList.remove('open');
+document.body.style.overflow = '';
+clearTimeout(betSheetCloseTimer);
+betSheetCloseTimer = setTimeout(function () {
+    overlay.style.display = 'none';
+    var frame = document.getElementById('betSheetFrame');
+    if (frame) frame.src = 'about:blank';
+}, 300);
+}
+
+function closeBetSheetOutside(e) {
+if (e.target === e.currentTarget) closeBetSheet();
+}
+
+document.addEventListener('click', function (e) {
+var link = e.target.closest('.btn-bet-team');
+if (!link) return;
+e.preventDefault();
+openBetSheet(link.href);
+});
+
+/* Successful submission redirects the iframe away from /new-bet (add_open's
+   `next` param, pre-filled above with the current page's URL) — detect that
+   and refresh the underlying page so open-bet indicators pick up the new
+   position, since the iframe itself is about to be torn down. */
+document.addEventListener('DOMContentLoaded', function () {
+var frame = document.getElementById('betSheetFrame');
+if (!frame) return;
+frame.addEventListener('load', function () {
+    try {
+    var loc = frame.contentWindow.location;
+    if (loc.href === 'about:blank') return;
+    if (loc.pathname !== '/new-bet') {
+        closeBetSheet();
+        setTimeout(function () { window.location.reload(); }, 280);
+    }
+    } catch (err) { /* cross-origin — ignore */ }
+});
 });
 
 /* ── Modal: Close Bet ────────────────────────────────── */
