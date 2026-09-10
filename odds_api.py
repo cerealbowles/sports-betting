@@ -337,6 +337,11 @@ def lookup_game_odds(odds_map, home_name, away_name, game_date=None):
             'opening_away': r.get('opening_home'),
             'prev_home':    r.get('prev_away'),
             'prev_away':    r.get('prev_home'),
+            # Total (over/under) isn't home/away-oriented, so it carries
+            # through unchanged regardless of which side got swapped.
+            'total_line':   r.get('total_line'),
+            'over_odds':    r.get('over_odds'),
+            'under_odds':   r.get('under_odds'),
         }
 
     if game_date:

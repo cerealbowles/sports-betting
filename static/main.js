@@ -14,7 +14,81 @@ if (e.target === e.currentTarget) {
 }
 }
 document.addEventListener('keydown', function(e) {
-if (e.key === 'Escape') { closeAddClosedModal(); closeCloseBetModal(); closeBetSheet(); }
+if (e.key === 'Escape') { closeAddClosedModal(); closeCloseBetModal(); closeBetSheet(); closeGameDetails(); }
+});
+
+/* ── Game details bottom sheet ────────────────────────
+   Tapping a card's .game-card-summary slides up its .game-card-details node
+   (full stats + bet-type chips) as a bottom sheet. The node is moved into
+   the shared sheet body, not cloned or fetched — a placeholder marks its
+   original spot in the card so it can be moved back unchanged on close. */
+var openDetailsKey = null;
+var gameDetailsCloseTimer = null;
+
+function openGameDetails(key) {
+if (openDetailsKey === key) return;
+if (openDetailsKey) restoreGameDetails(openDetailsKey);
+var details = document.getElementById('gd-' + key);
+var body    = document.getElementById('gameDetailsSheetBody');
+var overlay = document.getElementById('gameDetailsOverlay');
+if (!details || !body || !overlay) return;
+clearTimeout(gameDetailsCloseTimer);
+var placeholder = document.createElement('div');
+placeholder.id = 'gd-ph-' + key;
+placeholder.style.display = 'none';
+details.parentNode.insertBefore(placeholder, details);
+details.hidden = false;
+body.appendChild(details);
+openDetailsKey = key;
+overlay.style.display = 'flex';
+overlay.offsetHeight; // force reflow so the slide-up transition runs
+overlay.classList.add('open');
+document.body.style.overflow = 'hidden';
+// Lets per-sport scripts (e.g. MLB's lazy live-boxscore fetch) react to a
+// details panel becoming visible without main.js knowing sport specifics.
+document.dispatchEvent(new CustomEvent('gamedetailsopen', { detail: { key: key, el: details } }));
+}
+
+function restoreGameDetails(key) {
+var details = document.getElementById('gd-' + key);
+var placeholder = document.getElementById('gd-ph-' + key);
+if (details && placeholder) {
+    details.hidden = true;
+    placeholder.replaceWith(details);
+}
+}
+
+function closeGameDetails() {
+var overlay = document.getElementById('gameDetailsOverlay');
+if (!overlay || !overlay.classList.contains('open')) return;
+overlay.classList.remove('open');
+document.body.style.overflow = '';
+clearTimeout(gameDetailsCloseTimer);
+var key = openDetailsKey;
+openDetailsKey = null;
+gameDetailsCloseTimer = setTimeout(function () {
+    overlay.style.display = 'none';
+    if (key) restoreGameDetails(key);
+}, 300);
+}
+
+function closeGameDetailsOutside(e) {
+if (e.target === e.currentTarget) closeGameDetails();
+}
+
+document.addEventListener('click', function (e) {
+var summary = e.target.closest('.game-card-summary');
+if (!summary) return;
+var card = summary.closest('.game-card');
+if (!card || !card.id) return;
+openGameDetails(card.id.replace(/^gc-/, ''));
+});
+
+document.addEventListener('keydown', function (e) {
+if (e.key !== 'Enter' && e.key !== ' ') return;
+if (!e.target.classList || !e.target.classList.contains('game-card-summary')) return;
+e.preventDefault();
+e.target.click();
 });
 
 /* ── Bet bottom sheet ─────────────────────────────────
@@ -59,6 +133,7 @@ document.addEventListener('click', function (e) {
 var link = e.target.closest('.btn-bet-team');
 if (!link) return;
 e.preventDefault();
+closeGameDetails();
 openBetSheet(link.href);
 });
 

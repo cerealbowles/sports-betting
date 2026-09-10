@@ -119,6 +119,7 @@
     var homeName   = params.get('home_name');
     var awayName   = params.get('away_name');
     var betSide    = params.get('bet_side');
+    var betType    = params.get('bet_type');
     var isPaper    = params.get('paper') === '1';
     var unfRank    = params.get('unf_rank');
 
@@ -130,6 +131,7 @@
 
     function fill() {
         if (name)  { var el = document.getElementById('bet_name');   if (el) el.value = name; }
+        if (betType) { var el = document.getElementById('bet_type'); if (el) el.value = betType; }
         if (sport) { var el = document.getElementById('sport');      if (el) { el.value = sport; if (!modelProb && typeof updateEmpiricalInfo === 'function') updateEmpiricalInfo(true); } }
         if (utc)   { var el = document.getElementById('eventstart'); if (el) el.value = utcToDatetimeLocal(utc); }
 

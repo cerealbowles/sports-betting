@@ -96,6 +96,19 @@
     </a>
 </nav>
 
+<!-- Game details bottom sheet: tapping a simplified game-card summary slides
+     this up with the full stats and the Moneyline/Spread/Over-Under bet
+     buttons. Its body is the tapped card's own .game-card-details node,
+     moved in via JS (not cloned or fetched) so it keeps all its
+     server-rendered content and IDs, then moved back on close. -->
+<div class="sheet-overlay" id="gameDetailsOverlay" onclick="closeGameDetailsOutside(event)">
+    <div class="bottom-sheet" id="gameDetailsSheet">
+        <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
+        <button type="button" class="sheet-close" onclick="closeGameDetails()" aria-label="Close">✕</button>
+        <div class="sheet-body" id="gameDetailsSheetBody"></div>
+    </div>
+</div>
+
 <!-- Bet bottom sheet: swipes up over the current page instead of navigating
      to /new-bet. The sheet's iframe loads the bet form with embed=1 so
      base.html skips its own chrome inside the sheet. -->
