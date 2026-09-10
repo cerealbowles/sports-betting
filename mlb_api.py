@@ -628,6 +628,17 @@ def _build_team_info(side_data, side, recent, pitcher_stats, pitcher_logs, team_
     }
 
 
+def get_today_game_count():
+    """Cheap today's-game count for the sport-chip badge — reuses the same
+    cached raw schedule fetch as build_schedule_context() without paying for
+    any of its pitcher/bullpen/odds/model enrichment."""
+    raw = _get_schedule_raw()
+    if not raw:
+        return 0
+    dates = raw.get('dates', [])
+    return len(dates[0].get('games', [])) if dates else 0
+
+
 def build_schedule_context():
     """Returns today's games with full context ready for the template."""
     from odds_api import _normalize

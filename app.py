@@ -14,6 +14,7 @@ import math
 import re
 import threading
 import atexit
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import mlb_api
 import mlb_model
 import nhl_api
@@ -1706,6 +1707,19 @@ _SPORT_SCHEDULE_ENDPOINTS = {
     'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
 }
 
+_SPORT_GAME_COUNT_FNS = {
+    'MLB': mlb_api.get_today_game_count,
+    'NHL': nhl_api.get_today_game_count,
+    'NFL': nfl_api.get_today_game_count,
+    'CFB': cfb_api.get_today_game_count,
+}
+
+# Only the pages that actually render the sport-chip bar (_sport_chips.html)
+# need today's per-sport game counts — gating on endpoint keeps the four
+# (cached, but still real-on-a-cold-cache) sport API calls off every other
+# page (Bets/History/Settings/etc.).
+_CHIP_BAR_ENDPOINTS = set(_SPORT_SCHEDULE_ENDPOINTS.values()) | {'model_performance'}
+
 
 @app.context_processor
 def _inject_nav_context():
@@ -1714,11 +1728,33 @@ def _inject_nav_context():
     non-sensitive) `last_sport` cookie set by each sport schedule route on
     render (see _set_last_sport_cookie), since sport is now a filter rather
     than its own nav destination and Today/Model need to remember where you
-    last were."""
+    last were.
+
+    Also exposes sport_game_counts (today's game count per sport, for the
+    chip-bar badges — see _CHIP_BAR_ENDPOINTS) and nav_open_bet_count (real,
+    non-paper open bet count, for the Bets nav badge)."""
     sport = (request.cookies.get('last_sport') or 'MLB').upper()
     if sport not in _SPORT_SCHEDULE_ENDPOINTS:
         sport = 'MLB'
-    return {'nav_last_sport': sport}
+
+    sport_game_counts = {}
+    if request.endpoint in _CHIP_BAR_ENDPOINTS:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(fn): code for code, fn in _SPORT_GAME_COUNT_FNS.items()}
+            for f in as_completed(futures):
+                code = futures[f]
+                try:
+                    sport_game_counts[code] = f.result()
+                except Exception:
+                    sport_game_counts[code] = None
+
+    nav_open_bet_count = OpenBet.query.filter_by(is_paper=False).count()
+
+    return {
+        'nav_last_sport': sport,
+        'sport_game_counts': sport_game_counts,
+        'nav_open_bet_count': nav_open_bet_count,
+    }
 
 
 def _set_last_sport_cookie(resp, sport):

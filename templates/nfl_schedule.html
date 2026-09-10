@@ -6,9 +6,6 @@
 
 {% with active_sport = 'NFL' %}{% include "_sport_chips.html" %}{% endwith %}
 
-<!-- ── Live NFL Bets ────────────────────────────────────── -->
-{% include "_open_bets_section.html" with context %}
-
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
     <a href="{{ url_for('nfl_schedule', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>

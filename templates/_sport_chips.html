@@ -12,17 +12,22 @@
    Expected context variables:
      active_sport — current sport code ('MLB'/'NHL'/'NFL'/'CFB')
      chip_mode    — 'schedule' (default) or 'query'
+     sport_game_counts — {sport: today's game count}, injected by
+       _inject_nav_context() on pages that render this partial; renders a
+       "(N)" suffix on each chip when present (omitted for sports the count
+       couldn't be fetched for, i.e. value is None).
 #}
 {% set _sports = [('MLB', '⚾'), ('NHL', '🏒'), ('NFL', '🏈'), ('CFB', '🎓')] %}
 {% set _schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
 <div class="sport-chip-bar">
     {% for code, icon in _sports %}
+    {% set _count = (sport_game_counts or {}).get(code) %}
     {% if chip_mode == 'query' %}
     {% set _qs = request.args.to_dict() %}
     {% set _ = _qs.update({'sport': code}) %}
-    <a href="{{ url_for(request.endpoint, **_qs) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}</a>
+    <a href="{{ url_for(request.endpoint, **_qs) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}{% if _count is not none %} <span class="sport-chip-count">({{ _count }})</span>{% endif %}</a>
     {% else %}
-    <a href="{{ url_for(_schedule_endpoints[code]) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}</a>
+    <a href="{{ url_for(_schedule_endpoints[code]) }}" class="sport-chip{% if active_sport == code %} sport-chip-active{% endif %}">{{ icon }} {{ code }}{% if _count is not none %} <span class="sport-chip-count">({{ _count }})</span>{% endif %}</a>
     {% endif %}
     {% endfor %}
 </div>

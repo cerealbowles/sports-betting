@@ -114,9 +114,6 @@
 
 {% with active_sport = 'MLB' %}{% include "_sport_chips.html" %}{% endwith %}
 
-<!-- ── Live MLB Bets ────────────────────────────────────── -->
-{% include "_open_bets_section.html" with context %}
-
 {% if best_bets %}
 <span id="top3-bankroll-val" data-bankroll="{{ bankroll }}" data-kelly-cap="{{ kelly_cap }}" style="display:none;">{{ bankroll }}</span>
 
