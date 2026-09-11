@@ -1207,6 +1207,15 @@ body.embed-mode .container { padding-bottom: 0; }
     display: flex; align-items: center; gap: 10px;
     margin: 4px 0 10px; padding: 0 2px;
 }
+/* Extra breathing room + a divider line between one date's games and the
+   next date's header — the plain 4px margin above made adjacent dates
+   blur together with too little visual separation. Scoped to headers that
+   follow a games-grid so the very first date on the page stays flush. */
+.games-grid + .day-header {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
 .day-header h2 { margin: 0; font-size: 1rem; }
 .game-count { color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
 .refresh-info { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
