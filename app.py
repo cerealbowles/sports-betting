@@ -4592,6 +4592,15 @@ def _warm_all_caches(send_daily: bool = False):
         except Exception:
             pass
 
+    # MLB has its own nightly resolver/calibration path (_resolve_pending_outcomes);
+    # NFL/CFB/NHL resolve outcomes inline above via _upsert_predictions, so recalibrate
+    # them here instead.
+    for name in ('NFL', 'CFB', 'NHL'):
+        try:
+            _recompute_all_calibration(name)
+        except Exception:
+            pass
+
 
 def _warm_all_caches_noon():
     """Warmer run at noon — same as normal but also fires the daily picks message."""
@@ -4679,18 +4688,26 @@ def _resolve_pending_outcomes():
                 if resolved:
                     print(f'[outcome-resolver] resolved {resolved} pending predictions', flush=True)
                     _refit_mlb_platt()
-                    _recompute_trust_weights('MLB')
-                    _recompute_team_bias('MLB')
-                    _recompute_unified_weights('MLB')
-                    _recompute_pick_of_day_weights('MLB')
-                    _recompute_unified_rank_stats('MLB')
-                    _recompute_movement_profiles('MLB')
-                    _recompute_movement_weights('MLB')
-                    _recompute_consensus_calibration('MLB')
+                    _recompute_all_calibration('MLB')
                 if purged:
                     print(f'[outcome-resolver] purged {purged} stale pending predictions', flush=True)
             except Exception:
                 db.session.rollback()
+
+
+def _recompute_all_calibration(sport):
+    """Run every sport-generic calibration/weighting pass for one sport.
+    Mirrors the MLB-only block that used to be duplicated at each call site —
+    safe to call for sports with few/no resolved games (each recompute_*
+    function no-ops below its own minimum sample size)."""
+    _recompute_trust_weights(sport)
+    _recompute_team_bias(sport)
+    _recompute_unified_weights(sport)
+    _recompute_pick_of_day_weights(sport)
+    _recompute_unified_rank_stats(sport)
+    _recompute_movement_profiles(sport)
+    _recompute_movement_weights(sport)
+    _recompute_consensus_calibration(sport)
 
 
 def _refit_mlb_platt():
@@ -4728,28 +4745,16 @@ def _start_cache_warmer():
     # Calibrations are fast (DB-only) — run synchronously so the first page load
     # sees correct Platt scaling, grade adjustments, and Trust Score weights.
     _refit_mlb_platt()
-    _recompute_trust_weights('MLB')
-    _recompute_team_bias('MLB')
-    _recompute_unified_weights('MLB')
-    _recompute_pick_of_day_weights('MLB')
-    _recompute_unified_rank_stats('MLB')
-    _recompute_movement_profiles('MLB')
-    _recompute_movement_weights('MLB')
-    _recompute_consensus_calibration('MLB')
+    for _sport in ('MLB', 'NFL', 'CFB', 'NHL'):
+        _recompute_all_calibration(_sport)
 
     # API cache warming and outcome resolution are slow (network calls) — run in background.
     def _startup():
         _warm_all_caches()
         _resolve_pending_outcomes()
         _refit_mlb_platt()
-        _recompute_trust_weights('MLB')
-        _recompute_team_bias('MLB')
-        _recompute_unified_weights('MLB')
-        _recompute_pick_of_day_weights('MLB')
-        _recompute_unified_rank_stats('MLB')
-        _recompute_movement_profiles('MLB')
-        _recompute_movement_weights('MLB')
-        _recompute_consensus_calibration('MLB')
+        for _sport in ('MLB', 'NFL', 'CFB', 'NHL'):
+            _recompute_all_calibration(_sport)
     threading.Thread(target=_startup, daemon=True, name='warm-startup').start()
 
 # Only start the warmer in the actual server process, not during testing or

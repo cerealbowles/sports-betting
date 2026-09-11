@@ -66,8 +66,8 @@
 <div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
 {% endif %}
 
-{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
-{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
+{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
+{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
 {% if game.odds and game.odds.total_line %}
 {% set over_url %}{{ url_for('new_bet') }}?name={{ ('Over ' + game.odds.total_line|string) | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.over_odds %}&odds={{ game.odds.over_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
 {% set under_url %}{{ url_for('new_bet') }}?name={{ ('Under ' + game.odds.total_line|string) | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.under_odds %}&odds={{ game.odds.under_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
@@ -182,27 +182,60 @@
             {% endfor %}
         </div>
 
-        <!-- ── FanDuel analysis ── -->
-        {% if game.odds %}
+        <!-- ── FanDuel + Model analysis ── -->
+        {% if game.odds or game.model %}
         <div class="analysis-section">
-            <div class="analysis-row">
-                <span class="analysis-label">FanDuel</span>
-                <div class="analysis-data">
-                    <span class="odds-team">
-                        <span>{{ game.away.abbrev }}</span>
-                        <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
-                        {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
-                        <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
-                    </span>
-                    <span class="odds-sep">·</span>
-                    <span class="odds-team">
-                        <span>{{ game.home.abbrev }}</span>
-                        <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
-                        {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
-                        <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
-                    </span>
-                </div>
+
+        {% if game.odds %}
+        <div class="analysis-row">
+            <span class="analysis-label">FanDuel</span>
+            <div class="analysis-data">
+                <span class="odds-team">
+                    <span>{{ game.away.abbrev }}</span>
+                    <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
+                    {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
+                </span>
+                <span class="odds-sep">·</span>
+                <span class="odds-team">
+                    <span>{{ game.home.abbrev }}</span>
+                    <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
+                    {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
+                </span>
             </div>
+        </div>
+        {% endif %}
+
+        {% if game.model %}
+        <div class="analysis-row">
+            <span class="analysis-label">Model</span>
+            <div class="analysis-data">
+                <span class="model-team {{ 'model-pick' if game.model.away_prob > game.model.home_prob }}">{{ game.away.abbrev }} {{ (game.model.away_prob * 100) | round(1) }}%</span>
+                <span class="odds-sep">·</span>
+                <span class="model-team {{ 'model-pick' if game.model.home_prob > game.model.away_prob }}">{{ game.home.abbrev }} {{ (game.model.home_prob * 100) | round(1) }}%</span>
+                {% if game.odds %}
+                {% if game.model.away_prob >= game.model.home_prob %}{% set edge = ((game.model.away_prob - game.odds.away_implied) * 100) | round(1) %}{% set edge_team = game.away.abbrev %}{% set k_amer = game.odds.away_best | float %}{% set k_prob = game.model.away_prob %}{% else %}{% set edge = ((game.model.home_prob - game.odds.home_implied) * 100) | round(1) %}{% set edge_team = game.home.abbrev %}{% set k_amer = game.odds.home_best | float %}{% set k_prob = game.model.home_prob %}{% endif %}
+                <span class="model-edge {{ 'edge-pos' if edge > 1 else ('edge-neg' if edge < -1 else 'edge-neutral') }}">{{ edge_team }} {{ '+' if edge > 0 }}{{ edge }}%</span>
+                {% if k_amer > 0 %}{% set k_b = k_amer / 100.0 %}{% elif k_amer < 0 %}{% set k_b = -100.0 / k_amer %}{% else %}{% set k_b = 0.0 %}{% endif %}
+                {% if k_b > 0 %}{% set k_f = (k_b * k_prob - (1 - k_prob)) / k_b %}{% if k_f > 0 %}<span class="kelly-verdict edge-pos">bet</span>{% else %}<span class="kelly-verdict edge-neg">skip</span>{% endif %}{% endif %}
+                {% endif %}
+            </div>
+        </div>
+        <details class="model-factors">
+            <summary>factors</summary>
+            <div class="factor-list">
+            {% for label, contrib in game.model.factors %}{% if contrib != 0 %}
+            <div class="factor-row">
+                <span class="factor-name">{{ label }}</span>
+                <span class="factor-bar-wrap"><span class="factor-bar {{ 'factor-pos' if contrib > 0 else 'factor-neg' }}" style="width:{{ [contrib | abs * 120, 80] | min }}px"></span></span>
+                <span class="factor-val {{ 'factor-pos' if contrib > 0 else 'factor-neg' }}">{{ '+' if contrib > 0 }}{{ contrib }}</span>
+            </div>
+            {% endif %}{% endfor %}
+            </div>
+        </details>
+        {% endif %}
+
         </div>
         {% endif %}
 

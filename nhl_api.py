@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import odds_api
 import injuries_api
+import nhl_model
 
 _ET = ZoneInfo('America/New_York')
 
@@ -110,7 +111,8 @@ def _get_standings_map():
 
 
 def _get_recent_form_map():
-    """Query past 3 weeks of completed games and build team form sequences."""
+    """Query past 3 weeks of completed games and build team form sequences
+    plus each team's most recent game date (for back-to-back detection)."""
     today = datetime.now(timezone.utc)
     past_dates = [
         (today - timedelta(weeks=i)).strftime('%Y-%m-%d')
@@ -135,6 +137,7 @@ def _get_recent_form_map():
                 pass
 
     form = {}
+    last_game_date = {}
     for game_date, game in sorted(all_games, key=lambda x: x[0]):
         away = game.get('awayTeam', {})
         home = game.get('homeTeam', {})
@@ -144,10 +147,24 @@ def _get_recent_form_map():
         h_s  = home.get('score', 0) or 0
         if a_ab:
             form.setdefault(a_ab, []).append('W' if a_s > h_s else 'L')
+            last_game_date[a_ab] = game_date
         if h_ab:
             form.setdefault(h_ab, []).append('W' if h_s > a_s else 'L')
+            last_game_date[h_ab] = game_date
 
-    return {ab: results[-10:] for ab, results in form.items()}
+    return {ab: results[-10:] for ab, results in form.items()}, last_game_date
+
+
+def _rest_days(last_game_date, abbrev, today_str):
+    gdate = last_game_date.get(abbrev)
+    if not gdate:
+        return None
+    try:
+        last = datetime.strptime(gdate, '%Y-%m-%d').date()
+        curr = datetime.strptime(today_str, '%Y-%m-%d').date()
+        return (curr - last).days
+    except Exception:
+        return None
 
 
 def _get_team_goalie(abbrev):
@@ -174,7 +191,7 @@ def _get_team_goalie(abbrev):
     }
 
 
-def _build_team_info(team_data, side, standings, form, goalie):
+def _build_team_info(team_data, side, standings, form, goalie, rest_days=None):
     abbrev = team_data.get('abbrev', '')
     st     = standings.get(abbrev, {})
     gp     = st.get('gamesPlayed', 1) or 1
@@ -205,6 +222,7 @@ def _build_team_info(team_data, side, standings, form, goalie):
         'gf_pg':       round(st.get('goalFor', 0) / gp, 2),
         'ga_pg':       round(st.get('goalAgainst', 0) / gp, 2),
         'l10':         f"{st.get('l10Wins',0)}-{st.get('l10Losses',0)}-{st.get('l10OtLosses',0)}",
+        'rest_days':   rest_days,
     }
 
 
@@ -227,7 +245,7 @@ def build_schedule_context():
     from odds_api import _normalize
     raw        = _get_schedule_raw()
     standings  = _get_standings_map()
-    form       = _get_recent_form_map()
+    form, last_game_date = _get_recent_form_map()
     odds_map   = odds_api.get_odds_map('nhl')
     injury_map = injuries_api.get_injury_map('nhl')
     if not raw:
@@ -275,13 +293,21 @@ def build_schedule_context():
         a_ab   = a_data.get('abbrev', '')
         h_ab   = h_data.get('abbrev', '')
 
-        away = _build_team_info(a_data, 'away', standings, form, goalies.get(a_ab))
-        home = _build_team_info(h_data, 'home', standings, form, goalies.get(h_ab))
+        away = _build_team_info(a_data, 'away', standings, form, goalies.get(a_ab),
+                                 _rest_days(last_game_date, a_ab, today_str))
+        home = _build_team_info(h_data, 'home', standings, form, goalies.get(h_ab),
+                                 _rest_days(last_game_date, h_ab, today_str))
 
         # Inject injury status onto goalie info
         for team in (away, home):
             if team.get('goalie') and team['goalie'].get('name'):
                 team['goalie']['injury'] = injury_map.get(team['goalie']['name'].lower())
+
+        # Run the model
+        try:
+            model = nhl_model.predict(home, away, game_time_utc=game.get('startTimeUTC', ''))
+        except Exception:
+            model = None
 
         # Playoff series context
         series_info = None
@@ -310,6 +336,7 @@ def build_schedule_context():
             'away':          away,
             'home':          home,
             'series_info':   series_info,
+            'model':         model,
             'odds':          odds_api.lookup_game_odds(odds_map, home['name'], away['name'],
                                                         game_date=game.get('startTimeUTC', '')[:13] or None),
             'bet_name':      f"{a_ab} @ {h_ab}",
