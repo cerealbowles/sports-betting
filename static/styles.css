@@ -54,16 +54,12 @@ body::before { display: none; }
   min-height: 0;
 }
 
-/* Vertically centers a page's main content in whatever viewport space is
-   left below the header/nav/exposure-strip — on sparse-content days (e.g.
-   a single NFL game) this keeps the card from sitting right under the
-   header with a big dead zone of background above the bottom tab bar.
-   Auto margins collapse to 0 once content already fills the space (any
-   normal MLB day), so this is a no-op there — not just centered-looking. */
+/* Schedule page content wrapper — kept top-aligned under the header/nav
+   even on sparse-content days (e.g. a single NFL game). Previously had
+   auto top/bottom margins to vertically center on sparse days, but that
+   made the page feel unanchored/inconsistent depending on game count. */
 .schedule-body {
   width: 100%;
-  margin-top: auto;
-  margin-bottom: auto;
 }
 
 /* ── Top bar ─────────────────────────────────────────
