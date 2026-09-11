@@ -18,25 +18,32 @@
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
 {% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
 {% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
+{% set _page_labels = {'bets_page': '💰 Bets', 'model_performance': '📈 Model', 'history': '📜 History', 'settings_page': '⚙️ Settings'} %}
+{% set _page_label = '📅 Today' if _today_active else _page_labels.get(request.endpoint, '👻 Spooky Sports') %}
 <div class="container">
 
     {% if not _embed %}
-    <div class="site-header">
-        <a href="{{ _today_href }}" class="site-logo-link">
-            <h1>Spooky Sports</h1>
-        </a>
-        <div class="tagline">Colorado · Kelly Criterion Tracker</div>
-    </div>
-
-    <div class="mountain-range" aria-hidden="true">
-        <svg viewBox="0 0 1200 80" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M0,80 L0,55 L80,25 L160,50 L260,10 L360,45 L440,20 L520,50 L600,8 L680,40 L760,15 L860,45 L940,18 L1040,50 L1120,22 L1200,48 L1200,80 Z" fill="rgba(251,79,20,0.07)"/>
-            <path d="M0,80 L0,65 L100,42 L180,60 L280,30 L380,58 L460,38 L560,62 L660,28 L740,55 L840,35 L940,60 L1040,40 L1120,65 L1200,45 L1200,80 Z" fill="rgba(251,79,20,0.11)"/>
-            <path d="M260,10 L246,26 L274,26 Z" fill="rgba(251,79,20,0.18)"/>
-            <path d="M600,8 L586,22 L614,22 Z"  fill="rgba(251,79,20,0.18)"/>
-            <path d="M760,15 L747,28 L773,28 Z" fill="rgba(251,79,20,0.18)"/>
-            <path d="M940,18 L928,30 L952,30 Z" fill="rgba(251,79,20,0.18)"/>
-        </svg>
+    <div class="topbar">
+        <a href="{{ _today_href }}" class="topbar-page">{{ _page_label }}</a>
+        {% if global_exposure %}
+        <div class="topbar-bankroll" title="Bankroll and open-position exposure across every sport — stays visible regardless of which page you're on, since Kelly sizing is bankroll-wide, not per-sport.">
+            <span class="exposure-item">
+                <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
+            </span>
+            <span class="exposure-sep">·</span>
+            <span class="exposure-item">
+                <span class="exposure-label">Open</span>
+                <span class="exposure-val">${{ '%.2f' % global_exposure.open_staked }}{% if global_exposure.open_count %} <span class="exposure-sub">({{ global_exposure.open_count }})</span>{% endif %}</span>
+            </span>
+            {% if global_exposure.pct_committed is not none %}
+            <span class="exposure-sep">·</span>
+            <span class="exposure-item">
+                <span class="exposure-label">Committed</span>
+                <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
+            </span>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
 
     <nav class="site-nav">
@@ -50,27 +57,6 @@
             </div>
         </div>
     </nav>
-
-    {% if global_exposure %}
-    <div class="exposure-strip" title="Bankroll and open-position exposure across every sport — stays visible regardless of which page you're on, since Kelly sizing is bankroll-wide, not per-sport.">
-        <span class="exposure-item">
-            <span class="exposure-label">Bankroll</span>
-            <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
-        </span>
-        <span class="exposure-sep">·</span>
-        <span class="exposure-item">
-            <span class="exposure-label">Open</span>
-            <span class="exposure-val">${{ '%.2f' % global_exposure.open_staked }}{% if global_exposure.open_count %} <span class="exposure-sub">({{ global_exposure.open_count }})</span>{% endif %}</span>
-        </span>
-        {% if global_exposure.pct_committed is not none %}
-        <span class="exposure-sep">·</span>
-        <span class="exposure-item">
-            <span class="exposure-label">Committed</span>
-            <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
-        </span>
-        {% endif %}
-    </div>
-    {% endif %}
     {% endif %}
 
     {% block content %}{% endblock %}
