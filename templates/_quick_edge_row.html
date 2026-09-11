@@ -1,0 +1,31 @@
+{# Quick model/market/edge summary row, shown on the always-visible card
+   face for upcoming and live games. Expects `game` in context. #}
+{% if game.model and game.odds and game.status != 'Final' %}
+{% if game.model.away_prob >= game.model.home_prob %}
+{% set qe_team = game.away.abbrev %}{% set qe_model_prob = game.model.away_prob %}{% set qe_market_prob = game.odds.away_implied %}{% set qe_amer = game.odds.away_best %}
+{% else %}
+{% set qe_team = game.home.abbrev %}{% set qe_model_prob = game.model.home_prob %}{% set qe_market_prob = game.odds.home_implied %}{% set qe_amer = game.odds.home_best %}
+{% endif %}
+{% set qe_edge = ((qe_model_prob - qe_market_prob) * 100) | round(1) %}
+{% set qe_amer = qe_amer | float %}
+{% if qe_amer > 0 %}{% set qe_b = qe_amer / 100.0 %}{% elif qe_amer < 0 %}{% set qe_b = -100.0 / qe_amer %}{% else %}{% set qe_b = 0.0 %}{% endif %}
+{% set qe_kelly = (qe_b * qe_model_prob - (1 - qe_model_prob)) / qe_b if qe_b > 0 else -1 %}
+
+<div class="quick-edge-row">
+    <div class="qe-col">
+        <span class="qe-label">Model</span>
+        <span class="qe-val">{{ (qe_model_prob * 100) | round(1) }}%</span>
+    </div>
+    <div class="qe-col">
+        <span class="qe-label">Market</span>
+        <span class="qe-val">{{ (qe_market_prob * 100) | round(1) }}%</span>
+    </div>
+    <div class="qe-col">
+        <span class="qe-label">Edge</span>
+        <span class="qe-val {{ 'edge-pos' if qe_edge > 1 else ('edge-neg' if qe_edge < -1 else 'edge-neutral') }}">{{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span>
+    </div>
+</div>
+{% if qe_kelly > 0 and qe_edge >= 4 %}
+<div class="quick-edge-banner">★ Recommended bet <span class="qeb-sub">{{ qe_team }} · edge {{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span></div>
+{% endif %}
+{% endif %}
