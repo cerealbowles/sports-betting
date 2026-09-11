@@ -1395,6 +1395,41 @@ body.embed-mode .container { padding-bottom: 0; }
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+.games-section-hdr-completed { margin-top: 20px; padding-top: 14px; }
+
+/* ── Schedule page — completed games moved to the bottom of the week ─────
+   Every date's Final games are pulled out of day-by-day order into one
+   condensed list at the end of the page instead of interrupting each day's
+   live/upcoming games. .condensed-game wraps the exact same .game-card
+   markup (no duplicated template), so the tap-to-open details sheet still
+   works — these rules just shrink the always-visible summary face. */
+.completed-date-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  padding: 12px 2px 4px;
+}
+.games-grid-condensed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.condensed-game .game-card { margin-bottom: 0; }
+.condensed-game .game-header,
+.condensed-game .open-bet-strip,
+.condensed-game .sb-record,
+.condensed-game .sb-split,
+.condensed-game .timeout-dots,
+.condensed-game .poss-ico { display: none; }
+.condensed-game .scoreboard { padding: 8px 12px; gap: 8px; }
+.condensed-game .team-logo { width: 22px; height: 22px; }
+.condensed-game .sb-team { gap: 3px; }
+.condensed-game .sb-name { font-size: 0.8rem; }
+.condensed-game .sb-center { gap: 2px; }
+.condensed-game .sb-score { font-size: 1.1rem; gap: 4px; }
 
 /* ── Schedule page — Final game stats toggle ────────────── */
 .final-stats-toggle {

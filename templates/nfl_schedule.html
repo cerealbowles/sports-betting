@@ -33,26 +33,47 @@
 </div>
 
 {% else %}
+{% set _week_final_total = namespace(n=0) %}
 {% for day in week_ctx.days %}
+{% set _final = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _week_final_total.n = _week_final_total.n + _final | length %}
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% if _live + _upcoming %}
 <div class="day-header{{ ' day-header-today' if day.is_today }}">
     <h2>{{ day.date_display }}{% if day.is_today %} <span class="today-badge">Today</span>{% endif %}</h2>
-    <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
+    <span class="game-count">{{ (_live + _upcoming)|length }} game{{ 's' if (_live + _upcoming)|length != 1 }}</span>
     <span class="refresh-info"><a href="{{ url_for('nfl_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
-
-{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
-{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
-{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
-{% set ns = namespace(final_hdr=False) %}
 <div class="games-grid">
-{% for game in _live + _upcoming + _final %}
-{% if game.status == 'Final' and not ns.final_hdr %}{% set ns.final_hdr = True %}
-<div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
-{% endif %}
+{% for game in _live + _upcoming %}
 {% include "_nfl_game_card.html" %}
 {% endfor %}
 </div><!-- /.games-grid -->
+{% endif %}
 {% endfor %}
+
+<!-- ── Completed games — pulled out of day-by-day order and grouped here at
+     the bottom of the week, condensed. Same .game-card markup underneath
+     (via .condensed-game wrapper + CSS), so the tap-to-open details sheet
+     still works unchanged. ── -->
+{% if _week_final_total.n > 0 %}
+<div class="games-section-hdr games-section-hdr-completed">Completed this week · {{ _week_final_total.n }} game{{ 's' if _week_final_total.n != 1 }}</div>
+{% for day in week_ctx.days %}
+{% set _final = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% if _final %}
+<div class="completed-date-label">{{ day.date_display }}</div>
+<div class="games-grid-condensed">
+{% for game in _final %}
+<div class="condensed-game">
+{% include "_nfl_game_card.html" %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% endif %}
 
 </div>
