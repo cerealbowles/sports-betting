@@ -18,5 +18,10 @@ cfb_refit_results.json
 cfb_training_2024.json
 cfb_training_2025.json
 cfb_training_combined.json
+nhl_refit_results.json
+nhl_training_20232024.json
+nhl_training_20242025.json
+nhl_training_20252026.json
+nhl_training_combined.json
 refit_results.json
 team_bias_snapshot.json
