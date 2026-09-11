@@ -66,15 +66,42 @@ body::before { display: none; }
   margin-bottom: auto;
 }
 
-/* ── Header ─────────────────────────────────────────── */
-.site-header {
-  text-align: center;
-  padding: 12px 0 0;
+/* ── Top bar ─────────────────────────────────────────
+   Single-line header: current page/section on the left, bankroll exposure
+   on the right. Replaces the old centered "Spooky Sports" wordmark + full
+   exposure-strip row — the bottom tab bar already carries wayfinding, so
+   the wordmark was pure redundant chrome, and folding bankroll into the
+   same row cuts a full stacked row on mobile. */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
 }
-.site-logo-link {
+.topbar-page {
+  color: var(--text);
   text-decoration: none;
-  display: inline-block;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
 }
+.topbar-bankroll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.topbar-bankroll .exposure-item:first-child .exposure-val { font-size: 1rem; }
 
 h1 {
   color: var(--orange);
@@ -84,32 +111,8 @@ h1 {
   text-shadow: 0 2px 8px rgba(251,79,20,0.18);
 }
 
-.tagline {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  margin-top: 3px;
-  margin-bottom: 6px;
-}
-
-/* ── Mountain silhouette ─────────────────────────────── */
-.mountain-range {
-  width: 100%;
-  height: 56px;
-  margin-bottom: 12px;
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0));
-          mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0));
-}
-.mountain-range svg { width: 100%; height: 100%; }
-
 @media (max-width: 600px) {
-  /* Bottom nav now carries wayfinding, so the wordmark subtitle is pure
-     redundant chrome here — drop it rather than just shrinking it. */
-  .site-header { padding-top: 6px; }
-  h1 { font-size: 1.25rem; }
-  .tagline { display: none; }
-  .mountain-range { display: none; }
+  .topbar-page { font-size: 0.88rem; }
 }
 
 /* ── Typography ──────────────────────────────────────── */
@@ -228,7 +231,7 @@ h3 {
    otherwise duplicate the same links. */
 .bottom-tab-bar { display: none; }
 @media (max-width: 768px) {
-  .nav-row-top { display: none; }
+  .site-nav { display: none; }
   .bottom-tab-bar {
     display: flex;
     position: fixed;
@@ -258,23 +261,10 @@ h3 {
   body { padding-bottom: max(76px, calc(60px + env(safe-area-inset-bottom))); }
 }
 
-/* ── Global exposure strip ──────────────────────────────
+/* ── Bankroll exposure (right side of .topbar) ───────────
    Persistent bankroll/exposure summary shown on every page (base.html).
    Kelly sizing is bankroll-wide, not per-sport, so this stays visible
    regardless of which sport page is open. */
-.exposure-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
-  margin-bottom: 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
-  font-size: 0.78rem;
-  flex-wrap: wrap;
-}
 .exposure-item { display: flex; align-items: baseline; gap: 5px; }
 .exposure-label {
   color: var(--text-muted);
