@@ -54,16 +54,12 @@ body::before { display: none; }
   min-height: 0;
 }
 
-/* Vertically centers a page's main content in whatever viewport space is
-   left below the header/nav/exposure-strip — on sparse-content days (e.g.
-   a single NFL game) this keeps the card from sitting right under the
-   header with a big dead zone of background above the bottom tab bar.
-   Auto margins collapse to 0 once content already fills the space (any
-   normal MLB day), so this is a no-op there — not just centered-looking. */
+/* Schedule page content wrapper — kept top-aligned under the header/nav
+   even on sparse-content days (e.g. a single NFL game). Previously had
+   auto top/bottom margins to vertically center on sparse days, but that
+   made the page feel unanchored/inconsistent depending on game count. */
 .schedule-body {
   width: 100%;
-  margin-top: auto;
-  margin-bottom: auto;
 }
 
 /* ── Top bar ─────────────────────────────────────────
@@ -77,12 +73,8 @@ body::before { display: none; }
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
+  padding: 10px 2px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
 }
 .topbar-page {
@@ -1215,6 +1207,15 @@ body.embed-mode .container { padding-bottom: 0; }
     display: flex; align-items: center; gap: 10px;
     margin: 4px 0 10px; padding: 0 2px;
 }
+/* Extra breathing room + a divider line between one date's games and the
+   next date's header — the plain 4px margin above made adjacent dates
+   blur together with too little visual separation. Scoped to headers that
+   follow a games-grid so the very first date on the page stays flush. */
+.games-grid + .day-header {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
 .day-header h2 { margin: 0; font-size: 1rem; }
 .game-count { color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
 .refresh-info { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
@@ -1394,6 +1395,41 @@ body.embed-mode .container { padding-bottom: 0; }
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+.games-section-hdr-completed { margin-top: 20px; padding-top: 14px; }
+
+/* ── Schedule page — completed games moved to the bottom of the week ─────
+   Every date's Final games are pulled out of day-by-day order into one
+   condensed list at the end of the page instead of interrupting each day's
+   live/upcoming games. .condensed-game wraps the exact same .game-card
+   markup (no duplicated template), so the tap-to-open details sheet still
+   works — these rules just shrink the always-visible summary face. */
+.completed-date-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  padding: 12px 2px 4px;
+}
+.games-grid-condensed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.condensed-game .game-card { margin-bottom: 0; }
+.condensed-game .game-header,
+.condensed-game .open-bet-strip,
+.condensed-game .sb-record,
+.condensed-game .sb-split,
+.condensed-game .timeout-dots,
+.condensed-game .poss-ico { display: none; }
+.condensed-game .scoreboard { padding: 8px 12px; gap: 8px; }
+.condensed-game .team-logo { width: 22px; height: 22px; }
+.condensed-game .sb-team { gap: 3px; }
+.condensed-game .sb-name { font-size: 0.8rem; }
+.condensed-game .sb-center { gap: 2px; }
+.condensed-game .sb-score { font-size: 1.1rem; gap: 4px; }
 
 /* ── Schedule page — Final game stats toggle ────────────── */
 .final-stats-toggle {

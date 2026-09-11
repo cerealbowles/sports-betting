@@ -18,18 +18,19 @@
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
 {% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
 {% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
-{% set _page_labels = {'bets_page': '💰 Bets', 'model_performance': '📈 Model', 'history': '📜 History', 'settings_page': '⚙️ Settings'} %}
-{% set _page_label = '📅 Today' if _today_active else _page_labels.get(request.endpoint, '👻 Spooky Sports') %}
+{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
+{% set _page_label = 'Today' if _today_active else _page_labels.get(request.endpoint, 'Spooky Sports') %}
 <div class="container">
 
     {% if not _embed %}
     <div class="topbar">
         <a href="{{ _today_href }}" class="topbar-page">{{ _page_label }}</a>
         {% if global_exposure %}
-        <div class="topbar-bankroll" title="Bankroll and open-position exposure across every sport — stays visible regardless of which page you're on, since Kelly sizing is bankroll-wide, not per-sport.">
+        <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
             <span class="exposure-item">
                 <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
             </span>
+            {% if request.endpoint == 'bets_page' %}
             <span class="exposure-sep">·</span>
             <span class="exposure-item">
                 <span class="exposure-label">Open</span>
@@ -41,6 +42,7 @@
                 <span class="exposure-label">Committed</span>
                 <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
             </span>
+            {% endif %}
             {% endif %}
         </div>
         {% endif %}

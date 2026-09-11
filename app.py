@@ -4570,10 +4570,14 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
         print(f'[daily-picks] Discord POST failed: {e}', flush=True)
 
 
-def _warm_all_caches(send_daily: bool = False):
+def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     # Snapshot purging disabled — keeping all odds_snapshot rows to build a real
     # sample for line-movement-profile analysis. Revisit once that data is old
     # enough to roll up into a per-game category instead of raw odds.
+    #
+    # send_alerts=False on the initial startup warm — a fresh process spinning
+    # up shouldn't fire Discord movement alerts for state it's seeing for the
+    # first time; those should only fire on the real timer-driven runs below.
     for name, fn in [('MLB', mlb_api.build_schedule_context),
                      ('NHL', nhl_api.build_schedule_context),
                      ('NFL', nfl_api.build_schedule_context),
@@ -4586,7 +4590,8 @@ def _warm_all_caches(send_daily: bool = False):
                     if name == 'MLB':
                         s       = Setting.query.first()
                         webhook = (s.discord_webhook_url or '').strip() if s else ''
-                        _check_unified_score_alerts(result, webhook)
+                        if send_alerts:
+                            _check_unified_score_alerts(result, webhook)
                         if send_daily:
                             _send_daily_mlb_recommendation(result, webhook)
         except Exception:
@@ -4750,7 +4755,7 @@ def _start_cache_warmer():
 
     # API cache warming and outcome resolution are slow (network calls) — run in background.
     def _startup():
-        _warm_all_caches()
+        _warm_all_caches(send_alerts=False)
         _resolve_pending_outcomes()
         _refit_mlb_platt()
         for _sport in ('MLB', 'NFL', 'CFB', 'NHL'):
