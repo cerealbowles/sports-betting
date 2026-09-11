@@ -77,12 +77,8 @@ body::before { display: none; }
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
+  padding: 10px 2px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
 }
 .topbar-page {
