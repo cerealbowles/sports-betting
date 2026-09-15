@@ -20,6 +20,7 @@ import mlb_model
 import nhl_api
 import nfl_api
 import cfb_api
+import nba_api
 
 # app.py
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
@@ -1511,7 +1512,7 @@ def compute_chart_data(closed_bets):
 
 
 # Routes
-_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf'}
+_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba'}
 
 
 def _annotate_open_bets(open_bets):
@@ -1723,6 +1724,7 @@ def _inject_global_exposure():
 _SPORT_SCHEDULE_ENDPOINTS = {
     'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule',
     'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
+    'NBA': 'nba_schedule',
 }
 
 _SPORT_GAME_COUNT_FNS = {
@@ -1730,10 +1732,11 @@ _SPORT_GAME_COUNT_FNS = {
     'NHL': nhl_api.get_today_game_count,
     'NFL': nfl_api.get_today_game_count,
     'CFB': cfb_api.get_today_game_count,
+    'NBA': nba_api.get_today_game_count,
 }
 
 # Only the pages that actually render the sport-chip bar (_sport_chips.html)
-# need today's per-sport game counts — gating on endpoint keeps the four
+# need today's per-sport game counts — gating on endpoint keeps the five
 # (cached, but still real-on-a-cold-cache) sport API calls off every other
 # page (Bets/History/Settings/etc.).
 _CHIP_BAR_ENDPOINTS = set(_SPORT_SCHEDULE_ENDPOINTS.values()) | {'model_performance'}
@@ -2345,7 +2348,7 @@ def close_open(bet_id):
   if closing_line is None and b.game_key and b.bet_side and b.eventstart:
     try:
       import odds_history as _oh
-      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf'}
+      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba'}
       sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
       es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
       snap = _oh.get_closing_line(sk, b.game_key, es)
@@ -2736,6 +2739,7 @@ _SPORT_META = {
   'NHL': {'emoji': '🏒', 'schedule_endpoint': 'nhl_schedule', 'baseline': '~54% (home ice)'},
   'NFL': {'emoji': '🏈', 'schedule_endpoint': 'nfl_schedule', 'baseline': '~57% (home field)'},
   'CFB': {'emoji': '🎓', 'schedule_endpoint': 'cfb_schedule', 'baseline': '~59% (home field)'},
+  'NBA': {'emoji': '🏀', 'schedule_endpoint': 'nba_schedule', 'baseline': '~58-60% (home court)'},
 
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
@@ -3568,6 +3572,13 @@ def nhl_schedule():
   resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL'))
   return _set_last_sport_cookie(resp, 'NHL')
 
+@app.route('/nba')
+def nba_schedule():
+  schedule = nba_api.build_schedule_context()
+  _upsert_predictions(schedule, 'NBA')
+  resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA'))
+  return _set_last_sport_cookie(resp, 'NBA')
+
 @app.route('/nfl')
 def nfl_schedule():
   week = request.args.get('week', type=int)
@@ -4032,7 +4043,7 @@ def api_live_scores():
     Called by the dashboard every 2 minutes to update score badges.
     """
     from odds_api import _normalize
-    import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl, cfb_api as _cfb
+    import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl, cfb_api as _cfb, nba_api as _nba
     from flask import jsonify
 
     open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
@@ -4060,6 +4071,11 @@ def api_live_scores():
     if 'CFB' in sports_needed:
         try:
             score_map.update(_cfb.get_live_scores())
+        except Exception:
+            pass
+    if 'NBA' in sports_needed:
+        try:
+            score_map.update(_nba.get_live_scores())
         except Exception:
             pass
 
@@ -4599,7 +4615,8 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     for name, fn in [('MLB', mlb_api.build_schedule_context),
                      ('NHL', nhl_api.build_schedule_context),
                      ('NFL', nfl_api.build_schedule_context),
-                     ('CFB', cfb_api.build_schedule_context)]:
+                     ('CFB', cfb_api.build_schedule_context),
+                     ('NBA', nba_api.build_schedule_context)]:
         try:
             result = fn()
             if result:
@@ -4616,9 +4633,9 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
             pass
 
     # MLB has its own nightly resolver/calibration path (_resolve_pending_outcomes);
-    # NFL/CFB/NHL resolve outcomes inline above via _upsert_predictions, so recalibrate
-    # them here instead.
-    for name in ('NFL', 'CFB', 'NHL'):
+    # NFL/CFB/NHL/NBA resolve outcomes inline above via _upsert_predictions, so
+    # recalibrate them here instead.
+    for name in ('NFL', 'CFB', 'NHL', 'NBA'):
         try:
             _recompute_all_calibration(name)
         except Exception:
@@ -4768,7 +4785,7 @@ def _start_cache_warmer():
     # Calibrations are fast (DB-only) — run synchronously so the first page load
     # sees correct Platt scaling, grade adjustments, and Trust Score weights.
     _refit_mlb_platt()
-    for _sport in ('MLB', 'NFL', 'CFB', 'NHL'):
+    for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA'):
         _recompute_all_calibration(_sport)
 
     # API cache warming and outcome resolution are slow (network calls) — run in background.
@@ -4776,7 +4793,7 @@ def _start_cache_warmer():
         _warm_all_caches(send_alerts=False)
         _resolve_pending_outcomes()
         _refit_mlb_platt()
-        for _sport in ('MLB', 'NFL', 'CFB', 'NHL'):
+        for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA'):
             _recompute_all_calibration(_sport)
     threading.Thread(target=_startup, daemon=True, name='warm-startup').start()
 

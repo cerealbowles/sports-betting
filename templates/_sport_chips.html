@@ -10,15 +10,15 @@
        are themselves per-sport via a query param (e.g. /model).
 
    Expected context variables:
-     active_sport — current sport code ('MLB'/'NHL'/'NFL'/'CFB')
+     active_sport — current sport code ('MLB'/'NHL'/'NFL'/'CFB'/'NBA')
      chip_mode    — 'schedule' (default) or 'query'
      sport_game_counts — {sport: today's game count}, injected by
        _inject_nav_context() on pages that render this partial; renders a
        "(N)" suffix on each chip when present (omitted for sports the count
        couldn't be fetched for, i.e. value is None).
 #}
-{% set _sports = [('MLB', '⚾'), ('NHL', '🏒'), ('NFL', '🏈'), ('CFB', '🎓')] %}
-{% set _schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
+{% set _sports = [('MLB', '⚾'), ('NHL', '🏒'), ('NFL', '🏈'), ('CFB', '🎓'), ('NBA', '🏀')] %}
+{% set _schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule'} %}
 <div class="sport-chip-bar">
     {% for code, icon in _sports %}
     {% set _count = (sport_game_counts or {}).get(code) %}

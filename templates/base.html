@@ -15,7 +15,7 @@
 </head>
 {% set _embed = request.args.get('embed') == '1' %}
 <body{% if _embed %} class="embed-mode"{% endif %}>
-{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule'} %}
+{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule'} %}
 {% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
 {% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
 {% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
