@@ -43,19 +43,21 @@ def _get_schedule_raw():
     return _cached_get(f"{NHL_API}/schedule/now", 'nhl_sched_now', _TTL['schedule'])
 
 
-def get_live_scores():
+def get_live_scores(date_str=None):
     """
-    Returns {game_key: score_dict} for today's NHL games with a 2-min cache.
-    Uses a separate cache key from the full schedule so score updates are fresh.
+    Returns {game_key: score_dict} for NHL games on `date_str` (YYYY-MM-DD ET,
+    defaults to today) with a 2-min cache. Passing a past date lets an open bet
+    from a prior day keep showing its final score until the bet is closed.
     """
     from odds_api import _normalize
-    today = datetime.now(_ET).strftime('%Y-%m-%d')
-    data  = _cached_get(f"{NHL_API}/schedule/now", f'nhl_scores_{today}', 120)
+    target = date_str or datetime.now(_ET).strftime('%Y-%m-%d')
+    url    = f"{NHL_API}/schedule/now" if not date_str else f"{NHL_API}/schedule/{target}"
+    data   = _cached_get(url, f'nhl_scores_{target}', 120)
     scores = {}
     if not data:
         return scores
     for day in data.get('gameWeek', []):
-        if day.get('date') != today:
+        if day.get('date') != target:
             continue
         for game in day.get('games', []):
             a_data = game.get('awayTeam', {})

@@ -263,18 +263,23 @@ def _parse_weather(summary):
 
 # ── Live scores ────────────────────────────────────────────────────────────────
 
-def get_live_scores():
+def get_live_scores(date_str=None):
     """
-    Returns {game_key: score_dict} for today's CFB games with a 2-min cache.
+    Returns {game_key: score_dict} for CFB games on `date_str` (YYYY-MM-DD ET,
+    defaults to today) with a 2-min cache. Passing a past date lets an open bet
+    from a prior day keep showing its final score until the bet is closed.
     """
     from odds_api import _normalize
-    today_str = _today_et()
-    data = _cached_get(ESPN_CFB, {'groups': _FBS_GROUP, 'limit': 400}, f'cfb_scores_{today_str}', 120)
+    target_str = date_str or _today_et()
+    params = {'groups': _FBS_GROUP, 'limit': 400}
+    if date_str:
+        params['dates'] = target_str.replace('-', '')
+    data = _cached_get(ESPN_CFB, params, f'cfb_scores_{target_str}', 120)
     scores = {}
     if not data:
         return scores
     for event in data.get('events', []):
-        if _event_date_et(event.get('date', '')) != today_str:
+        if _event_date_et(event.get('date', '')) != target_str:
             continue
         comp      = event.get('competitions', [{}])[0]
         status_obj = comp.get('status', {}).get('type', {})
