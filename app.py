@@ -1110,7 +1110,8 @@ def _recompute_movement_profiles(sport='MLB'):
                 GamePrediction.movement_profile.in_(_old_scheme_labels),
             ),
         ).all()
-        odds_sport_key = 'baseball_mlb' if sport == 'MLB' else sport.lower()
+        import odds_api as _oa
+        odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
         n_classified = 0
         for p in preds:
             fav_home = (p.home_prob or 0.5) >= 0.5
