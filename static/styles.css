@@ -77,6 +77,13 @@ body::before { display: none; }
   padding: 10px 2px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+  /* Pinned so title/bankroll/sport-switcher stay put while the rest of the
+     page scrolls behind — background must be opaque and match the page so
+     scrolled content doesn't show through underneath it. */
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--bg);
 }
 .topbar-page {
   color: var(--text);
@@ -85,6 +92,13 @@ body::before { display: none; }
   font-weight: 800;
   letter-spacing: 0.2px;
   white-space: nowrap;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .topbar-bankroll {
   display: flex;
@@ -95,6 +109,56 @@ body::before { display: none; }
   justify-content: flex-end;
 }
 .topbar-bankroll .exposure-item:first-child .exposure-val { font-size: 1rem; }
+
+/* ── Header sport switcher ───────────────────────────────
+   Replaces the old per-page sport-chip row: a single icon dropdown that
+   lives in the pinned header next to bankroll, so switching sport works
+   the same from any page instead of only on schedule/model pages. */
+.sport-switch { position: relative; }
+.sport-switch-trigger {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.sport-switch-trigger:hover { border-color: var(--border-strong); }
+.sport-switch-caret { font-size: 0.6rem; color: var(--text-muted); }
+.sport-switch-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 130px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 4px;
+  z-index: 50;
+}
+.sport-switch-menu.open { display: flex; flex-direction: column; gap: 2px; }
+.sport-switch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 7px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+.sport-switch-item:hover { color: var(--text); background: var(--bg-card-2); }
+.sport-switch-item.active { color: var(--orange); background: var(--orange-dim); }
 
 h1 {
   color: var(--orange);
@@ -175,47 +239,6 @@ h3 {
 }
 .site-nav a:hover { color: var(--text); background: var(--bg-card-2); }
 .site-nav a.active { color: var(--orange); background: var(--orange-dim); }
-
-/* ── Sport chip row ──────────────────────────────────────
-   Sport is a filter, not a nav destination — this replaces the old sport
-   tabs (which ate 4 of the 5 bottom-nav slots). Shown on every screen size,
-   unlike the bottom tab bar it replaces the sport-switching role of.
-   Generalized from the CFB Top-25/conference filter chip pattern. */
-.sport-chip-bar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.sport-chip-bar::-webkit-scrollbar { display: none; }
-.sport-chip {
-  flex-shrink: 0;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  text-decoration: none;
-  font-size: 0.82rem;
-  font-weight: 700;
-  padding: 7px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--transition), background var(--transition), border-color var(--transition);
-}
-.sport-chip:hover { color: var(--text); border-color: var(--border-strong); }
-.sport-chip.sport-chip-active,
-.sport-chip.filter-active {
-  color: var(--orange);
-  background: var(--orange-dim);
-  border-color: rgba(251,79,20,0.3);
-}
-.sport-chip-count {
-  font-weight: 600;
-  opacity: 0.7;
-}
 
 /* ── Bottom tab bar ──────────────────────────────────────
    Mobile-only primary nav (Today/Bets/Model/History/Settings), fixed to the

@@ -16,36 +16,62 @@
 {% set _embed = request.args.get('embed') == '1' %}
 <body{% if _embed %} class="embed-mode"{% endif %}>
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule'} %}
+{% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀'} %}
 {% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
 {% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
 {% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
 {% set _page_label = 'Today' if _today_active else _page_labels.get(request.endpoint, 'Spooky Sports') %}
+{# The header sport switcher is global (every page), driven by the last-visited-sport
+   cookie (nav_last_sport) rather than a per-page var, since child templates can't set
+   context this early in a base-template extends chain. The one exception is the Model
+   page, which is itself sport-scoped via a ?sport= query param independent of the
+   cookie — mirrors the old _sport_chips.html chip_mode='query' behavior. #}
+{% set _sport_switch_active = (request.args.get('sport').upper() if request.endpoint == 'model_performance' and request.args.get('sport') else none) or nav_last_sport or 'MLB' %}
 <div class="container">
 
     {% if not _embed %}
     <div class="topbar">
         <a href="{{ _today_href }}" class="topbar-page">{{ _page_label }}</a>
-        {% if global_exposure %}
-        <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
-            <span class="exposure-item">
-                <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
-            </span>
-            {% if request.endpoint == 'bets_page' %}
-            <span class="exposure-sep">·</span>
-            <span class="exposure-item">
-                <span class="exposure-label">Open</span>
-                <span class="exposure-val">${{ '%.2f' % global_exposure.open_staked }}{% if global_exposure.open_count %} <span class="exposure-sub">({{ global_exposure.open_count }})</span>{% endif %}</span>
-            </span>
-            {% if global_exposure.pct_committed is not none %}
-            <span class="exposure-sep">·</span>
-            <span class="exposure-item">
-                <span class="exposure-label">Committed</span>
-                <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
-            </span>
+        <div class="topbar-right">
+            {% if global_exposure %}
+            <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
+                <span class="exposure-item">
+                    <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
+                </span>
+                {% if request.endpoint == 'bets_page' %}
+                <span class="exposure-sep">·</span>
+                <span class="exposure-item">
+                    <span class="exposure-label">Open</span>
+                    <span class="exposure-val">${{ '%.2f' % global_exposure.open_staked }}{% if global_exposure.open_count %} <span class="exposure-sub">({{ global_exposure.open_count }})</span>{% endif %}</span>
+                </span>
+                {% if global_exposure.pct_committed is not none %}
+                <span class="exposure-sep">·</span>
+                <span class="exposure-item">
+                    <span class="exposure-label">Committed</span>
+                    <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
+                </span>
+                {% endif %}
+                {% endif %}
+            </div>
             {% endif %}
-            {% endif %}
+            <div class="sport-switch">
+                <button type="button" class="sport-switch-trigger" onclick="toggleSportSwitch(event)" aria-haspopup="true" aria-expanded="false" aria-label="Switch sport">
+                    <span>{{ _sport_icons[_sport_switch_active] }}</span>
+                    <span class="sport-switch-caret">▾</span>
+                </button>
+                <div class="sport-switch-menu">
+                    {% for code, icon in _sport_icons.items() %}
+                    {% if request.endpoint == 'model_performance' %}
+                    {% set _qs = request.args.to_dict() %}
+                    {% set _ = _qs.update({'sport': code}) %}
+                    <a href="{{ url_for(request.endpoint, **_qs) }}" class="sport-switch-item{% if _sport_switch_active == code %} active{% endif %}">{{ icon }} {{ code }}</a>
+                    {% else %}
+                    <a href="{{ url_for(_nav_schedule_endpoints[code]) }}" class="sport-switch-item{% if _sport_switch_active == code %} active{% endif %}">{{ icon }} {{ code }}</a>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
         </div>
-        {% endif %}
     </div>
 
     <nav class="site-nav">
