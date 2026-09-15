@@ -1975,8 +1975,10 @@ def service_worker():
 def settings_page():
   s = Setting.query.first() or Setting()
   import odds_history
+  import odds_api as _oa
   odds_stats = odds_history.get_storage_stats()
-  return render_template('settings.html', settings=s, odds_stats=odds_stats)
+  odds_key_usage = _oa.get_key_usage()
+  return render_template('settings.html', settings=s, odds_stats=odds_stats, odds_key_usage=odds_key_usage)
 
 @app.route('/save_settings', methods=['POST'])
 def save_settings():

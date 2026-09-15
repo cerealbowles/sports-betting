@@ -26,7 +26,12 @@
    context this early in a base-template extends chain. The one exception is the Model
    page, which is itself sport-scoped via a ?sport= query param independent of the
    cookie — mirrors the old _sport_chips.html chip_mode='query' behavior. #}
-{% set _sport_switch_active = (request.args.get('sport').upper() if request.endpoint == 'model_performance' and request.args.get('sport') else none) or nav_last_sport or 'MLB' %}
+{# Prefer subnav_sport (set directly by the current route) over the
+   nav_last_sport cookie: the cookie is set on this same response via
+   Set-Cookie, so it doesn't reach the browser until *after* this page has
+   already rendered — reading it here would show the previous sport's icon
+   for one navigation (e.g. clicking NBA still showing the NHL icon). #}
+{% set _sport_switch_active = (request.args.get('sport').upper() if request.endpoint == 'model_performance' and request.args.get('sport') else none) or subnav_sport or nav_last_sport or 'MLB' %}
 <div class="container">
 
     {% if not _embed %}
