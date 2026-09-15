@@ -17,10 +17,6 @@
 <body{% if _embed %} class="embed-mode"{% endif %}>
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule'} %}
 {% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀'} %}
-{% set _today_href = url_for(_nav_schedule_endpoints[nav_last_sport or 'MLB']) %}
-{% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
-{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
-{% set _page_label = 'Today' if _today_active else _page_labels.get(request.endpoint, 'Spooky Sports') %}
 {# The header sport switcher is global (every page), driven by the last-visited-sport
    cookie (nav_last_sport) rather than a per-page var, since child templates can't set
    context this early in a base-template extends chain. The one exception is the Model
@@ -32,6 +28,14 @@
    already rendered — reading it here would show the previous sport's icon
    for one navigation (e.g. clicking NBA still showing the NHL icon). #}
 {% set _sport_switch_active = (request.args.get('sport').upper() if request.endpoint == 'model_performance' and request.args.get('sport') else none) or subnav_sport or nav_last_sport or 'MLB' %}
+{# Today/Model nav targets must use the same precedence as the icon above —
+   otherwise the Today link on e.g. the CFB model page still points at
+   whatever sport's schedule was last visited, since nav_last_sport reflects
+   the *incoming* cookie, not the sport actually being viewed on this page. #}
+{% set _today_href = url_for(_nav_schedule_endpoints[_sport_switch_active]) %}
+{% set _today_active = request.endpoint in _nav_schedule_endpoints.values() %}
+{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
+{% set _page_label = 'Today' if _today_active else _page_labels.get(request.endpoint, 'Spooky Sports') %}
 <div class="container">
 
     {% if not _embed %}
@@ -84,7 +88,7 @@
             <div class="nav-main">
                 <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}>📅 Today</a>
                 <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}>💰 Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</a>
-                <a href="{{ url_for('model_performance', sport=nav_last_sport) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
+                <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
                 <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}>📜 History</a>
                 <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}>⚙️ Settings</a>
             </div>
@@ -104,7 +108,7 @@
     <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint == 'bets_page' %} active{% endif %}">
         <span class="btb-icon">💰</span><span class="btb-label">Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</span>
     </a>
-    <a href="{{ url_for('model_performance', sport=nav_last_sport) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
+    <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
         <span class="btb-icon">📈</span><span class="btb-label">Model</span>
     </a>
     <a href="{{ url_for('history') }}" class="btb-item{% if request.endpoint == 'history' %} active{% endif %}">
