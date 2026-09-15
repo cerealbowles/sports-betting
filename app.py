@@ -3499,7 +3499,7 @@ def model_performance():
     except ValueError:
       grp['date_label'] = grp['date']
 
-  return render_template('model_performance.html',
+  resp = make_response(render_template('model_performance.html',
       preds=preds[:40],
       total=len(preds),
       resolved=n,
@@ -3536,7 +3536,8 @@ def model_performance():
       firing_bucket_stats=firing_bucket_stats,
       fire_days=_fire_days,
       fire_total=len(_fire_games),
-  )
+  ))
+  return _set_last_sport_cookie(resp, sport)
 
 @app.route('/nhl')
 def nhl_schedule():
