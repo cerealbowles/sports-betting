@@ -1187,6 +1187,23 @@ def _movement_value(profile):
         return _MOVEMENT_WEIGHTS.get(profile, 0.5)
 
 
+def _et_date(utc_str):
+  """Convert a game's UTC ISO timestamp to its ET calendar date (YYYY-MM-DD).
+  Night games (8pm+ ET) land past midnight UTC, so a raw UTC-string slice
+  puts them on the wrong day — e.g. an 8:20pm ET Sunday kickoff is already
+  00:20 UTC Monday. Every schedule builder (nfl_api, cfb_api) already
+  buckets games by this same ET date; predictions must match or a game's
+  stored game_date disagrees with the day it's actually displayed under."""
+  if not utc_str:
+    return ''
+  try:
+    from zoneinfo import ZoneInfo
+    dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+    return dt.astimezone(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
+  except ValueError:
+    return ''
+
+
 def _upsert_predictions(schedule, sport='MLB'):
   """Save model predictions and record outcomes for completed games."""
   now = datetime.now(timezone.utc)
@@ -1207,7 +1224,7 @@ def _upsert_predictions(schedule, sport='MLB'):
       if not model and not has_wind:
         continue
       status    = game.get('status', 'Preview')
-      game_date = (game.get('game_time_utc') or '')[:10]
+      game_date = _et_date(game.get('game_time_utc') or '')
       home_name = (game.get('home') or {}).get('name', '')
       away_name = (game.get('away') or {}).get('name', '')
       if not game_date or not home_name or not away_name:
@@ -2467,7 +2484,7 @@ def mlb_schedule():
   for day in (schedule or []):
     for game in day.get('games', []):
       status    = game.get('status', 'Preview')
-      gdate     = (game.get('game_time_utc') or '')[:10]
+      gdate     = _et_date(game.get('game_time_utc') or '')
       home_obj  = game.get('home') or {}
       away_obj  = game.get('away') or {}
       home_name = home_obj.get('name', '')
