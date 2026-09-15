@@ -602,10 +602,14 @@ def get_current_week():
     ESPN's no-param scoreboard endpoint returns a 'week.number' field that's
     meant to track the current week, but it doesn't reliably auto-advance —
     it can stay pinned to the prior week for days after that week's games
-    have finished. Instead, pull the regular-season week date ranges from
-    the scoreboard's 'calendar' block and pick whichever week's range
-    contains "now" (ET), so this is correct as soon as a new week starts
-    rather than whenever ESPN's own pointer catches up.
+    have finished. Pulling the regular-season week date ranges from the
+    scoreboard's 'calendar' block fixes most of that lag, but the calendar's
+    week boundary is a fixed Tue/Wed cutover — it stays "current" for hours
+    after every game in the week has already gone Final (e.g. all day
+    Tuesday, following Monday Night Football). So on top of the date-range
+    pick, check whether every game in that week is already Final; if so,
+    advance to the next week early rather than waiting for the calendar
+    cutover.
     """
     season = _get_nfl_season()
     data = _cached_get(
@@ -633,7 +637,29 @@ def get_current_week():
         if now > end:
             week = int(entry['value'])  # last completed week; overwritten by later entries
 
+    if week < _REG_SEASON_WEEKS and _week_is_complete(season, week):
+        week += 1
+
     return season, week
+
+
+def _week_is_complete(season, week):
+    """True if every scheduled game in this regular-season week has gone Final.
+    Used to advance the "current week" pointer as soon as the week's last game
+    ends, instead of waiting for the calendar's fixed Tue/Wed cutover."""
+    data = _cached_get(
+        ESPN_NFL,
+        {'seasontype': 2, 'week': week, 'year': season},
+        f'nfl_week_complete_{season}_{week}',
+        _TTL['scoreboard'],
+    )
+    events = (data or {}).get('events', [])
+    if not events:
+        return False
+    return all(
+        e.get('competitions', [{}])[0].get('status', {}).get('type', {}).get('state') == 'post'
+        for e in events
+    )
 
 
 def build_week_schedule_context(week=None):
