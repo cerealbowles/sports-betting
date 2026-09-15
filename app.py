@@ -4586,16 +4586,23 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     # send_alerts=False on the initial startup warm — a fresh process spinning
     # up shouldn't fire Discord movement alerts for state it's seeing for the
     # first time; those should only fire on the real timer-driven runs below.
-    for name, fn in [('MLB', mlb_api.build_schedule_context),
-                     ('NHL', nhl_api.build_schedule_context),
-                     ('NFL', nfl_api.build_schedule_context),
-                     ('CFB', cfb_api.build_schedule_context),
-                     ('NBA', nba_api.build_schedule_context)]:
+    # NFL/CFB's actual schedule route (/nfl, /cfb) renders a full week via
+    # build_week_schedule_context() — a different cache key than the single-day
+    # build_schedule_context() this loop used to warm. That left the week
+    # view's per-game summary/weather/injury prefetch uncached for every
+    # non-today game, so real visitors still paid the cold-fetch cost. Warm
+    # the week view instead so it matches what the route actually reads.
+    for name, fn, is_week in [('MLB', mlb_api.build_schedule_context, False),
+                               ('NHL', nhl_api.build_schedule_context, False),
+                               ('NFL', nfl_api.build_week_schedule_context, True),
+                               ('CFB', cfb_api.build_week_schedule_context, True),
+                               ('NBA', nba_api.build_schedule_context, False)]:
         try:
             result = fn()
-            if result:
+            schedule = result.get('days') if is_week else result
+            if schedule:
                 with app.app_context():
-                    _upsert_predictions(result, name)
+                    _upsert_predictions(schedule, name)
                     if name == 'MLB':
                         s       = Setting.query.first()
                         webhook = (s.discord_webhook_url or '').strip() if s else ''
