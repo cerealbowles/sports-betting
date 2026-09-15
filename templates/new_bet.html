@@ -14,33 +14,43 @@
         {% endif %}
     </div>
 
-    <div class="form-row">
-        <label>Bet Name</label>
-        <input id="bet_name" type="text" required placeholder="e.g. Avalanche ML">
+    <!-- Compact summary header shown when launched from a game card (name/sport/eventstart pre-filled via query params) -->
+    <div id="game_summary_header" style="display:none; margin-bottom:12px; padding:10px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius-sm);">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px;">
+            <strong id="summary_name" style="font-size:0.95rem;"></strong>
+            <span id="summary_meta" class="small" style="color:var(--text-muted); white-space:nowrap;"></span>
+        </div>
     </div>
-    <div class="form-row">
-        <label>Event Start</label>
-        <input id="eventstart" type="datetime-local">
-    </div>
-    <div class="form-row">
-        <label>Sport</label>
-        <input id="sport" type="text" placeholder="NHL, NFL, MLB...">
-    </div>
-    <div class="form-row">
-        <label>Type</label>
-        <select id="bet_type">
-            <option value="Moneyline">Moneyline</option>
-            <option value="Spread">Spread</option>
-            <option value="Over/Under">Over/Under</option>
-            <option value="Player">Player</option>
-        </select>
+
+    <!-- Full manual-entry fields (only shown when there's no game-card context to pre-fill from) -->
+    <div id="manual_entry_fields">
+        <div class="form-row">
+            <label>Bet Name</label>
+            <input id="bet_name" type="text" required placeholder="e.g. Avalanche ML">
+        </div>
+        <div class="form-row">
+            <label>Event Start</label>
+            <input id="eventstart" type="datetime-local">
+        </div>
+        <div class="form-row">
+            <label>Sport</label>
+            <input id="sport" type="text" placeholder="NHL, NFL, MLB...">
+        </div>
+        <div class="form-row">
+            <label>Type</label>
+            <select id="bet_type">
+                <option value="Moneyline">Moneyline</option>
+                <option value="Spread">Spread</option>
+                <option value="Over/Under">Over/Under</option>
+                <option value="Player">Player</option>
+            </select>
+        </div>
     </div>
     <div id="paper_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:var(--blue-dim); border:1px solid rgba(37,99,235,0.22); border-radius:var(--radius-sm); font-size:0.8rem; color:var(--blue); font-weight:700;">
         📋 Paper Pick — no bankroll impact
         <span style="font-weight:400; color:var(--text-muted); margin-left:6px;">Result logged for model training only</span>
     </div>
     <div id="game_context_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:rgba(35,97,146,0.09); border:1px solid rgba(35,97,146,0.22); border-radius:var(--radius-sm); font-size:0.78rem;">
-        <div style="font-weight:700; margin-bottom:4px; color:var(--text);" id="ctx_title"></div>
         <div style="display:flex; flex-wrap:wrap; gap:10px; color:var(--text-muted);">
             <span id="ctx_fd"></span>
             <span id="ctx_model"></span>
@@ -134,6 +144,25 @@
         if (betType) { var el = document.getElementById('bet_type'); if (el) el.value = betType; }
         if (sport) { var el = document.getElementById('sport');      if (el) { el.value = sport; if (!modelProb && typeof updateEmpiricalInfo === 'function') updateEmpiricalInfo(true); } }
         if (utc)   { var el = document.getElementById('eventstart'); if (el) el.value = utcToDatetimeLocal(utc); }
+
+        // Coming from a game card: we already have name/sport/start/type, so
+        // swap the full manual-entry inputs for a compact read-only summary.
+        if (name && sport && utc) {
+            var manual = document.getElementById('manual_entry_fields');
+            if (manual) manual.style.display = 'none';
+
+            var header = document.getElementById('game_summary_header');
+            var nameEl = document.getElementById('summary_name');
+            var metaEl = document.getElementById('summary_meta');
+            if (header && nameEl && metaEl) {
+                nameEl.textContent = name;
+                var d = new Date(utc);
+                var dateStr = isNaN(d) ? '' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                    + ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                metaEl.textContent = [sport, betType, dateStr].filter(Boolean).join(' · ');
+                header.style.display = 'block';
+            }
+        }
 
         // Pre-fill American odds and trigger the Kelly / edge recalc
         if (oddsAmer) {
