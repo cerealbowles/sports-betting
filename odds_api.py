@@ -162,6 +162,47 @@ def _get_api_keys():
 # Track exhausted keys so we skip them without retrying until process restart
 _exhausted_keys = set()
 
+_USAGE_TTL = 300  # 5 min — avoid re-checking on every settings page load
+_usage_cache = {}  # key -> ({'remaining': int|None, 'used': int|None, 'status': str}, ts)
+
+
+def get_key_usage():
+    """Per-key request quota for the monthly plan, for display on the
+    Settings page. Hits GET /v4/sports with each key — per The Odds API's
+    docs this endpoint doesn't count against the usage quota, so it's safe
+    to call on every page load; still cached for _USAGE_TTL to cut down on
+    redundant requests from quick repeat visits.
+
+    Returns [{'key_suffix': str, 'remaining': int|None, 'used': int|None,
+              'status': 'ok'|'invalid'|'error'}, ...] — one entry per key
+    in ODDS_API_KEY, in order.
+    """
+    keys = _get_api_keys()
+    now = time.time()
+    out = []
+    for api_key in keys:
+        cached = _usage_cache.get(api_key)
+        if cached and now - cached[1] < _USAGE_TTL:
+            out.append({**cached[0], 'key_suffix': api_key[-6:]})
+            continue
+        entry = {'remaining': None, 'used': None, 'status': 'error'}
+        try:
+            r = requests.get(BASE, params={'apiKey': api_key}, timeout=10)
+            if r.status_code == 401:
+                entry['status'] = 'invalid'
+            else:
+                r.raise_for_status()
+                remaining = r.headers.get('x-requests-remaining')
+                used      = r.headers.get('x-requests-used')
+                entry['remaining'] = int(remaining) if remaining is not None else None
+                entry['used']      = int(used) if used is not None else None
+                entry['status']    = 'ok'
+        except Exception:
+            pass
+        _usage_cache[api_key] = (entry, now)
+        out.append({**entry, 'key_suffix': api_key[-6:]})
+    return out
+
 
 def get_odds_map(sport):
     """

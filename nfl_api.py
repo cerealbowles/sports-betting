@@ -597,11 +597,42 @@ _REG_SEASON_WEEKS = 18
 
 
 def get_current_week():
-    """(season, week_number) for the week containing "now" — falls back to
-    week 1 if ESPN's scoreboard doesn't return a week (e.g. deep offseason)."""
+    """(season, week_number) for the week containing "now".
+
+    ESPN's no-param scoreboard endpoint returns a 'week.number' field that's
+    meant to track the current week, but it doesn't reliably auto-advance —
+    it can stay pinned to the prior week for days after that week's games
+    have finished. Instead, pull the regular-season week date ranges from
+    the scoreboard's 'calendar' block and pick whichever week's range
+    contains "now" (ET), so this is correct as soon as a new week starts
+    rather than whenever ESPN's own pointer catches up.
+    """
     season = _get_nfl_season()
-    data = _cached_get(ESPN_NFL, {}, f'nfl_{_today_et()}', _TTL['scoreboard'])
-    week = (data or {}).get('week', {}).get('number') or 1
+    data = _cached_get(
+        ESPN_NFL,
+        {'seasontype': 2, 'week': 1, 'year': season},
+        f'nfl_calendar_{season}',
+        _TTL['season_log'],
+    )
+    now = datetime.now(timezone.utc)
+    leagues = (data or {}).get('leagues') or [{}]
+    calendar = leagues[0].get('calendar') or []
+    reg_season = next((c for c in calendar if c.get('value') == '2'), None)
+    entries = reg_season.get('entries', []) if reg_season else []
+
+    week = 1
+    for entry in entries:
+        try:
+            start = datetime.fromisoformat(entry['startDate'].replace('Z', '+00:00'))
+            end = datetime.fromisoformat(entry['endDate'].replace('Z', '+00:00'))
+        except (KeyError, ValueError):
+            continue
+        if start <= now <= end:
+            week = int(entry['value'])
+            break
+        if now > end:
+            week = int(entry['value'])  # last completed week; overwritten by later entries
+
     return season, week
 
 

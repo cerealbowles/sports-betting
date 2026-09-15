@@ -78,6 +78,33 @@
   <span id="repair-result" style="margin-left:12px;font-size:0.75rem;color:var(--text-muted);"></span>
 </div>
 
+<!-- Odds API Usage ───────────────────────────────────────── -->
+<div class="card" style="max-width:520px;margin:14px auto 0;">
+  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Odds API Usage</div>
+  {% if odds_key_usage %}
+  {% for k in odds_key_usage %}
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;{% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+    <span style="font-size:0.78rem;color:var(--text);font-family:monospace;">…{{ k.key_suffix }}</span>
+    {% if k.status == 'ok' %}
+    <span style="font-size:0.78rem;{% if k.remaining is not none and k.remaining == 0 %}color:var(--loss);font-weight:700;{% elif k.remaining is not none and k.remaining < 50 %}color:var(--orange);font-weight:700;{% else %}color:var(--text);{% endif %}">
+      <strong>{{ k.remaining if k.remaining is not none else '—' }}</strong> remaining
+      {% if k.used is not none %}<span style="color:var(--text-muted);">· {{ k.used }} used</span>{% endif %}
+    </span>
+    {% elif k.status == 'invalid' %}
+    <span style="font-size:0.78rem;color:var(--loss);font-weight:700;">invalid key</span>
+    {% else %}
+    <span style="font-size:0.78rem;color:var(--text-muted);">unable to check</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p style="font-size:0.70rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+    The Odds API resets these on your monthly billing date. Checking usage doesn't count against quota.
+  </p>
+  {% else %}
+  <p style="font-size:0.78rem;color:var(--text-muted);">No ODDS_API_KEY configured.</p>
+  {% endif %}
+</div>
+
 <!-- Odds Snapshot Storage ───────────────────────────────── -->
 <div class="card" style="max-width:520px;margin:14px auto 0;">
   <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Odds Snapshot Storage</div>
