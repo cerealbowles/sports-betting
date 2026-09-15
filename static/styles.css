@@ -240,6 +240,46 @@ h3 {
 .site-nav a:hover { color: var(--text); background: var(--bg-card-2); }
 .site-nav a.active { color: var(--orange); background: var(--orange-dim); }
 
+/* ── Sport filter chip row ────────────────────────────────
+   In-page filter chips (currently just Bets' MLB/NHL/NFL/CFB filter) —
+   NOT the header sport-switcher dropdown, which is a nav control. Kept
+   distinct from that since a filter is scoped to the current page/list. */
+.sport-chip-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.sport-chip-bar::-webkit-scrollbar { display: none; }
+.sport-chip {
+  flex-shrink: 0;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition), border-color var(--transition);
+}
+.sport-chip:hover { color: var(--text); border-color: var(--border-strong); }
+.sport-chip.sport-chip-active,
+.sport-chip.filter-active {
+  color: var(--orange);
+  background: var(--orange-dim);
+  border-color: rgba(251,79,20,0.3);
+}
+.sport-chip-count {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
 /* ── Bottom tab bar ──────────────────────────────────────
    Mobile-only primary nav (Today/Bets/Model/History/Settings), fixed to the
    bottom of the viewport so switching doesn't require reaching to the top of
