@@ -112,7 +112,6 @@
 {% block content %}
 <div class="schedule-body">
 
-{% with active_sport = 'MLB' %}{% include "_sport_chips.html" %}{% endwith %}
 
 {% if best_bets %}
 <span id="top3-bankroll-val" data-bankroll="{{ bankroll }}" data-kelly-cap="{{ kelly_cap }}" style="display:none;">{{ bankroll }}</span>

@@ -1,3 +1,29 @@
+/* ── Header sport switcher dropdown ───────────────────── */
+function toggleSportSwitch(e) {
+e.stopPropagation();
+var trigger = e.currentTarget;
+var menu = trigger.nextElementSibling;
+var open = menu.classList.toggle('open');
+trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+document.addEventListener('click', function (e) {
+document.querySelectorAll('.sport-switch-menu.open').forEach(function (menu) {
+    if (!menu.parentElement.contains(e.target)) {
+        menu.classList.remove('open');
+        var trigger = menu.previousElementSibling;
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    }
+});
+});
+document.addEventListener('keydown', function (e) {
+if (e.key !== 'Escape') return;
+document.querySelectorAll('.sport-switch-menu.open').forEach(function (menu) {
+    menu.classList.remove('open');
+    var trigger = menu.previousElementSibling;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+});
+});
+
 /* ── Modal: Add Past Bet ─────────────────────────────── */
 function openAddClosedModal() {
 document.getElementById('addClosedModal').classList.add('open');
