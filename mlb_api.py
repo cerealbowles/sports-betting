@@ -43,8 +43,13 @@ _TTL = {
     'recent':   3600,   # 1 hour
     'standings': 3600,  # 1 hour
     'stats':    21600,  # 6 hours
-    'gamelog':  1800,   # 30 min
-    'roster':   3600,   # 1 hour
+    # 'gamelog' and 'roster' are kept >= the cache-warmer cron cadence
+    # (every 2 hours, app.py's _warm_all_caches) so a real page visit never
+    # lands in the gap between cron runs and re-triggers the full per-pitcher/
+    # per-team live fetch itself — the cron should always be the one paying
+    # that cost, not the user.
+    'gamelog':  7200,   # 2 hours (was 30 min)
+    'roster':   7200,   # 2 hours (was 1 hour)
 }
 
 LG_ERA = 4.20  # MLB league-average ERA used for opponent-quality normalization
