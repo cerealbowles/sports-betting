@@ -88,10 +88,15 @@ def predict(home, away, game_time_utc=None):
     if h_rest is not None and a_rest is not None:
         h_b2b = h_rest <= 1
         a_b2b = a_rest <= 1
+        b2b_contrib = 0.0
         if h_b2b and not a_b2b:
-            _add('Back-to-back (home)', -0.22)
+            b2b_contrib = -0.22
         elif a_b2b and not h_b2b:
-            _add('Back-to-back (away)', 0.22)
+            b2b_contrib = 0.22
+        # Single label (even when 0) so the factor accumulates one consistent
+        # sample for the Factor Correlation table instead of splitting across
+        # two rare home/away labels that individually never clear n>=5.
+        _add('Back-to-back', b2b_contrib)
 
     home_prob = _sigmoid(logit)
     return {
