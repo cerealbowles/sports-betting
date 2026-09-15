@@ -72,14 +72,16 @@ def _cached_get(url, params, key, ttl):
     return data
 
 
-def get_live_scores():
+def get_live_scores(date_str=None):
     """
-    Returns {game_key: score_dict} for today's MLB games.
-    Reuses the 2-min cached schedule so no extra API call is needed.
+    Returns {game_key: score_dict} for MLB games on `date_str` (YYYY-MM-DD ET,
+    defaults to today). Reuses the 2-min cached schedule so no extra API call
+    is needed for today; passing a past date lets an open bet from a prior
+    day keep showing its final score until the bet is closed.
     score_dict keys: status, away_abbr, home_abbr, away_score, home_score, period
     """
     from odds_api import _normalize
-    data = _get_schedule_raw()
+    data = _get_schedule_raw(date_str=date_str)
     scores = {}
     if not data:
         return scores
@@ -204,13 +206,13 @@ def _parse_ip(ip_str):
 
 # ── Data fetchers ─────────────────────────────────────────────────────────────
 
-def _get_schedule_raw(days=1):
-    today = _today_et()
+def _get_schedule_raw(days=1, date_str=None):
+    target = date_str or _today_et()
     return _cached_get(
         f"{MLB_API}/schedule",
-        {'sportId': 1, 'startDate': today, 'endDate': today,
+        {'sportId': 1, 'startDate': target, 'endDate': target,
          'hydrate': 'probablePitcher,linescore,team,venue', 'gameType': 'R,F,D,L,W'},
-        f'sched_{today}',
+        f'sched_{target}',
         _TTL['schedule'],
     )
 

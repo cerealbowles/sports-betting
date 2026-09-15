@@ -188,18 +188,21 @@ def _team_rest_days(games, team_name, game_date):
 
 # ── Live scores ────────────────────────────────────────────────────────────────
 
-def get_live_scores():
+def get_live_scores(date_str=None):
     """
-    Returns {game_key: score_dict} for today's NBA games with a 2-min cache.
+    Returns {game_key: score_dict} for NBA games on `date_str` (YYYY-MM-DD ET,
+    defaults to today) with a 2-min cache. Passing a past date lets an open bet
+    from a prior day keep showing its final score until the bet is closed.
     """
     from odds_api import _normalize
-    today_str = _today_et()
-    data = _cached_get(ESPN_NBA, {}, f'nba_scores_{today_str}', 120)
+    target_str = date_str or _today_et()
+    params = {'dates': target_str.replace('-', '')} if date_str else {}
+    data = _cached_get(ESPN_NBA, params, f'nba_scores_{target_str}', 120)
     scores = {}
     if not data:
         return scores
     for event in data.get('events', []):
-        if _event_date_et(event.get('date', '')) != today_str:
+        if _event_date_et(event.get('date', '')) != target_str:
             continue
         comp      = event.get('competitions', [{}])[0]
         status_obj = comp.get('status', {}).get('type', {})
