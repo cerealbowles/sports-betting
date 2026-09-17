@@ -126,6 +126,8 @@ def get_live_scores(date_str=None):
                 'status':     state,
                 'away_abbr':  a['team'].get('abbreviation', ''),
                 'home_abbr':  h['team'].get('abbreviation', ''),
+                'away_logo':  _logo(a['team'].get('id')),
+                'home_logo':  _logo(h['team'].get('id')),
                 'away_score': a.get('score'),
                 'home_score': h.get('score'),
                 'period':     period,

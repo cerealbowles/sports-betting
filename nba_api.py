@@ -236,6 +236,8 @@ def get_live_scores(date_str=None):
             'status':     status,
             'away_abbr':  away.get('abbr', ''),
             'home_abbr':  home.get('abbr', ''),
+            'away_logo':  f"https://a.espncdn.com/i/teamlogos/nba/500/{away.get('abbr', '').lower()}.png" if away.get('abbr') else '',
+            'home_logo':  f"https://a.espncdn.com/i/teamlogos/nba/500/{home.get('abbr', '').lower()}.png" if home.get('abbr') else '',
             'away_score': away.get('score'),
             'home_score': home.get('score'),
             'period':     period,
