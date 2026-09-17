@@ -186,8 +186,10 @@ function confirmCashout() {
           var mEl = document.querySelector('.bc-matchup[data-bet-id="' + betId + '"]');
           if (mEl) {
             var mSide = mEl.getAttribute('data-bet-side') || '';
-            var awayTxt = '<span class="bc-matchup-team' + (mSide === 'away' ? ' is-bet' : '') + '">' + info.away_abbr + '</span>';
-            var homeTxt = '<span class="bc-matchup-team' + (mSide === 'home' ? ' is-bet' : '') + '">' + info.home_abbr + '</span>';
+            var awayLogo = info.away_logo ? '<img class="bc-matchup-logo" src="' + info.away_logo + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
+            var homeLogo = info.home_logo ? '<img class="bc-matchup-logo" src="' + info.home_logo + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
+            var awayTxt = awayLogo + '<span class="bc-matchup-team' + (mSide === 'away' ? ' is-bet' : '') + '">' + info.away_abbr + '</span>';
+            var homeTxt = homeLogo + '<span class="bc-matchup-team' + (mSide === 'home' ? ' is-bet' : '') + '">' + info.home_abbr + '</span>';
             mEl.innerHTML = awayTxt + '<span class="bc-matchup-at">@</span>' + homeTxt;
           }
 

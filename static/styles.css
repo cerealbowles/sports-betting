@@ -1583,6 +1583,19 @@ body.embed-mode .container { padding-bottom: 0; }
 .bc-matchup-team.is-bet { color: var(--orange); }
 .bc-matchup-at { font-size: 0.68rem; color: var(--text-muted); font-weight: 400; }
 
+/* First-row matchup — larger now that the name/sport/tier header is gone */
+.bc-matchup-lg {
+  gap: 10px;
+  padding: 16px 14px 14px;
+  font-size: 1.05rem;
+}
+.bc-matchup-lg .bc-matchup-at { font-size: 0.82rem; }
+.bc-matchup-logo {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
 /* Bet detail modal actions */
 .bdm-actions {
   display: flex;
@@ -1598,14 +1611,6 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .bdm-actions form { display: flex; }
 .bdm-actions form button { width: 100%; }
-
-.bc-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 6px;
-  gap: 8px;
-}
 
 .bc-name-line {
   display: flex;
@@ -1672,7 +1677,7 @@ body.embed-mode .container { padding-bottom: 0; }
   color: var(--text);
 }
 
-/* Line movement bobber: red (against you) <-> green (in your favor) */
+/* Line movement bobber: green (in your favor, more negative) <-> red (against you) */
 .bc-linemove {
   margin: 0 14px 10px;
 }
@@ -1681,7 +1686,7 @@ body.embed-mode .container { padding-bottom: 0; }
   position: relative;
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, #ef4444, var(--border) 50%, #22c55e);
+  background: linear-gradient(to right, #22c55e, var(--border) 50%, #ef4444);
   opacity: 0.85;
 }
 

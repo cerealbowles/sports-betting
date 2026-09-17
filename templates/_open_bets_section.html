@@ -72,17 +72,8 @@
 {% for b in open_bets %}
     <div class="bet-card bet-card-clickable" data-sport="{{ b.sport or '' }}" onclick="openBetDetail({{ b.id }})" role="button" tabindex="0">
 
-        <!-- Name + sport + tier -->
-        <div class="bc-header">
-            <div class="bc-name-line">
-                <span class="bc-name">{{ b.name }}</span>
-                {% if b.sport %}<span class="bet-sport">{{ b.sport }}</span>{% endif %}
-                {% if b.tier %}<span class="tier-badge {{ b.tier_cls }}">{{ b.tier }}</span>{% endif %}
-            </div>
-        </div>
-
-        <!-- Matchup (who's playing, home vs away) — populated by JS -->
-        <div class="bc-matchup" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
+        <!-- Matchup (logo + team row, who's playing, home vs away) — populated by JS -->
+        <div class="bc-matchup bc-matchup-lg" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
 
         {% if b.eventstart %}<div class="bc-meta"><span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span></div>{% endif %}
 
@@ -138,7 +129,7 @@
             {% set clamped = b.line_move | abs %}
             {% set clamped = 40 if clamped > 40 else clamped %}
             {% set pct = 50 + (clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
-            <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move > 0 else ('against you' if b.line_move < 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
+            <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move < 0 else ('against you' if b.line_move > 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
                 <div class="bc-linemove-track">
                     <div class="bc-linemove-bobber" style="left: {{ pct }}%;"></div>
                 </div>

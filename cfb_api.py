@@ -297,6 +297,7 @@ def get_live_scores(date_str=None):
             teams[side] = {
                 'name':  team.get('displayName', ''),
                 'abbr':  team.get('abbreviation', ''),
+                'id':    team.get('id'),
                 'score': competitor.get('score'),
             }
         home = teams.get('home', {})
@@ -313,6 +314,8 @@ def get_live_scores(date_str=None):
             'status':     status,
             'away_abbr':  away.get('abbr', ''),
             'home_abbr':  home.get('abbr', ''),
+            'away_logo':  f"https://a.espncdn.com/i/teamlogos/ncaa/500/{away.get('id')}.png" if away.get('id') else '',
+            'home_logo':  f"https://a.espncdn.com/i/teamlogos/ncaa/500/{home.get('id')}.png" if home.get('id') else '',
             'away_score': away.get('score'),
             'home_score': home.get('score'),
             'period':     period,
