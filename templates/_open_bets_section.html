@@ -70,7 +70,8 @@
 {% if open_bets %}
 <div class="bet-cards-grid">
 {% for b in open_bets %}
-    <div class="bet-card bet-card-clickable" data-sport="{{ b.sport or '' }}" onclick="openBetDetail({{ b.id }})" role="button" tabindex="0">
+    <div class="bet-card game-card" data-sport="{{ b.sport or '' }}" id="gc-bet-{{ b.id }}">
+      <div class="game-card-summary" role="button" tabindex="0" aria-label="View and manage this bet">
 
         <!-- Name + sport + tier -->
         <div class="bc-header">
@@ -81,127 +82,119 @@
             </div>
         </div>
 
-        <!-- Matchup (who's playing, home vs away) — populated by JS -->
+        <!-- Matchup: team logos + vs. (populated by JS) -->
         <div class="bc-matchup" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
 
-        {% if b.eventstart %}<div class="bc-meta"><span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span></div>{% endif %}
-
-    </div>
-
-    <!-- Bet Detail Modal -->
-    <div class="modal-overlay bet-detail-overlay" id="betDetailModal-{{ b.id }}" onclick="if(event.target===this) closeBetDetail({{ b.id }})">
-        <div class="modal">
-            <button class="modal-close" onclick="closeBetDetail({{ b.id }})" aria-label="Close">&#215;</button>
-
-            <div class="bc-name-line" style="margin-bottom:12px;">
-                <span class="bc-name">{{ b.name }}</span>
-                {% if b.sport %}<span class="bet-sport">{{ b.sport }}</span>{% endif %}
-                {% if b.tier %}<span class="tier-badge {{ b.tier_cls }}">{{ b.tier }}</span>{% endif %}
-            </div>
-
-            <!-- Live score / matchup detail (populated by JS) -->
-            <div class="bc-score" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
-
-            <!-- Time + CLV -->
-            <div class="bc-meta">
-                {% if b.eventstart %}<span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
-                {% if b.live_clv is not none %}
-                {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
-                <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
-                {% endif %}
-            </div>
-
-            <!-- Analytics row -->
-            {% if b.book_implied is not none %}
-            <div class="bc-analytics">
-                <div class="bc-ana-item">
-                    <span class="bc-ana-label">Model</span>
-                    <span class="bc-ana-val">{{ (b.prob * 100) | round(1) }}%</span>
-                </div>
-                <div class="bc-ana-item">
-                    <span class="bc-ana-label">Book</span>
-                    <span class="bc-ana-val">{{ b.book_implied }}%</span>
-                </div>
-                <div class="bc-ana-item">
-                    <span class="bc-ana-label">Edge</span>
-                    <span class="bc-ana-val {{ 'status-win' if b.edge_pct and b.edge_pct > 0 else ('status-loss' if b.edge_pct and b.edge_pct < 0 else '') }}">{% if b.edge_pct is not none %}{{ '+' if b.edge_pct > 0 }}{{ b.edge_pct }}%{% else %}—{% endif %}</span>
-                </div>
-                <div class="bc-ana-item">
-                    <span class="bc-ana-label">EV</span>
-                    <span class="bc-ana-val {{ 'status-win' if b.ev_pct and b.ev_pct > 0 else ('status-loss' if b.ev_pct and b.ev_pct < 0 else '') }}">{% if b.ev_pct is not none %}{{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%{% else %}—{% endif %}</span>
-                </div>
-            </div>
+        <!-- Time + CLV -->
+        <div class="bc-meta">
+            {% if b.eventstart %}<span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
+            {% if b.live_clv is not none %}
+            {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
+            <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
             {% endif %}
+        </div>
 
-            <!-- Line movement bobber -->
-            {% if b.line_move is not none %}
-            {% set clamped = b.line_move | abs %}
-            {% set clamped = 40 if clamped > 40 else clamped %}
-            {% set pct = 50 + (clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
-            <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move > 0 else ('against you' if b.line_move < 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
-                <div class="bc-linemove-track">
-                    <div class="bc-linemove-bobber" style="left: {{ pct }}%;"></div>
-                </div>
+        <!-- Analytics row -->
+        {% if b.book_implied is not none %}
+        <div class="bc-analytics">
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Model</span>
+                <span class="bc-ana-val">{{ (b.prob * 100) | round(1) }}%</span>
             </div>
-            {% endif %}
-
-            <!-- Financials (units) -->
-            <div class="bc-financials">
-                <div class="bc-fin-item">
-                    <span class="bc-fin-label">Stake</span>
-                    <span class="bc-fin-val">{{ '%.2f' % (b.stake / unit_size) }}u</span>
-                </div>
-                <div class="bc-fin-item">
-                    <span class="bc-fin-label">Return</span>
-                    <span class="bc-fin-val">{{ '%.2f' % (b.stake * b.odds / unit_size) }}u</span>
-                </div>
-                <div class="bc-fin-item">
-                    {% if b.closing_american is not none %}
-                    <span class="bc-fin-label">Closed</span>
-                    <span class="bc-fin-val">
-                        <span class="line-cell">
-                            <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
-                            <span class="line-arrow">→</span>
-                            <span class="line-curr {{ 'status-win' if b.closing_clv_pos else 'status-loss' }}">{{ '+' if b.closing_american > 0 }}{{ b.closing_american }}</span>
-                        </span>
-                    </span>
-                    {% else %}
-                    <span class="bc-fin-label">Line</span>
-                    <span class="bc-fin-val">
-                        {% if b.original_american is not none %}
-                        <span class="line-cell">
-                            <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
-                            {% if b.current_american is not none %}
-                            <span class="line-arrow">→</span>
-                            <span class="line-curr">{{ '+' if b.current_american > 0 }}{{ b.current_american }}</span>
-                            {% if b.line_move %}{% set mv = b.line_move %}
-                            <span class="line-move {{ 'move-up' if mv > 0 else 'move-dn' }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>
-                            {% endif %}
-                            {% endif %}
-                        </span>
-                        {% else %}—{% endif %}
-                    </span>
-                    {% endif %}
-                </div>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Book</span>
+                <span class="bc-ana-val">{{ b.book_implied }}%</span>
             </div>
-
-            {% if b.notes %}<div class="small" style="margin-top:10px;color:var(--text-muted);white-space:pre-wrap;">{{ b.notes }}</div>{% endif %}
-
-            <!-- Actions -->
-            <div class="bdm-actions">
-                <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="small secondary" onclick="event.stopPropagation();">Edit</a>
-                <button type="button" class="small"
-                    data-id="{{ b.id }}"
-                    data-name="{{ b.name | e }}"
-                    data-stake="{{ '%.2f' % b.stake }}"
-                    data-entry-amer="{{ b.original_american }}"
-                    data-curr-amer="{{ b.current_american if b.current_american is not none else '' }}"
-                    onclick="event.stopPropagation(); openCloseBetModal(this);">Close Bet</button>
-                <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete this bet?');">
-                    <button type="submit" class="danger small">Delete</button>
-                </form>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">Edge</span>
+                <span class="bc-ana-val {{ 'status-win' if b.edge_pct and b.edge_pct > 0 else ('status-loss' if b.edge_pct and b.edge_pct < 0 else '') }}">{% if b.edge_pct is not none %}{{ '+' if b.edge_pct > 0 }}{{ b.edge_pct }}%{% else %}—{% endif %}</span>
+            </div>
+            <div class="bc-ana-item">
+                <span class="bc-ana-label">EV</span>
+                <span class="bc-ana-val {{ 'status-win' if b.ev_pct and b.ev_pct > 0 else ('status-loss' if b.ev_pct and b.ev_pct < 0 else '') }}">{% if b.ev_pct is not none %}{{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%{% else %}—{% endif %}</span>
             </div>
         </div>
+        {% endif %}
+
+        <!-- Line movement bobber: red (against you) <-> green (in your favor) -->
+        {% if b.line_move is not none %}
+        {% set clamped = b.line_move | abs %}
+        {% set clamped = 40 if clamped > 40 else clamped %}
+        {% set pct = 50 + (clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
+        <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move > 0 else ('against you' if b.line_move < 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
+            <div class="bc-linemove-track">
+                <div class="bc-linemove-bobber" style="left: {{ pct }}%;"></div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Live score (populated by JS) -->
+        <div class="bc-score" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
+
+        <!-- Financials (units) -->
+        <div class="bc-financials">
+            <div class="bc-fin-item">
+                <span class="bc-fin-label">Stake</span>
+                <span class="bc-fin-val">{{ '%.2f' % (b.stake / unit_size) }}u</span>
+            </div>
+            <div class="bc-fin-item">
+                <span class="bc-fin-label">Return</span>
+                <span class="bc-fin-val">{{ '%.2f' % (b.stake * b.odds / unit_size) }}u</span>
+            </div>
+            <div class="bc-fin-item">
+                {% if b.closing_american is not none %}
+                <span class="bc-fin-label">Closed</span>
+                <span class="bc-fin-val">
+                    <span class="line-cell">
+                        <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
+                        <span class="line-arrow">→</span>
+                        <span class="line-curr {{ 'status-win' if b.closing_clv_pos else 'status-loss' }}">{{ '+' if b.closing_american > 0 }}{{ b.closing_american }}</span>
+                    </span>
+                </span>
+                {% else %}
+                <span class="bc-fin-label">Line</span>
+                <span class="bc-fin-val">
+                    {% if b.original_american is not none %}
+                    <span class="line-cell">
+                        <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
+                        {% if b.current_american is not none %}
+                        <span class="line-arrow">→</span>
+                        <span class="line-curr">{{ '+' if b.current_american > 0 }}{{ b.current_american }}</span>
+                        {% if b.line_move %}{% set mv = b.line_move %}
+                        <span class="line-move {{ 'move-up' if mv > 0 else 'move-dn' }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>
+                        {% endif %}
+                        {% endif %}
+                    </span>
+                    {% else %}—{% endif %}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+      </div><!-- /.game-card-summary -->
+
+      <!-- Edit / Close / Delete — moved into the bottom sheet on tap -->
+      <div class="game-card-details bc-details" id="gd-bet-{{ b.id }}" hidden>
+          <div class="bc-name-line" style="margin-bottom:14px;">
+              <span class="bc-name">{{ b.name }}</span>
+              {% if b.sport %}<span class="bet-sport">{{ b.sport }}</span>{% endif %}
+              {% if b.tier %}<span class="tier-badge {{ b.tier_cls }}">{{ b.tier }}</span>{% endif %}
+          </div>
+          <div class="bdm-actions">
+              <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="small secondary">Edit</a>
+              <button type="button" class="small"
+                  data-id="{{ b.id }}"
+                  data-name="{{ b.name | e }}"
+                  data-stake="{{ '%.2f' % b.stake }}"
+                  data-entry-amer="{{ b.original_american }}"
+                  data-curr-amer="{{ b.current_american if b.current_american is not none else '' }}"
+                  onclick="openCloseBetModal(this)">Close Bet</button>
+              <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete this bet?');">
+                  <button type="submit" class="danger small">Delete</button>
+              </form>
+          </div>
+      </div>
+
     </div>
 {% endfor %}
 </div>
