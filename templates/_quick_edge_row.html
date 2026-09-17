@@ -1,10 +1,11 @@
 {# Model-vs-market "edge bobber" — shown on the always-visible card face for
    upcoming and live games. Expects `game` in context.
-   Renders a mini scale (zoomed to the two values, not a fixed 50-100% range)
-   with a Market marker (pencil) and a Model marker (check/X depending on
-   which side of market it falls). Degrades to a market-only pencil chip when
-   sportsbook odds aren't available (game.odds is None) — previously this
-   showed an oversized lone "Model 97%" line with no market context. #}
+   Renders a mini scale zoomed so the two values always sit ~30% of the
+   track apart, regardless of how close the raw probabilities are — this
+   keeps the Market/Model labels from ever colliding without needing to
+   stack them. Degrades to a blank market chip when sportsbook odds aren't
+   available (game.odds is None) — previously this showed an oversized lone
+   "Model 97%" line with no market context. #}
 {% if game.model and game.status != 'Final' %}
 {% if game.model.away_prob >= game.model.home_prob %}
 {% set qe_team = game.away.abbrev %}{% set qe_model_prob = game.model.away_prob %}
@@ -27,7 +28,11 @@
 {% set qe_market_pct = qe_market_prob * 100 %}
 {% set qe_lo = [qe_model_pct, qe_market_pct] | min %}
 {% set qe_hi = [qe_model_pct, qe_market_pct] | max %}
-{% set qe_buffer = [(qe_hi - qe_lo) * 0.6, 4] | max %}
+{% set qe_gap = qe_hi - qe_lo %}
+{# Buffer is chosen so the marker separation always works out to ~30% of the
+   track width, however small the raw gap is — no fixed floor, since a fixed
+   floor is what let tiny gaps collapse into overlapping labels before. #}
+{% set qe_buffer = (qe_gap * 1.1667) if qe_gap > 0 else 5 %}
 {% set qe_range_lo = [qe_lo - qe_buffer, 0] | max %}
 {% set qe_range_hi = [qe_hi + qe_buffer, 100] | min %}
 {% set qe_range = qe_range_hi - qe_range_lo %}
@@ -40,7 +45,7 @@
     <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_left_pos }}%; width:{{ qe_right_pos - qe_left_pos }}%; background:linear-gradient(to right, {{ '#eab308, #22c55e' if qe_model_pos >= qe_market_pos else '#ef4444, #eab308' }});"></div>
-        <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%;" title="Market {{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%">✏</div>
+        <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%;" title="Market {{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%"></div>
         <div class="eb-marker eb-model {{ 'eb-model-win' if qe_model_pos >= qe_market_pos else 'eb-model-lose' }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '✓' if qe_model_pos >= qe_market_pos else '✗' }}</div>
     </div>
     <div class="eb-tags">
@@ -60,7 +65,7 @@
 {% else %}
 <div class="eb-wrap">
     <div class="eb-noodds">
-        <div class="eb-marker eb-market eb-market-noodds" title="No market line posted">✏</div>
+        <div class="eb-marker eb-market eb-market-noodds" title="No market line posted"></div>
         <div class="eb-noodds-text">No market line posted — <b>{{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%</b> model</div>
     </div>
 </div>
