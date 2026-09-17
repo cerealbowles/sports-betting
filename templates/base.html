@@ -47,22 +47,9 @@
                 <span class="exposure-item">
                     <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
                 </span>
-                {% if request.endpoint == 'bets_page' %}
-                <span class="exposure-sep">·</span>
-                <span class="exposure-item">
-                    <span class="exposure-label">Open</span>
-                    <span class="exposure-val">${{ '%.2f' % global_exposure.open_staked }}{% if global_exposure.open_count %} <span class="exposure-sub">({{ global_exposure.open_count }})</span>{% endif %}</span>
-                </span>
-                {% if global_exposure.pct_committed is not none %}
-                <span class="exposure-sep">·</span>
-                <span class="exposure-item">
-                    <span class="exposure-label">Committed</span>
-                    <span class="exposure-val {{ 'exposure-hot' if global_exposure.pct_committed >= 50 else '' }}">{{ global_exposure.pct_committed }}%</span>
-                </span>
-                {% endif %}
-                {% endif %}
             </div>
             {% endif %}
+            {% if request.endpoint != 'bets_page' %}
             <div class="sport-switch">
                 <button type="button" class="sport-switch-trigger" onclick="toggleSportSwitch(event)" aria-haspopup="true" aria-expanded="false" aria-label="Switch sport">
                     <span>{{ _sport_icons[_sport_switch_active] }}</span>
@@ -80,6 +67,7 @@
                     {% endfor %}
                 </div>
             </div>
+            {% endif %}
         </div>
     </div>
 
