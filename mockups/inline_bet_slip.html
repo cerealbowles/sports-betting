@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inline Bet Slip — Mockup</title>
+<link rel="stylesheet" href="../static/styles.css">
+<style>
+  body { padding: 24px; }
+  .mock-wrap { max-width: 520px; margin: 0 auto; }
+  .mock-note {
+    max-width: 520px; margin: 0 auto 14px; padding: 10px 14px;
+    background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.25);
+    border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--text-muted);
+  }
+  .mock-note b { color: var(--blue); }
+
+  /* ── Factors — always-on, one mini bobber per row (same footprint as the
+       eb-wrap Market/Model bobber above): full-width center-split track,
+       an eb-marker-style endpoint circle (✓ favors MIA / ✗ favors WAKE),
+       and a label centered under the marker. Replaces the old left-aligned
+       bar list + <details> toggle. ── */
+  .factors-panel {
+    border-top: 1px solid var(--border);
+    padding: 10px 14px 14px;
+  }
+  .factors-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .factors-title {
+    font-size: 0.67rem; color: var(--text-muted);
+    letter-spacing: 0.3px; text-transform: uppercase;
+  }
+  .fd-side-label {
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.4px;
+    color: var(--text-muted);
+  }
+  .fd-side-label.fd-side-right { color: var(--orange); }
+  .factor-diverge-list { display: flex; flex-direction: column; gap: 18px; }
+  .fd-track-wrap { position: relative; }
+  .fd-track {
+    position: relative; height: 6px; border-radius: 3px;
+    background: rgba(255,255,255,0.06); margin: 0 9px;
+  }
+  .fd-val {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+    z-index: 2;
+  }
+  .fd-val-before { transform: translate(calc(-100% - 14px), -50%); }
+  .fd-val-after  { transform: translate(14px, -50%); }
+  .fd-center-line {
+    position: absolute; left: 50%; top: 50%;
+    width: 1px; height: 12px; background: var(--border-strong);
+    transform: translate(-50%, -50%);
+  }
+  .fd-fill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+  .fd-fill-pos { background: var(--win); }
+  .fd-fill-neg { background: var(--loss); }
+  .fd-marker {
+    position: absolute; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; line-height: 1;
+    z-index: 2;
+  }
+  .fd-marker-pos { background: var(--win); color: #0B0D12; }
+  .fd-marker-neg { background: var(--loss); color: #0B0D12; }
+  .fd-label {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.3px;
+    text-transform: uppercase; white-space: nowrap; color: var(--text-muted);
+    z-index: 2;
+  }
+  .fd-val-pos { color: var(--win); }
+  .fd-val-neg { color: var(--loss); }
+
+  /* ── Modal shell (mimics the existing game-card-details sheet look) ── */
+  .modal-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    position: relative;
+  }
+  .modal-close {
+    position: absolute; top: 14px; right: 14px;
+    background: none; border: none; color: var(--text-muted);
+    font-size: 1.3rem; cursor: pointer; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 18px 18px 0; }
+  .modal-title { font-size: 1.1rem; font-weight: 800; margin-bottom: 4px; }
+
+  /* ── Bet type chips: add a "selected" state to show which CTA was tapped ── */
+  .btn-bet-team.selected {
+    background: var(--orange); color: #fff; border-color: var(--orange);
+  }
+
+  /* ── Inline bet slip (replaces navigation to new_bet.html) ── */
+  .bet-slip {
+    border-top: 1px solid var(--border);
+    background: var(--bg-card-2);
+    padding: 14px 18px 18px;
+    margin-top: 14px;
+    display: none;
+  }
+  .bet-slip.open { display: block; }
+
+  .bet-slip-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .bet-slip-pick {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .bet-slip-pick img { width: 28px; height: 28px; object-fit: contain; }
+  .bet-slip-pick-name { font-size: 0.95rem; font-weight: 800; }
+  .bet-slip-pick-sub { font-size: 0.72rem; color: var(--text-muted); }
+  .bet-slip-cancel {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 0.75rem; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .bet-slip-cancel:hover { color: var(--text); }
+
+  .bet-slip-stats {
+    display: flex; flex-wrap: wrap; gap: 8px 16px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+    font-size: 0.76rem;
+  }
+  .bss-item { display: flex; flex-direction: column; gap: 1px; }
+  .bss-label { color: var(--text-muted); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.4px; }
+  .bss-val { font-weight: 700; }
+  .bss-val.edge-pos { color: var(--win); }
+  .bss-val.edge-neg { color: var(--loss); }
+
+  .stake-row {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+  }
+  .stake-input-wrap {
+    position: relative; flex: 1;
+  }
+  .stake-input-wrap::before {
+    content: "$"; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    color: var(--text-muted); font-weight: 700; font-size: 0.95rem; pointer-events: none;
+  }
+  #stakeInput {
+    width: 100%; padding: 11px 12px 11px 26px;
+    background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-size: 1rem; font-weight: 700;
+  }
+  #stakeInput:focus { outline: none; border-color: var(--blue); }
+  .stake-quick-btns { display: flex; gap: 6px; }
+  .stake-quick-btn {
+    padding: 7px 10px; font-size: 0.72rem; font-weight: 700;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+  }
+  .stake-quick-btn:hover { color: var(--text); border-color: var(--border-strong); }
+
+  .stake-meta {
+    display: flex; justify-content: space-between; font-size: 0.72rem;
+    color: var(--text-muted); margin-bottom: 14px; padding: 0 2px;
+  }
+  .stake-meta b { color: var(--text); }
+
+  .btn-place-bet {
+    width: 100%; padding: 13px; font-size: 0.95rem; font-weight: 800;
+    background: var(--orange); color: #fff; border: none;
+    border-radius: var(--radius-sm); cursor: pointer;
+    box-shadow: 0 2px 10px rgba(251,79,20,0.25);
+    transition: var(--transition);
+  }
+  .btn-place-bet:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-place-bet:active { transform: translateY(0); }
+
+  .bet-slip-confirm {
+    display: none; text-align: center; padding: 10px 0 2px; color: var(--win);
+    font-size: 0.85rem; font-weight: 700;
+  }
+  .bet-slip-confirm.show { display: block; }
+</style>
+</head>
+<body>
+
+<div class="mock-note">
+  <b>Mockup</b> — click a moneyline chip (MIA / WAKE) below to open the inline bet slip at the bottom of the card. No backend wiring; this is a static prototype for review.
+</div>
+
+<div class="mock-wrap">
+<div class="modal-card">
+  <button class="modal-close" onclick="alert('Close (mock)')">✕</button>
+
+  <div class="modal-body">
+    <div class="modal-title">MIA @ WAKE</div>
+    <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+      Allegacy Federal Credit Union Stadium · 80°F ·
+      <span class="wind-info wind-mod">Gust 5mph</span> ·
+      <span class="wind-info wind-mod">☔ 47%</span>
+    </div>
+    <div class="small" style="margin-bottom:14px; color:var(--text-muted);">
+      Away 0–0 · Home 1–0
+    </div>
+
+    <!-- Scoreboard — same logo/name/record layout as the collapsed card, kept
+         visible above the bet slip so MIA @ WAKE context never disappears -->
+    <div class="scoreboard" style="margin-bottom:14px;">
+      <div class="sb-team sb-away">
+        <img class="team-logo" src="https://a.espncdn.com/i/teamlogos/ncaa/500/2390.png" alt="MIA">
+        <div class="sb-team-info">
+          <div class="sb-name"><span class="rank-badge">#5</span>Miami Hurricanes</div>
+          <div class="sb-record">2–0</div>
+          <div class="sb-split"><span class="conf-tag">ACC</span></div>
+        </div>
+      </div>
+      <div class="sb-center">
+        <div class="sb-vs">vs</div>
+      </div>
+      <div class="sb-team sb-home">
+        <div class="sb-team-info">
+          <div class="sb-name">Wake Forest Demon Deacons</div>
+          <div class="sb-record">2–0</div>
+          <div class="sb-split"><span class="conf-tag">ACC</span></div>
+        </div>
+        <img class="team-logo" src="https://a.espncdn.com/i/teamlogos/ncaa/500/154.png" alt="WAKE">
+      </div>
+    </div>
+
+    <!-- Form + season stats -->
+    <div class="form-row-section">
+      <div class="form-group fg-away">
+        <span class="form-label">L3</span>
+        <div class="form-dots">
+          <span class="dot dot-w">W</span>
+          <span class="dot dot-w">W</span>
+        </div>
+        <div class="cfb-stats-row">
+          <span>PPG <b>61.0</b></span>
+          <span>Def <b>6.5</b></span>
+          <span>Rest <b>7d</b></span>
+        </div>
+      </div>
+      <div class="form-group fg-home">
+        <span class="form-label">L3</span>
+        <div class="form-dots">
+          <span class="dot dot-w">W</span>
+          <span class="dot dot-w">W</span>
+        </div>
+        <div class="cfb-stats-row">
+          <span>PPG <b>38.0</b></span>
+          <span>Def <b>26.0</b></span>
+          <span>Rest <b>6d</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Market vs Model — same edge-bobber used on the collapsed card, in
+         place of the old FanDuel/Model number rows -->
+    <div class="analysis-section">
+      <div class="eb-wrap">
+        <div class="eb-scale-labels"><span>85%</span><span>95%</span></div>
+        <div class="eb-track">
+          <div class="eb-fill" style="left:22%; width:35%; background:linear-gradient(to right, #eab308, #22c55e);"></div>
+          <div class="eb-marker eb-market" style="left:22%;" title="Market MIA 90.3%"></div>
+          <div class="eb-marker eb-model eb-model-win" style="left:57%;" title="Model MIA 91.4%">✓</div>
+        </div>
+        <div class="eb-tags">
+          <div class="eb-tag eb-tag-market" style="left:22%;">
+            <span class="eb-tag-label">Market</span>
+            <span class="eb-tag-val">MIA 90.3%</span>
+          </div>
+          <div class="eb-tag eb-tag-model" style="left:57%;">
+            <span class="eb-tag-label">Model</span>
+            <span class="eb-tag-val">MIA 91.4%</span>
+          </div>
+        </div>
+      </div>
+      <!-- Factors — always expanded (no toggle). Each row is its own mini
+           bobber sized like the eb-wrap above: a center-split track with an
+           endpoint marker (✓ favors MIA / ✗ favors WAKE) and its value
+           floating just beside the marker on the line. The name label sits
+           on the opposite side of the center divider from the marker (e.g.
+           a marker pulled left toward MIA gets its label on the right),
+           same away-left/home-right orientation as the scoreboard above. -->
+      <div class="factors-panel">
+        <div class="factors-header">
+          <span class="fd-side-label fd-side-left">MIA</span>
+          <span class="factors-title">Model Factors</span>
+          <span class="fd-side-label fd-side-right">WAKE</span>
+        </div>
+        <div class="factor-diverge-list">
+          <div class="factor-diverge-row">
+            <div class="fd-track-wrap">
+              <div class="fd-track">
+                <div class="fd-center-line"></div>
+                <div class="fd-fill fd-fill-pos" style="left:16.5%; width:33.5%;"></div>
+                <span class="fd-val fd-val-pos fd-val-before" style="left:16.5%;">+4.2</span>
+                <div class="fd-marker fd-marker-pos" style="left:16.5%;">✓</div>
+              </div>
+              <div class="fd-label" style="left:62%;">
+                <span class="fd-label-name">PPG diff</span>
+              </div>
+            </div>
+          </div>
+          <div class="factor-diverge-row">
+            <div class="fd-track-wrap">
+              <div class="fd-track">
+                <div class="fd-center-line"></div>
+                <div class="fd-fill fd-fill-neg" style="left:50%; width:12.5%;"></div>
+                <div class="fd-marker fd-marker-neg" style="left:62.5%;">✗</div>
+                <span class="fd-val fd-val-neg fd-val-after" style="left:62.5%;">-0.6</span>
+              </div>
+              <div class="fd-label" style="left:38%;">
+                <span class="fd-label-name">Rest edge</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bet type chips -->
+    <div class="bet-type-section">
+      <div class="bet-type-row">
+        <span class="bet-type-label">Moneyline</span>
+        <div class="bet-type-chips">
+          <button type="button" class="btn-bet-team" id="chipMIA"
+                  onclick="openBetSlip({
+                    team:'MIA', opp:'WAKE', logo:'https://a.espncdn.com/i/teamlogos/ncaa/500/2390.png',
+                    market:'Moneyline', odds:-1700, oddsDisplay:'-1700',
+                    modelProb:0.914, impliedProb:0.903, recommended:12
+                  }, this)">MIA</button>
+          <button type="button" class="btn-bet-team" id="chipWAKE"
+                  onclick="openBetSlip({
+                    team:'WAKE', opp:'MIA', logo:'https://a.espncdn.com/i/teamlogos/ncaa/500/154.png',
+                    market:'Moneyline', odds:890, oddsDisplay:'+890',
+                    modelProb:0.086, impliedProb:0.097, recommended:0
+                  }, this)">WAKE</button>
+        </div>
+      </div>
+      <div class="bet-type-row">
+        <span class="bet-type-label">Spread</span>
+        <div class="bet-type-chips">
+          <button type="button" class="btn-bet-team">MIA -21</button>
+        </div>
+      </div>
+      <div class="bet-type-row">
+        <span class="bet-type-label">Over/Under</span>
+        <div class="bet-type-chips">
+          <button type="button" class="btn-bet-team">O 56.5</button>
+          <button type="button" class="btn-bet-team">U 56.5</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /.modal-body -->
+
+  <!-- ── Inline bet slip — appears instead of navigating away ── -->
+  <div class="bet-slip" id="betSlip">
+    <div class="bet-slip-header">
+      <div class="bet-slip-pick">
+        <img id="slipLogo" src="" alt="">
+        <div>
+          <div class="bet-slip-pick-name" id="slipName">—</div>
+          <div class="bet-slip-pick-sub" id="slipSub">—</div>
+        </div>
+      </div>
+      <button class="bet-slip-cancel" onclick="closeBetSlip()">Cancel</button>
+    </div>
+
+    <div class="bet-slip-stats">
+      <div class="bss-item">
+        <span class="bss-label">Model</span>
+        <span class="bss-val" id="slipModel">—</span>
+      </div>
+      <div class="bss-item">
+        <span class="bss-label">Implied</span>
+        <span class="bss-val" id="slipImplied">—</span>
+      </div>
+      <div class="bss-item">
+        <span class="bss-label">Edge</span>
+        <span class="bss-val" id="slipEdge">—</span>
+      </div>
+      <div class="bss-item">
+        <span class="bss-label">Odds</span>
+        <span class="bss-val" id="slipOdds">—</span>
+      </div>
+    </div>
+
+    <div class="stake-row">
+      <div class="stake-input-wrap">
+        <input type="number" id="stakeInput" inputmode="decimal" step="0.01" value="12.00" oninput="updateReturn()">
+      </div>
+      <div class="stake-quick-btns">
+        <button type="button" class="stake-quick-btn" onclick="setStake('rec')">Rec.</button>
+        <button type="button" class="stake-quick-btn" onclick="setStake(25)">$25</button>
+        <button type="button" class="stake-quick-btn" onclick="setStake(50)">$50</button>
+      </div>
+    </div>
+    <div class="stake-meta">
+      <span>Recommended: <b id="slipRecommended">$12.00</b></span>
+      <span>To win: <b id="slipToWin">$0.00</b></span>
+    </div>
+
+    <button class="btn-place-bet" onclick="placeBet()">Bet $<span id="btnStakeVal">12.00</span> on <span id="btnTeamVal">MIA</span></button>
+
+    <div class="bet-slip-confirm" id="slipConfirm">✓ Bet placed — logged to Open Bets</div>
+  </div>
+
+</div><!-- /.modal-card -->
+</div><!-- /.mock-wrap -->
+
+<script>
+let current = null;
+
+function openBetSlip(pick, btnEl) {
+  current = pick;
+
+  document.querySelectorAll('.btn-bet-team.selected').forEach(el => el.classList.remove('selected'));
+  if (btnEl) btnEl.classList.add('selected');
+
+  document.getElementById('slipLogo').src = pick.logo;
+  document.getElementById('slipLogo').alt = pick.team;
+  document.getElementById('slipName').textContent = pick.team + ' Moneyline';
+  document.getElementById('slipSub').textContent = pick.oddsDisplay + ' vs ' + pick.opp;
+
+  document.getElementById('slipModel').textContent = (pick.modelProb * 100).toFixed(1) + '%';
+  document.getElementById('slipImplied').textContent = (pick.impliedProb * 100).toFixed(1) + '%';
+
+  const edge = (pick.modelProb - pick.impliedProb) * 100;
+  const edgeEl = document.getElementById('slipEdge');
+  edgeEl.textContent = (edge > 0 ? '+' : '') + edge.toFixed(1) + '%';
+  edgeEl.className = 'bss-val ' + (edge > 0 ? 'edge-pos' : 'edge-neg');
+
+  document.getElementById('slipOdds').textContent = pick.oddsDisplay;
+
+  document.getElementById('slipRecommended').textContent = '$' + pick.recommended.toFixed(2);
+  document.getElementById('stakeInput').value = pick.recommended.toFixed(2);
+
+  document.getElementById('slipConfirm').classList.remove('show');
+  document.getElementById('betSlip').classList.add('open');
+  updateReturn();
+
+  document.getElementById('betSlip').scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+function closeBetSlip() {
+  document.getElementById('betSlip').classList.remove('open');
+  document.querySelectorAll('.btn-bet-team.selected').forEach(el => el.classList.remove('selected'));
+  current = null;
+}
+
+function setStake(mode) {
+  if (!current) return;
+  const input = document.getElementById('stakeInput');
+  if (mode === 'rec') input.value = current.recommended.toFixed(2);
+  else input.value = Number(mode).toFixed(2);
+  updateReturn();
+}
+
+function americanToDecimal(odds) {
+  return odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+}
+
+function updateReturn() {
+  if (!current) return;
+  const stake = parseFloat(document.getElementById('stakeInput').value) || 0;
+  const dec = americanToDecimal(current.odds);
+  const toWin = stake * (dec - 1);
+  document.getElementById('slipToWin').textContent = '$' + toWin.toFixed(2);
+  document.getElementById('btnStakeVal').textContent = stake.toFixed(2);
+  document.getElementById('btnTeamVal').textContent = current.team;
+}
+
+function placeBet() {
+  const stake = parseFloat(document.getElementById('stakeInput').value) || 0;
+  document.getElementById('slipConfirm').textContent =
+    '✓ Bet placed — $' + stake.toFixed(2) + ' on ' + current.team + ' logged to Open Bets';
+  document.getElementById('slipConfirm').classList.add('show');
+}
+</script>
+
+</body>
+</html>
