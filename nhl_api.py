@@ -97,6 +97,8 @@ def get_live_scores(date_str=None):
                 'away_score': a_data.get('score'),
                 'home_score': h_data.get('score'),
                 'period':     period,
+                'away_logo':  f"https://assets.nhle.com/logos/nhl/svg/{a_data.get('abbrev', '')}_light.svg" if a_data.get('abbrev') else None,
+                'home_logo':  f"https://assets.nhle.com/logos/nhl/svg/{h_data.get('abbrev', '')}_light.svg" if h_data.get('abbrev') else None,
             }
     return scores
 

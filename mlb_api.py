@@ -133,6 +133,8 @@ def get_live_scores(date_str=None):
                 'period':     period,
                 'bases':      bases,
                 'game_pk':    game.get('gamePk'),
+                'away_logo':  _logo(a['team']['id']) if a['team'].get('id') else None,
+                'home_logo':  _logo(h['team']['id']) if h['team'].get('id') else None,
             }
     return scores
 

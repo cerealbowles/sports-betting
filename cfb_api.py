@@ -299,6 +299,7 @@ def get_live_scores(date_str=None):
                 'abbr':  team.get('abbreviation', ''),
                 'id':    team.get('id'),
                 'score': competitor.get('score'),
+                'id':    team.get('id'),
             }
         home = teams.get('home', {})
         away = teams.get('away', {})
@@ -319,6 +320,8 @@ def get_live_scores(date_str=None):
             'away_score': away.get('score'),
             'home_score': home.get('score'),
             'period':     period,
+            'away_logo':  f"https://a.espncdn.com/i/teamlogos/ncaa/500/{away.get('id')}.png" if away.get('id') else None,
+            'home_logo':  f"https://a.espncdn.com/i/teamlogos/ncaa/500/{home.get('id')}.png" if home.get('id') else None,
         }
     return scores
 

@@ -4092,10 +4092,12 @@ def api_repair_pick_roi():
 @app.route('/api/live-scores')
 def api_live_scores():
     """
-    Returns {bet_id: score_dict} for all open bets that have a live or final
-    score — including bets from prior days whose game already finished, so
-    the score keeps showing (instead of vanishing) until the bet is closed.
-    Called by the dashboard every 2 minutes to update score badges.
+    Returns {bet_id: score_dict} for all open bets with a game — including
+    preview (pre-kickoff) games so the card-face matchup can show team
+    logos/abbreviations before the game starts, and bets from prior days
+    whose game already finished, so the score keeps showing (instead of
+    vanishing) until the bet is closed. Called by the dashboard every 2
+    minutes to update score badges and the matchup.
     """
     from flask import jsonify
 

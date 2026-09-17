@@ -1561,57 +1561,6 @@ body.embed-mode .container { padding-bottom: 0; }
   flex-direction: column;
 }
 
-.bet-card-clickable {
-  cursor: pointer;
-  transition: border-color 0.15s, transform 0.1s;
-}
-.bet-card-clickable:hover  { border-color: var(--text-muted); }
-.bet-card-clickable:active { transform: scale(0.99); }
-
-/* Matchup line on the card face — who's playing, home vs away */
-.bc-matchup {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 2px 14px 10px;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  min-height: 1.2em;
-}
-.bc-matchup-team.is-bet { color: var(--orange); }
-.bc-matchup-at { font-size: 0.68rem; color: var(--text-muted); font-weight: 400; }
-
-/* First-row matchup — larger now that the name/sport/tier header is gone */
-.bc-matchup-lg {
-  gap: 10px;
-  padding: 16px 14px 14px;
-  font-size: 1.05rem;
-}
-.bc-matchup-lg .bc-matchup-at { font-size: 0.82rem; }
-.bc-matchup-logo {
-  width: 26px;
-  height: 26px;
-  object-fit: contain;
-}
-
-/* Bet detail modal actions */
-.bdm-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 16px;
-}
-.bdm-actions > * { flex: 1; }
-.bdm-actions a.small {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-}
-.bdm-actions form { display: flex; }
-.bdm-actions form button { width: 100%; }
-
 .bc-name-line {
   display: flex;
   align-items: center;
@@ -1714,8 +1663,7 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 
 .bc-score.score-live,
-.bc-score.score-final,
-.bc-score.score-preview {
+.bc-score.score-final {
   display: block;
   position: relative; /* anchor for absolutely-positioned diamond */
 }
@@ -1843,6 +1791,63 @@ body.embed-mode .container { padding-bottom: 0; }
   font-weight: 700;
   color: var(--text);
 }
+
+/* Matchup row on the card face — team logos + vs., populated by JS */
+.bc-matchup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 2px 14px 10px;
+  min-height: 34px;
+}
+.bc-matchup-team {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bc-matchup-team img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+.bc-matchup-team span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.bc-matchup-team.is-bet span { color: var(--orange); }
+.bc-matchup-vs {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* First-row matchup — larger now that the name/sport/tier header is gone */
+.bc-matchup-lg {
+  gap: 14px;
+  padding: 16px 14px 14px;
+  min-height: 40px;
+}
+.bc-matchup-lg .bc-matchup-team span { font-size: 0.95rem; }
+.bc-matchup-lg .bc-matchup-team img { width: 32px; height: 32px; }
+.bc-matchup-lg .bc-matchup-vs { font-size: 0.72rem; }
+
+/* Bet detail sheet actions (Edit / Close Bet / Delete) */
+.bdm-actions {
+  display: flex;
+  gap: 8px;
+}
+.bdm-actions > * { flex: 1; }
+.bdm-actions a.small {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.bdm-actions form { display: flex; }
+.bdm-actions form button { width: 100%; }
 
 /* ── History page — filter bar ───────────────────────── */
 .filter-bar {
