@@ -4121,7 +4121,7 @@ def api_live_scores():
     for bet in open_bets:
         score_key = _GAME_KEY_TS_STRIP.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
         info = score_map.get(score_key)
-        if not info or info.get('status') == 'Preview':
+        if not info:
             continue
         entry = dict(info)
         # Attach live implied win probability from current FanDuel odds
