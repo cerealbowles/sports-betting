@@ -1096,6 +1096,81 @@ body.embed-mode .container { padding-bottom: 0; }
   color: var(--text);
 }
 .qe-val.edge-pos, .qe-val.edge-neg { padding: 1px 6px; border-radius: 4px; }
+
+/* Edge bobber — model-vs-market scale on the card face */
+.eb-wrap {
+  margin-top: auto;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--border);
+}
+.eb-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.eb-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  margin: 0 9px;
+}
+.eb-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+.eb-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+}
+.eb-marker.eb-market { background: var(--silver); color: #1D222C; }
+.eb-marker.eb-model.eb-model-win { background: var(--win); color: #0B0D12; }
+.eb-marker.eb-model.eb-model-lose { background: var(--loss); color: #0B0D12; }
+.eb-tags {
+  position: relative;
+  height: 26px;
+  margin-top: 6px;
+}
+.eb-tag {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.eb-tag .eb-tag-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.eb-tag.eb-tag-market .eb-tag-val { color: var(--silver); }
+.eb-tag.eb-tag-model .eb-tag-val { color: var(--orange); }
+.eb-noodds {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+}
+.eb-noodds .eb-marker { position: static; transform: none; }
+.eb-noodds .eb-market-noodds { background: #fff; }
+.eb-noodds-text { font-size: 0.68rem; color: var(--text-muted); }
+.eb-noodds-text b { color: var(--text); }
+
 .quick-edge-banner {
   margin: 8px 14px 14px;
   padding: 6px 10px;
