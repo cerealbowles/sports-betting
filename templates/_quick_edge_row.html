@@ -38,20 +38,30 @@
 {% set qe_range_hi = [qe_market_pct + (qe_pct + 5), 100] | min %}
 {% set qe_left_pos = [qe_model_pos, qe_market_pos] | min %}
 {% set qe_right_pos = [qe_model_pos, qe_market_pos] | max %}
+{# Fill is a solid color keyed to edge magnitude, not a gradient — a small
+   edge (model and market basically agree) reads as yellow/uncertain even
+   though it also gets a colored ✓/✗, so a 0.7-point gap doesn't visually
+   read the same as a 20-point one. #}
+{% set qe_edge_abs = qe_edge | abs %}
+{% if qe_edge_abs < 2 %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge >= 0 %}{% set qe_fill_color = '#22c55e' %}{% else %}{% set qe_fill_color = '#ef4444' %}{% endif %}
+{# Market's label always grows away from Model's marker and vice versa, so
+   the two labels only ever move apart — never collide, no matter how close
+   together (or far apart) the markers themselves sit. #}
+{% set qe_model_right_of_market = qe_model_pos >= qe_market_pos %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
     <div class="eb-track">
-        <div class="eb-fill" style="left:{{ qe_left_pos }}%; width:{{ qe_right_pos - qe_left_pos }}%; background:linear-gradient(to right, {{ '#eab308, #22c55e' if qe_model_pos >= qe_market_pos else '#ef4444, #eab308' }});"></div>
+        <div class="eb-fill" style="left:{{ qe_left_pos }}%; width:{{ qe_right_pos - qe_left_pos }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%;" title="Market {{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%"></div>
-        <div class="eb-marker eb-model {{ 'eb-model-win' if qe_model_pos >= qe_market_pos else 'eb-model-lose' }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '✓' if qe_model_pos >= qe_market_pos else '✗' }}</div>
+        <div class="eb-marker eb-model {{ 'eb-model-win' if qe_model_right_of_market else 'eb-model-lose' }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '✓' if qe_model_right_of_market else '✗' }}</div>
     </div>
     <div class="eb-tags">
-        <div class="eb-tag eb-tag-market" style="left:{{ qe_market_pos }}%;">
+        <div class="eb-tag eb-tag-market {{ 'eb-tag-grow-left' if qe_model_right_of_market else 'eb-tag-grow-right' }}" style="left:{{ qe_market_pos }}%;">
             <span class="eb-tag-label">Market</span>
             <span class="eb-tag-val">{{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%</span>
         </div>
-        <div class="eb-tag eb-tag-model" style="left:{{ qe_model_pos }}%;">
+        <div class="eb-tag eb-tag-model {{ 'eb-tag-grow-right' if qe_model_right_of_market else 'eb-tag-grow-left' }}" style="left:{{ qe_model_pos }}%;">
             <span class="eb-tag-label">Model</span>
             <span class="eb-tag-val">{{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%</span>
         </div>
