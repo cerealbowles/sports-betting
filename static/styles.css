@@ -1578,6 +1578,7 @@ body.embed-mode .container { padding-bottom: 0; }
 .bc-meta {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   flex-wrap: wrap;
   padding: 0 14px 10px;
