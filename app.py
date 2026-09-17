@@ -20,6 +20,9 @@ import nhl_api
 import nfl_api
 import cfb_api
 import nba_api
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo('America/New_York')
 
 # app.py
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
@@ -1513,6 +1516,63 @@ def compute_chart_data(closed_bets):
 # Routes
 _SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba'}
 
+_LIVE_SCORE_FETCHERS = {
+    'MLB': mlb_api.get_live_scores, 'NHL': nhl_api.get_live_scores,
+    'NFL': nfl_api.get_live_scores, 'CFB': cfb_api.get_live_scores,
+    'NBA': nba_api.get_live_scores,
+}
+
+_GAME_KEY_TS_STRIP = re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
+
+
+def _score_map_for_open_bets(open_bets):
+    """
+    Builds {game_key: score_dict} covering every open bet's game, not just
+    today's slate — each bet's own eventstart date (ET) is queried too, so a
+    bet from a prior day keeps showing its final score instead of the score
+    silently disappearing once the game is no longer "today".
+    """
+    today_str = datetime.now(_ET).strftime('%Y-%m-%d')
+    dates_by_sport = defaultdict(set)
+    for b in open_bets:
+        sport = (b.sport or '').upper()
+        if sport not in _LIVE_SCORE_FETCHERS:
+            continue
+        es = b.eventstart
+        if es:
+            es = es if es.tzinfo else es.replace(tzinfo=timezone.utc)
+            dates_by_sport[sport].add(es.astimezone(_ET).strftime('%Y-%m-%d'))
+        dates_by_sport[sport].add(today_str)
+
+    score_map = {}
+    for sport, dates in dates_by_sport.items():
+        fetch = _LIVE_SCORE_FETCHERS[sport]
+        for d in dates:
+            try:
+                score_map.update(fetch(None if d == today_str else d))
+            except Exception:
+                pass
+    return score_map
+
+
+def _unsettled_finished_bets():
+    """
+    Real-money (non-paper) open bets whose game has already gone Final but
+    haven't been closed out yet — used to block placing new bets until the
+    user settles them and the bankroll reflects the result.
+    """
+    open_bets = OpenBet.query.filter_by(is_paper=False).filter(OpenBet.game_key != '').all()
+    if not open_bets:
+        return []
+    score_map = _score_map_for_open_bets(open_bets)
+    unsettled = []
+    for b in open_bets:
+        score_key = _GAME_KEY_TS_STRIP.sub('', b.game_key)
+        info = score_map.get(score_key)
+        if info and info.get('status') == 'Final':
+            unsettled.append((b, info))
+    return unsettled
+
 
 def _annotate_open_bets(open_bets):
     """
@@ -2133,6 +2193,14 @@ def place_top3():
   is_paper = bool(data.get('is_paper', False))
   if not bets or len(bets) > 5:
     return jsonify({'error': 'Invalid bets list'}), 400
+  if not is_paper:
+    unsettled = _unsettled_finished_bets()
+    if unsettled:
+      names = ', '.join(b.name for b, _info in unsettled)
+      return jsonify({
+        'error': f'Close out finished bet(s) before placing new ones: {names}',
+        'unsettled': [b.id for b, _info in unsettled],
+      }), 409
   settings = Setting.query.first()
   if not settings:
     return jsonify({'error': 'No settings'}), 400
@@ -2186,6 +2254,17 @@ def place_top3():
 @app.route('/add_open', methods=['POST'])
 def add_open():
   is_paper = request.form.get('is_paper') == '1'
+  if not is_paper:
+    unsettled = _unsettled_finished_bets()
+    if unsettled:
+      names = ', '.join(b.name for b, _info in unsettled)
+      next_url = request.form.get('next', '').strip()
+      back_url = next_url if next_url.startswith('/') and not next_url.startswith('//') else url_for('index')
+      return (
+        f"<p>Close out finished bet(s) before placing a new one: {names}.</p>"
+        f"<p><a href='{back_url}'>Back to open bets</a></p>",
+        409,
+      )
   try:
     name     = request.form.get('name', 'Bet')
     odds     = float(request.form.get('odds'))
@@ -4013,46 +4092,18 @@ def api_repair_pick_roi():
 @app.route('/api/live-scores')
 def api_live_scores():
     """
-    Returns {bet_id: score_dict} for all open bets with a game today (preview,
-    live, or final). Called by the dashboard every 2 minutes to update score
-    badges and the card-face matchup (home/away abbreviations).
+    Returns {bet_id: score_dict} for all open bets that have a live or final
+    score — including bets from prior days whose game already finished, so
+    the score keeps showing (instead of vanishing) until the bet is closed.
+    Called by the dashboard every 2 minutes to update score badges.
     """
-    from odds_api import _normalize
-    import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl, cfb_api as _cfb, nba_api as _nba
     from flask import jsonify
 
     open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
     if not open_bets:
         return jsonify({})
 
-    sports_needed = {(b.sport or '').upper() for b in open_bets if b.game_key}
-    score_map = {}
-
-    if 'MLB' in sports_needed:
-        try:
-            score_map.update(_mlb.get_live_scores())
-        except Exception:
-            pass
-    if 'NHL' in sports_needed:
-        try:
-            score_map.update(_nhl.get_live_scores())
-        except Exception:
-            pass
-    if 'NFL' in sports_needed:
-        try:
-            score_map.update(_nfl.get_live_scores())
-        except Exception:
-            pass
-    if 'CFB' in sports_needed:
-        try:
-            score_map.update(_cfb.get_live_scores())
-        except Exception:
-            pass
-    if 'NBA' in sports_needed:
-        try:
-            score_map.update(_nba.get_live_scores())
-        except Exception:
-            pass
+    score_map = _score_map_for_open_bets(open_bets)
 
     import odds_history as _oh
 
@@ -4066,12 +4117,9 @@ def api_live_scores():
         except Exception:
             return None
 
-    import re as _re
-    _ts_strip = _re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
-
     result = {}
     for bet in open_bets:
-        score_key = _ts_strip.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
+        score_key = _GAME_KEY_TS_STRIP.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
         info = score_map.get(score_key)
         if not info:
             continue
