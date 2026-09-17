@@ -1148,6 +1148,7 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .eb-tag {
   position: absolute;
+  top: 0;
   transform: translateX(-50%);
   font-size: 0.62rem;
   font-weight: 700;
