@@ -15,6 +15,15 @@ document.querySelectorAll('.bc-time[data-utc]').forEach(function(el) {
     } catch(e) {}
 });
 
+function openBetDetail(id) {
+    var el = document.getElementById('betDetailModal-' + id);
+    if (el) el.classList.add('open');
+}
+function closeBetDetail(id) {
+    var el = document.getElementById('betDetailModal-' + id);
+    if (el) el.classList.remove('open');
+}
+
 var _closingSuggestions = {{ (closing_suggestions or {}) | tojson }};
 var _cbmBetId   = null;
 var _cbmStake   = 0;
@@ -171,20 +180,31 @@ function confirmCashout() {
       .then(function (r) { return r.json(); })
       .then(function (data) {
         Object.keys(data).forEach(function (betId) {
+          var info    = data[betId];
+
+          // Card-face matchup line: who's playing, home vs away, at a glance.
+          var mEl = document.querySelector('.bc-matchup[data-bet-id="' + betId + '"]');
+          if (mEl) {
+            var mSide = mEl.getAttribute('data-bet-side') || '';
+            var awayTxt = '<span class="bc-matchup-team' + (mSide === 'away' ? ' is-bet' : '') + '">' + info.away_abbr + '</span>';
+            var homeTxt = '<span class="bc-matchup-team' + (mSide === 'home' ? ' is-bet' : '') + '">' + info.home_abbr + '</span>';
+            mEl.innerHTML = awayTxt + '<span class="bc-matchup-at">@</span>' + homeTxt;
+          }
+
           var el = document.querySelector('.bc-score[data-bet-id="' + betId + '"]');
           if (!el) return;
-          var info    = data[betId];
           var betSide = el.getAttribute('data-bet-side') || '';
           var isLive  = info.status === 'Live';
+          var isPreview = info.status === 'Preview';
           var as = info.away_score, hs = info.home_score;
           var awayWin = (as !== null && hs !== null && as > hs);
           var homeWin = (hs !== null && as !== null && hs > as);
 
-          el.className = 'bc-score ' + (isLive ? 'score-live' : 'score-final');
+          el.className = 'bc-score ' + (isLive ? 'score-live' : (isPreview ? 'score-preview' : 'score-final'));
 
           var statusHtml = '<div class="bc-score-status' + (isLive ? ' is-live' : '') + '">';
           if (isLive) statusHtml += '<span class="live-dot"></span>';
-          statusHtml += (info.period || (isLive ? 'Live' : 'Final'));
+          statusHtml += (info.period || (isLive ? 'Live' : (isPreview ? 'Scheduled' : 'Final')));
           if (info.live_implied != null) {
             var imp = info.live_implied;
             var impCls = imp >= 60 ? 'limp-good' : (imp <= 40 ? 'limp-bad' : 'limp-neutral');

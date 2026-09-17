@@ -4013,8 +4013,9 @@ def api_repair_pick_roi():
 @app.route('/api/live-scores')
 def api_live_scores():
     """
-    Returns {bet_id: score_dict} for all open bets that have a live or final score today.
-    Called by the dashboard every 2 minutes to update score badges.
+    Returns {bet_id: score_dict} for all open bets with a game today (preview,
+    live, or final). Called by the dashboard every 2 minutes to update score
+    badges and the card-face matchup (home/away abbreviations).
     """
     from odds_api import _normalize
     import mlb_api as _mlb, nhl_api as _nhl, nfl_api as _nfl, cfb_api as _cfb, nba_api as _nba
@@ -4072,7 +4073,7 @@ def api_live_scores():
     for bet in open_bets:
         score_key = _ts_strip.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
         info = score_map.get(score_key)
-        if not info or info.get('status') == 'Preview':
+        if not info:
             continue
         entry = dict(info)
         # Attach live implied win probability from current FanDuel odds
