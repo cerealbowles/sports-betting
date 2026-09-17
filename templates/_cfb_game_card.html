@@ -182,7 +182,6 @@
                     {% set favors_home = contrib > 0 %}
                     {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
                     {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
-                    {% set label_pos  = (50 - 12) if favors_home else (50 + 12) %}
                     {% set tone = 'pos' if agree else 'neg' %}
                     <div class="factor-diverge-row">
                         <div class="fd-track-wrap">
@@ -192,7 +191,7 @@
                                 <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
                                 <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
                             </div>
-                            <div class="fd-label" style="left:{{ label_pos }}%;">
+                            <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
                                 <span class="fd-label-name">{{ label }}</span>
                             </div>
                         </div>
