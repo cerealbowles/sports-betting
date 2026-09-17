@@ -1619,7 +1619,7 @@ def _annotate_open_bets(open_bets):
 
         if not game_started:
             # Pre-game: show live pre-game line movement
-            latest = _oh.get_latest(sk, bet.game_key)
+            latest = _oh.get_latest(sk, bet.game_key, game_start=es)
             if latest:
                 ca  = latest[f'{bet.bet_side}_odds']
                 mkt = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
@@ -4126,7 +4126,7 @@ def api_live_scores():
         entry = dict(info)
         # Attach live implied win probability from current FanDuel odds
         if bet.bet_side in ('home', 'away'):
-            snap = _oh.get_latest((bet.sport or '').upper(), bet.game_key)
+            snap = _oh.get_latest((bet.sport or '').upper(), bet.game_key, game_start=bet.eventstart)
             if snap:
                 live_amer = snap.get(f'{bet.bet_side}_odds')
                 if live_amer is not None:
