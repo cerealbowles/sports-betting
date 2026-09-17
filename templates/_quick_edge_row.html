@@ -1,11 +1,11 @@
 {# Model-vs-market "edge bobber" — shown on the always-visible card face for
    upcoming and live games. Expects `game` in context.
-   Renders a mini scale zoomed so the two values always sit ~30% of the
-   track apart, regardless of how close the raw probabilities are — this
-   keeps the Market/Model labels from ever colliding without needing to
-   stack them. Degrades to a blank market chip when sportsbook odds aren't
-   available (game.odds is None) — previously this showed an oversized lone
-   "Model 97%" line with no market context. #}
+   Market always sits dead center on the track; Model is offset left/right
+   of it by a zoomed distance proportional to the edge, so the two markers
+   never collide regardless of how close the raw probabilities are (no need
+   to stack labels). Degrades to a blank market chip when sportsbook odds
+   aren't available (game.odds is None) — previously this showed an
+   oversized lone "Model 97%" line with no market context. #}
 {% if game.model and game.status != 'Final' %}
 {% if game.model.away_prob >= game.model.home_prob %}
 {% set qe_team = game.away.abbrev %}{% set qe_model_prob = game.model.away_prob %}
@@ -26,18 +26,16 @@
 
 {% set qe_model_pct = qe_model_prob * 100 %}
 {% set qe_market_pct = qe_market_prob * 100 %}
-{% set qe_lo = [qe_model_pct, qe_market_pct] | min %}
-{% set qe_hi = [qe_model_pct, qe_market_pct] | max %}
-{% set qe_gap = qe_hi - qe_lo %}
-{# Buffer is chosen so the marker separation always works out to ~30% of the
-   track width, however small the raw gap is — no fixed floor, since a fixed
-   floor is what let tiny gaps collapse into overlapping labels before. #}
-{% set qe_buffer = (qe_gap * 1.1667) if qe_gap > 0 else 5 %}
-{% set qe_range_lo = [qe_lo - qe_buffer, 0] | max %}
-{% set qe_range_hi = [qe_hi + qe_buffer, 100] | min %}
-{% set qe_range = qe_range_hi - qe_range_lo %}
-{% set qe_model_pos = ((qe_model_pct - qe_range_lo) / qe_range * 100) if qe_range > 0 else 50 %}
-{% set qe_market_pos = ((qe_market_pct - qe_range_lo) / qe_range * 100) if qe_range > 0 else 50 %}
+{# Market is pinned to the center of the track; Model is offset left/right
+   of it by a zoomed distance based on the edge magnitude (a few points of
+   real edge reads as a clearly visible gap), clamped so it never runs off
+   the track edge. #}
+{% set qe_market_pos = 50 %}
+{% set qe_pct = ([(qe_edge | abs) * 4, 6] | max) %}
+{% set qe_pct = [qe_pct, 35] | min %}
+{% set qe_model_pos = (50 + qe_pct) if qe_edge >= 0 else (50 - qe_pct) %}
+{% set qe_range_lo = [qe_market_pct - (qe_pct + 5), 0] | max %}
+{% set qe_range_hi = [qe_market_pct + (qe_pct + 5), 100] | min %}
 {% set qe_left_pos = [qe_model_pos, qe_market_pos] | min %}
 {% set qe_right_pos = [qe_model_pos, qe_market_pos] | max %}
 
