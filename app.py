@@ -1771,10 +1771,11 @@ def _inject_global_exposure():
         total_capital = (settings.bankroll or 0.0) + open_staked
         pct_committed = round(open_staked / total_capital * 100, 1) if total_capital else None
         return {'global_exposure': {
-            'bankroll':      round(settings.bankroll or 0.0, 2),
-            'open_staked':   round(open_staked, 2),
-            'open_count':    len(open_bets),
-            'pct_committed': pct_committed,
+            'bankroll':         round(settings.bankroll or 0.0, 2),
+            'open_staked':      round(open_staked, 2),
+            'open_count':       len(open_bets),
+            'pct_committed':    pct_committed,
+            'percent_bankroll': settings.percent_bankroll or 0.02,
         }}
     except Exception:
         return {'global_exposure': None}

@@ -1257,6 +1257,158 @@ body.embed-mode .container { padding-bottom: 0; }
 .factor-neg { color: #ef4444; background: rgba(239,68,68,0.55); }
 .factor-val { width: 42px; text-align: right; font-weight: 600; }
 
+/* ── Diverging factor bobbers (CFB/NFL game-card details) — always-on,
+     one mini bobber per row: a center-split track, an eb-marker-style
+     endpoint circle (✓ agrees with the model's pick / ✗ disagrees), its
+     value floating beside the marker on the line, and the label on the
+     opposite side of the center divider at a fixed offset. Replaces the
+     old FanDuel/Model number rows + <details class="model-factors"> toggle
+     for these two sports only — other sports still use .model-factors. ── */
+.factors-panel {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px 14px;
+}
+.factors-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.factors-title {
+  font-size: 0.67rem; color: var(--text-muted);
+  letter-spacing: 0.3px; text-transform: uppercase;
+}
+.fd-side-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+.fd-side-label.fd-side-right { color: var(--orange); }
+.factor-diverge-list { display: flex; flex-direction: column; gap: 18px; }
+.fd-track-wrap { position: relative; }
+.fd-track {
+  position: relative; height: 6px; border-radius: 3px;
+  background: rgba(255,255,255,0.06); margin: 0 9px;
+}
+.fd-val {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+  z-index: 2;
+}
+.fd-val-before { transform: translate(calc(-100% - 14px), -50%); }
+.fd-val-after  { transform: translate(14px, -50%); }
+.fd-center-line {
+  position: absolute; left: 50%; top: 50%;
+  width: 1px; height: 12px; background: var(--border-strong);
+  transform: translate(-50%, -50%);
+}
+.fd-fill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+.fd-fill-pos { background: var(--win); }
+.fd-fill-neg { background: var(--loss); }
+.fd-marker {
+  position: absolute; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; line-height: 1;
+  z-index: 2;
+}
+.fd-marker-pos { background: var(--win); color: #0B0D12; }
+.fd-marker-neg { background: var(--loss); color: #0B0D12; }
+.fd-label {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.3px;
+  text-transform: uppercase; white-space: nowrap; color: var(--text-muted);
+  z-index: 2;
+}
+.fd-val-pos { color: var(--win); }
+.fd-val-neg { color: var(--loss); }
+
+/* ── Inline bet slip — replaces navigating to /new-bet for Moneyline bets
+     on CFB/NFL cards. Sits at the bottom of .game-card-details, below the
+     bet-type chips, and slides open in place when a chip is tapped. ── */
+.bet-slip {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 14px;
+  display: none;
+}
+.bet-slip.open { display: block; }
+.bet-slip-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.bet-slip-pick { display: flex; align-items: center; gap: 8px; }
+.bet-slip-pick img { width: 28px; height: 28px; object-fit: contain; }
+.bet-slip-pick-name { font-size: 0.95rem; font-weight: 800; }
+.bet-slip-pick-sub { font-size: 0.72rem; color: var(--text-muted); }
+.bet-slip-cancel {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 0.75rem; cursor: pointer; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bet-slip-cancel:hover { color: var(--text); }
+.bet-slip-stats {
+  display: flex; flex-wrap: wrap; gap: 8px 16px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  font-size: 0.76rem;
+}
+.bss-item { display: flex; flex-direction: column; gap: 1px; }
+.bss-label { color: var(--text-muted); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.4px; }
+.bss-val { font-weight: 700; }
+.bss-val.edge-pos { color: var(--win); }
+.bss-val.edge-neg { color: var(--loss); }
+.stake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.stake-input-wrap { position: relative; flex: 1; }
+.stake-input-wrap::before {
+  content: "$"; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--text-muted); font-weight: 700; font-size: 0.95rem; pointer-events: none;
+}
+.stake-input-wrap input {
+  width: 100%; padding: 11px 12px 11px 26px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text);
+  font-size: 1rem; font-weight: 700;
+}
+.stake-input-wrap input:focus { outline: none; border-color: var(--blue); }
+.stake-quick-btns { display: flex; gap: 6px; }
+.stake-quick-btn {
+  padding: 7px 10px; font-size: 0.72rem; font-weight: 700;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+}
+.stake-quick-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.stake-meta {
+  display: flex; justify-content: space-between; font-size: 0.72rem;
+  color: var(--text-muted); margin-bottom: 14px; padding: 0 2px;
+}
+.stake-meta b { color: var(--text); }
+.bet-slip-error {
+  display: none; margin-bottom: 10px; padding: 8px 10px;
+  background: rgba(239,68,68,0.09); border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius-sm); color: var(--loss); font-size: 0.76rem;
+}
+.bet-slip-error.show { display: block; }
+.btn-place-bet {
+  width: 100%; padding: 13px; font-size: 0.95rem; font-weight: 800;
+  background: var(--orange); color: #fff; border: none;
+  border-radius: var(--radius-sm); cursor: pointer;
+  box-shadow: 0 2px 10px rgba(251,79,20,0.25);
+  transition: var(--transition);
+}
+.btn-place-bet:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn-place-bet:active { transform: translateY(0); }
+.btn-place-bet:disabled { opacity: 0.6; cursor: default; transform: none; }
+.bet-slip-confirm {
+  display: none; text-align: center; padding: 10px 0 2px; color: var(--win);
+  font-size: 0.85rem; font-weight: 700;
+}
+.bet-slip-confirm.show { display: block; }
+.btn-bet-team.selected { background: var(--orange); color: #fff; border-color: var(--orange); }
+
 .weather-strip {
   display: flex;
   align-items: center;

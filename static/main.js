@@ -157,7 +157,10 @@ if (e.target === e.currentTarget) closeBetSheet();
 
 document.addEventListener('click', function (e) {
 var link = e.target.closest('.btn-bet-team');
-if (!link) return;
+// Buttons (not <a> links) are the new inline Moneyline chips on CFB/NFL
+// cards — they open the in-sheet bet slip themselves (see below), not the
+// iframe sheet, so leave them alone here.
+if (!link || link.tagName !== 'A') return;
 e.preventDefault();
 closeGameDetails();
 openBetSheet(link.href);
@@ -388,3 +391,169 @@ document.getElementById('betForm').addEventListener('submit', function(e) {
     document.getElementById('form_notes').value      = notes;
 });
 });
+
+/* ── Inline Moneyline bet slip (CFB/NFL game cards) ───────────────────
+   Tapping a .btn-bet-team *button* (as opposed to the <a> links other
+   sports still use) opens the .bet-slip already sitting in that game's
+   .game-card-details, pre-filled with the recommended Kelly stake, and
+   submits straight to /add_open via fetch — no navigation, no iframe.
+   Elements are found via closest()/querySelector from the clicked chip's
+   own .game-card-details ancestor rather than global IDs, since every
+   game's (hidden) details node carries an identically-classed bet-slip. */
+function openBetSlip(btnEl) {
+var details = btnEl.closest('.game-card-details');
+var slip    = details && details.querySelector('.bet-slip');
+if (!slip) return;
+
+details.querySelectorAll('.btn-bet-team.selected').forEach(function (el) { el.classList.remove('selected'); });
+btnEl.classList.add('selected');
+
+var d = btnEl.dataset;
+slip.dataset.team          = d.team;
+slip.dataset.odds          = d.odds;
+slip.dataset.modelProb     = d.modelProb;
+slip.dataset.impliedProb   = d.impliedProb;
+slip.dataset.sport         = d.sport;
+slip.dataset.betType       = d.betType || 'Moneyline';
+slip.dataset.eventstartutc = d.eventstartutc;
+slip.dataset.homeName      = d.homeName;
+slip.dataset.awayName      = d.awayName;
+slip.dataset.betSide       = d.betSide;
+slip.dataset.gameKey       = d.gameKey;
+
+var logo = slip.querySelector('.bet-slip-logo');
+if (logo) { logo.src = d.logo; logo.alt = d.team; }
+var nameEl = slip.querySelector('.bet-slip-pick-name');
+if (nameEl) nameEl.textContent = d.team + ' ' + (d.betType || 'Moneyline');
+var subEl = slip.querySelector('.bet-slip-pick-sub');
+if (subEl) subEl.textContent = d.oddsDisplay + ' vs ' + d.opp;
+
+var modelProb   = parseFloat(d.modelProb);
+var impliedProb = parseFloat(d.impliedProb);
+setText(slip, '.bss-model',   isFinite(modelProb)   ? (modelProb * 100).toFixed(1) + '%' : '—');
+setText(slip, '.bss-implied', isFinite(impliedProb) ? (impliedProb * 100).toFixed(1) + '%' : '—');
+var edgeEl = slip.querySelector('.bss-edge');
+if (edgeEl) {
+    if (isFinite(modelProb) && isFinite(impliedProb)) {
+    var edge = (modelProb - impliedProb) * 100;
+    edgeEl.textContent = (edge > 0 ? '+' : '') + edge.toFixed(1) + '%';
+    edgeEl.className   = 'bss-val ' + (edge > 0 ? 'edge-pos' : 'edge-neg');
+    } else {
+    edgeEl.textContent = '—';
+    edgeEl.className   = 'bss-val';
+    }
+}
+setText(slip, '.bss-odds', d.oddsDisplay);
+
+var recommended = recommendedStakeFor(d.odds, d.modelProb);
+slip.dataset.recommended = recommended.toFixed(2);
+setText(slip, '.bet-slip-recommended', '$' + recommended.toFixed(2));
+
+var input = slip.querySelector('.stake-input-wrap input');
+if (input) input.value = recommended.toFixed(2);
+
+var err = slip.querySelector('.bet-slip-error');
+if (err) err.classList.remove('show');
+var confirm = slip.querySelector('.bet-slip-confirm');
+if (confirm) confirm.classList.remove('show');
+
+slip.classList.add('open');
+updateBetSlipReturn(slip);
+slip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeBetSlip(btnEl) {
+var slip = btnEl.closest('.bet-slip');
+if (!slip) return;
+slip.classList.remove('open');
+var details = slip.closest('.game-card-details');
+if (details) details.querySelectorAll('.btn-bet-team.selected').forEach(function (el) { el.classList.remove('selected'); });
+}
+
+function setStakeQuick(btnEl, mode) {
+var slip  = btnEl.closest('.bet-slip');
+var input = slip && slip.querySelector('.stake-input-wrap input');
+if (!input) return;
+input.value = (mode === 'rec' ? parseFloat(slip.dataset.recommended) || 0 : Number(mode)).toFixed(2);
+updateBetSlipReturn(slip);
+}
+
+function setText(root, selector, text) {
+var el = root.querySelector(selector);
+if (el) el.textContent = text;
+}
+
+function recommendedStakeFor(americanOdds, modelProb) {
+var bankroll   = parseFloat((document.getElementById('global_bankroll_value')    || {}).textContent || '0');
+var percentCap = parseFloat((document.getElementById('global_percent_cap_value') || {}).textContent || '0.02');
+var dec = americanToDecimal(americanOdds);
+var p   = parseFloat(modelProb);
+if (dec === null || !isFinite(p)) return 0;
+var result = computeKelly(bankroll, percentCap, dec, blendProb(p));
+return result.negativeEV ? 0 : result.amount;
+}
+
+function updateBetSlipReturn(slip) {
+if (!slip) return;
+var input = slip.querySelector('.stake-input-wrap input');
+var stake = parseFloat(input && input.value) || 0;
+var dec   = americanToDecimal(slip.dataset.odds);
+var toWin = dec ? stake * (dec - 1) : 0;
+setText(slip, '.bet-slip-to-win', '$' + toWin.toFixed(2));
+var placeBtn = slip.querySelector('.btn-place-bet');
+if (placeBtn) placeBtn.textContent = 'Bet $' + stake.toFixed(2) + ' on ' + slip.dataset.team;
+}
+
+document.addEventListener('input', function (e) {
+if (!e.target.matches('.stake-input-wrap input')) return;
+updateBetSlipReturn(e.target.closest('.bet-slip'));
+});
+
+function placeBet(btnEl) {
+var slip = btnEl.closest('.bet-slip');
+if (!slip) return;
+var input = slip.querySelector('.stake-input-wrap input');
+var stake = parseFloat(input && input.value) || 0;
+var err   = slip.querySelector('.bet-slip-error');
+if (err) err.classList.remove('show');
+if (!stake || stake <= 0) {
+    if (err) { err.textContent = 'Enter a stake amount.'; err.classList.add('show'); }
+    return;
+}
+
+btnEl.disabled = true;
+var d = slip.dataset;
+var fd = new FormData();
+fd.append('name',          d.team + ' ' + (d.betType || 'Moneyline'));
+fd.append('odds',          d.odds);
+fd.append('prob',          d.modelProb);
+fd.append('stake',         stake.toFixed(2));
+fd.append('sport',         d.sport || '');
+fd.append('bet_type',      d.betType || 'Moneyline');
+fd.append('home_name',     d.homeName || '');
+fd.append('away_name',     d.awayName || '');
+fd.append('bet_side',      d.betSide || '');
+fd.append('eventstartutc', d.eventstartutc || '');
+fd.append('is_paper',      '0');
+
+fetch('/add_open', { method: 'POST', body: fd })
+    .then(function (r) {
+    if (r.status === 409) return r.text().then(function () { throw new Error('unsettled'); });
+    var confirm = slip.querySelector('.bet-slip-confirm');
+    if (confirm) {
+        confirm.textContent = '✓ Bet placed — $' + stake.toFixed(2) + ' on ' + d.team + ' logged to Open Bets';
+        confirm.classList.add('show');
+    }
+    setTimeout(function () {
+        closeGameDetails();
+        window.location.reload();
+    }, 900);
+    })
+    .catch(function () {
+    btnEl.disabled = false;
+    if (err) {
+        err.textContent = 'Close out your finished bet(s) before placing a new one.';
+        err.classList.add('show');
+    }
+    });
+}

@@ -38,6 +38,13 @@
 {% set _page_label = 'Today' if _today_active else _page_labels.get(request.endpoint, 'Spooky Sports') %}
 <div class="container">
 
+{# Hidden globals for the inline bet-slip Kelly calc on CFB/NFL game cards
+   (static/main.js openBetSlip/updateReturn) — site-wide via global_exposure
+   so any page's game cards can compute a recommended stake without each
+   route having to pass bankroll/percent_bankroll into its own template. #}
+<span id="global_bankroll_value" style="display:none;">{{ global_exposure.bankroll if global_exposure else 0 }}</span>
+<span id="global_percent_cap_value" style="display:none;">{{ global_exposure.percent_bankroll if global_exposure else 0.02 }}</span>
+
     {% if not _embed %}
     <div class="topbar">
         <a href="{{ _today_href }}" class="topbar-page">{{ _page_label }}</a>
