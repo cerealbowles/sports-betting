@@ -60,6 +60,11 @@
    together on the track. #}
 {% set qe_gap = (qe_model_pos - qe_market_pos) | abs %}
 {% set qe_labels_close = qe_gap < 10 %}
+{# Model's label normally grows away from Market. But once Model is pinned
+   to the very edge of the track (overflow case, pos is exactly 0 or 100),
+   "away from Market" points off the edge of the card and clips the text —
+   so in that case grow inward instead, toward the center of the track. #}
+{% set qe_model_grow_left = (qe_model_pos >= 50) if qe_overflow else (not qe_model_right_of_market) %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
@@ -73,7 +78,7 @@
             <span class="eb-tag-label">Market</span>
             <span class="eb-tag-val">{{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%</span>
         </div>
-        <div class="eb-tag eb-tag-model {{ 'eb-tag-grow-right' if qe_model_right_of_market else 'eb-tag-grow-left' }}" style="left:{{ qe_model_pos }}%;">
+        <div class="eb-tag eb-tag-model {{ 'eb-tag-grow-left' if qe_model_grow_left else 'eb-tag-grow-right' }}" style="left:{{ qe_model_pos }}%;">
             <span class="eb-tag-label">Model</span>
             <span class="eb-tag-val">{{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%</span>
         </div>
