@@ -309,9 +309,14 @@ def build_schedule_context():
             if team.get('goalie') and team['goalie'].get('name'):
                 team['goalie']['injury'] = injury_map.get(team['goalie']['name'].lower())
 
+        game_odds = odds_api.lookup_game_odds(odds_map, home['name'], away['name'],
+                                               game_date=game.get('startTimeUTC', '')[:13] or None)
+
         # Run the model
         try:
-            model = nhl_model.predict(home, away, game_time_utc=game.get('startTimeUTC', ''))
+            market_home_prob = game_odds.get('home_implied') if game_odds else None
+            model = nhl_model.predict(home, away, game_time_utc=game.get('startTimeUTC', ''),
+                                       market_home_prob=market_home_prob)
         except Exception:
             model = None
 
@@ -343,8 +348,7 @@ def build_schedule_context():
             'home':          home,
             'series_info':   series_info,
             'model':         model,
-            'odds':          odds_api.lookup_game_odds(odds_map, home['name'], away['name'],
-                                                        game_date=game.get('startTimeUTC', '')[:13] or None),
+            'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         })
