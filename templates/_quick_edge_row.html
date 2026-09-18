@@ -60,11 +60,13 @@
    together on the track. #}
 {% set qe_gap = (qe_model_pos - qe_market_pos) | abs %}
 {% set qe_labels_close = qe_gap < 10 %}
-{# Model's label normally grows away from Market. But once Model is pinned
-   to the very edge of the track (overflow case, pos is exactly 0 or 100),
-   "away from Market" points off the edge of the card and clips the text —
-   so in that case grow inward instead, toward the center of the track. #}
-{% set qe_model_grow_left = (qe_model_pos >= 50) if qe_overflow else (not qe_model_right_of_market) %}
+{# Model's label normally grows away from Market. But once Model is close
+   enough to the track's edge that "away from Market" would push the label
+   past the card's own edge and clip it — not just the exact-overflow case,
+   but anywhere in the last ~15% of the track — grow inward instead, toward
+   the center of the track. #}
+{% set qe_model_near_edge = qe_model_pos <= 15 or qe_model_pos >= 85 %}
+{% set qe_model_grow_left = (qe_model_pos >= 50) if qe_model_near_edge else (not qe_model_right_of_market) %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
