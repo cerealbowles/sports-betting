@@ -277,8 +277,12 @@ _GROUP_ORDER = [
 ]
 
 
-def predict(home, away, matchup_history=None, game_time_utc=None):
+def predict(home, away, matchup_history=None, game_time_utc=None, market_home_prob=None):
     """
+    Args:
+        market_home_prob – vig-free market-implied home win prob (0-1), if known.
+                            Used only for the large-disagreement shrink below;
+                            the model runs identically without it.
     Returns:
         home_prob     – estimated home win probability (clamped, float 0-1)
         away_prob     – 1 - home_prob
@@ -546,6 +550,24 @@ def predict(home, away, matchup_history=None, game_time_utc=None):
     _SHRINK_RATE = 0.40
     if home_prob > _SHRINK_CAP:
         home_prob = _SHRINK_CAP + _SHRINK_RATE * (home_prob - _SHRINK_CAP)
+
+    # Shrink large model-vs-market disagreements.
+    # A first look at 50 resolved games (2026-09-09 to 2026-09-18) found picks
+    # with a 10+ point edge over the vig-free market went 2-8 (25% WR) vs.
+    # ~58% for picks under 10pts — the model tends to be overconfident exactly
+    # when it disagrees with the market the most. Sample is small (8 games in
+    # that bucket), so this pulls back only the excess beyond 10pts, and only
+    # by 25% of it — a deliberately modest correction pending more data, not
+    # a fitted curve. Revisit once game_predictions has a few hundred more
+    # resolved games with odds.
+    if market_home_prob is not None:
+        _MKT_EDGE_CAP   = 0.10
+        _MKT_EDGE_RATE  = 0.25
+        edge = home_prob - market_home_prob
+        excess = abs(edge) - _MKT_EDGE_CAP
+        if excess > 0:
+            pull = excess * _MKT_EDGE_RATE
+            home_prob -= pull if edge > 0 else -pull
 
     # Edge-perspective factor view: anchor labels + signs to the favored team.
     # When the away team has the edge, flip all signs and swap {ha}/{aa} in labels
