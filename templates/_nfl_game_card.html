@@ -179,9 +179,32 @@
             {% endfor %}
         </div>
 
-        <!-- ── Market vs Model — edge bobber, same as the collapsed card ── -->
-        {% if game.model and game.odds %}
+        <!-- ── FanDuel + Model analysis ── -->
+        {% if game.odds or game.model %}
         <div class="analysis-section">
+
+            {% if game.odds %}
+            <div class="analysis-row">
+                <span class="analysis-label">FanDuel</span>
+                <div class="analysis-data">
+                    <span class="odds-team">
+                        <span>{{ game.away.abbrev }}</span>
+                        <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
+                        {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                        <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
+                    </span>
+                    <span class="odds-sep">·</span>
+                    <span class="odds-team">
+                        <span>{{ game.home.abbrev }}</span>
+                        <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
+                        {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                        <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
+                    </span>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if game.model %}
             {% include "_quick_edge_row.html" %}
 
             {% set displayed = game.model.factors | rejectattr(1, 'equalto', 0) | list %}
@@ -219,9 +242,9 @@
                 </div>
             </div>
             {% endif %}
+            {% endif %}
+
         </div>
-        {% elif game.model %}
-        <div class="analysis-section">{% include "_quick_edge_row.html" %}</div>
         {% endif %}
 
         <!-- ── Bet ── -->
