@@ -136,6 +136,27 @@
 
         <div class="sheet-game-title">{{ game.away.abbrev }} @ {{ game.home.abbrev }}</div>
 
+        <!-- Scoreboard, repeated here (not just in the collapsed summary) so
+             the team logos/records stay visible once the summary is hidden
+             behind the details sheet. -->
+        <div class="scoreboard" style="margin-bottom:14px;">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
+                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}–{{ game.away.ot_losses }}</div>
+                </div>
+            </div>
+            <div class="sb-center"><div class="sb-vs">vs</div></div>
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
+                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}–{{ game.home.ot_losses }}</div>
+                </div>
+                <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+        </div>
+
         {% if game.venue %}
         <div class="small" style="margin-bottom:10px; color:var(--text-muted);">{{ game.venue }}</div>
         {% endif %}
