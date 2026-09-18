@@ -42,8 +42,14 @@
 {% set qe_capped_abs = [qe_edge_abs, qe_cap] | min %}
 {% set qe_pct = (qe_capped_abs / qe_cap) * 50 %}
 {% set qe_model_pos = (50 + qe_pct) if qe_edge >= 0 else (50 - qe_pct) %}
-{% set qe_range_lo = qe_market_pct - qe_cap %}
-{% set qe_range_hi = qe_market_pct + qe_cap %}
+{# Scale labels show the actual probability range the track spans — market
+   ± the cap — but that arithmetic range can run past 0%/100% for a market
+   probability already near either extreme (e.g. a 94.3% market leaves no
+   room for +10 without exceeding 100%). Clamp the displayed labels to valid
+   probability bounds; the track/marker positions are already in 0-100 track
+   %, a separate scale, so they don't need the same clamp. #}
+{% set qe_range_lo = [qe_market_pct - qe_cap, 0] | max %}
+{% set qe_range_hi = [qe_market_pct + qe_cap, 100] | min %}
 {% set qe_left_pos = [qe_model_pos, qe_market_pos] | min %}
 {% set qe_right_pos = [qe_model_pos, qe_market_pos] | max %}
 {# Fill is a solid color keyed to edge magnitude, not a gradient — a small
