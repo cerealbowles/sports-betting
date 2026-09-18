@@ -4,12 +4,10 @@
    the left edge, home team's to the right edge, 50/50 dead center. A green
    checkmark sits at the market's implied probability on whichever side is
    favored, and the fill color/intensity reflects how confident the market
-   is in that side (near 50 = muted, near 100 = deep green). A solid line
-   overlays the model's own probability, offset from the market marker by
-   at most 10 points in either direction (clamped to the 0-100 track) so a
-   wild model read doesn't fly off past its own team's teammate. Degrades to
-   a blank market chip when sportsbook odds aren't available (game.odds is
-   None). #}
+   is in that side (near 50 = muted, near 100 = deep green). Market-only —
+   no model marker/label clutter; the model's read still feeds the
+   "Recommended bet" banner below via edge/Kelly. Degrades to a blank
+   market chip when sportsbook odds aren't available (game.odds is None). #}
 {% if game.model and game.status != 'Final' %}
 {# MLB's schedule builder names this field `abbr`; every other sport uses
    `abbrev` — fall back to whichever is present so the team tag on the
@@ -47,24 +45,6 @@
 {% set qe_fill_left = 50 if qe_market_favors_home else qe_market_pos %}
 {% set qe_fill_width = (qe_market_pos - 50) if qe_market_favors_home else (50 - qe_market_pos) %}
 
-{# Model's line is pinned within 10 points of the market marker (either
-   direction), then clamped to the track itself so it can never overshoot
-   past 0% or 100%. #}
-{% set qe_model_raw_offset = qe_model_home_pct - qe_market_home_pct %}
-{% set qe_model_offset = [[qe_model_raw_offset, -10] | max, 10] | min %}
-{% set qe_model_pos = [[qe_market_pos + qe_model_offset, 0] | max, 100] | min %}
-
-{# Market's label centers under its marker by default, growing away from
-   Model only when the two markers sit close enough on the track that a
-   centered label would collide with Model's. Model's label normally grows
-   away from Market, but flips to grow inward once it's close enough to the
-   track's own edge that "away from Market" would clip against the card. #}
-{% set qe_gap = (qe_model_pos - qe_market_pos) | abs %}
-{% set qe_labels_close = qe_gap < 10 %}
-{% set qe_model_right_of_market = qe_model_pos >= qe_market_pos %}
-{% set qe_model_near_edge = qe_model_pos <= 15 or qe_model_pos >= 85 %}
-{% set qe_model_grow_left = (qe_model_pos >= 50) if qe_model_near_edge else (not qe_model_right_of_market) %}
-
 <div class="eb-wrap">
     <div class="eb-scale-labels">
         <span>{{ qe_away_team }}</span>
@@ -74,17 +54,12 @@
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_fill_left }}%; width:{{ qe_fill_width }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-center-tick"></div>
-        <div class="eb-model-line" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_home_team }} {{ qe_model_home_pct | round(1) }}%"></div>
         <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="Market {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
     <div class="eb-tags">
-        <div class="eb-tag eb-tag-market {{ ('eb-tag-grow-left' if qe_model_right_of_market else 'eb-tag-grow-right') if qe_labels_close else 'eb-tag-center' }}" style="left:{{ qe_market_pos }}%;">
+        <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_market_pos }}%;">
             <span class="eb-tag-label">Market</span>
             <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
-        </div>
-        <div class="eb-tag eb-tag-model {{ 'eb-tag-grow-left' if qe_model_grow_left else 'eb-tag-grow-right' }}" style="left:{{ qe_model_pos }}%;">
-            <span class="eb-tag-label">Model</span>
-            <span class="eb-tag-val">{{ (qe_home_team if qe_model_home_pct >= 50 else qe_away_team) }} {{ ((qe_model_home_pct if qe_model_home_pct >= 50 else (100 - qe_model_home_pct))) | round(1) }}%</span>
         </div>
     </div>
 </div>
