@@ -30,7 +30,15 @@ import os
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import market_edge_calibration as _mkt_calib
+
 _ET = ZoneInfo('America/New_York')
+
+# Model-vs-market shrink rate — data-driven, see market_edge_calibration.py.
+# app.py's _recompute_market_edge_shrink('MLB') overwrites this in place as
+# more resolved games accumulate; this is just the value at import time
+# (last snapshot, or the hardcoded 25% prior on first run).
+_MKT_EDGE_RATE = _mkt_calib.load_rate('MLB')
 
 # MLB seasonal baselines
 LEAGUE_ERA    = 4.20
@@ -555,14 +563,13 @@ def predict(home, away, matchup_history=None, game_time_utc=None, market_home_pr
     # A first look at 50 resolved games (2026-09-09 to 2026-09-18) found picks
     # with a 10+ point edge over the vig-free market went 2-8 (25% WR) vs.
     # ~58% for picks under 10pts — the model tends to be overconfident exactly
-    # when it disagrees with the market the most. Sample is small (8 games in
-    # that bucket), so this pulls back only the excess beyond 10pts, and only
-    # by 25% of it — a deliberately modest correction pending more data, not
-    # a fitted curve. Revisit once game_predictions has a few hundred more
-    # resolved games with odds.
+    # when it disagrees with the market the most. The 10pt threshold is a
+    # fixed, hand-chosen cutoff; the pull-back rate (_MKT_EDGE_RATE) is
+    # data-driven — app.py's _recompute_market_edge_shrink('MLB') refits it
+    # from resolved game_predictions as more large-edge games accumulate, and
+    # it starts back at the 25% prior below if no snapshot exists yet.
     if market_home_prob is not None:
-        _MKT_EDGE_CAP   = 0.10
-        _MKT_EDGE_RATE  = 0.25
+        _MKT_EDGE_CAP = 0.10
         edge = home_prob - market_home_prob
         excess = abs(edge) - _MKT_EDGE_CAP
         if excess > 0:

@@ -11,7 +11,15 @@ validated in bootstrap (rare events); keep hand-tuned, validate on Model page.
 """
 import math
 
+import market_edge_calibration as _mkt_calib
+
 LEAGUE_PPG = 23.2   # NFL 2024 season average ~23.4 PPG
+
+# Model-vs-market shrink rate — data-driven, see market_edge_calibration.py.
+# app.py's _recompute_market_edge_shrink('NFL') overwrites this in place as
+# more resolved games accumulate; this is just the value at import time
+# (last snapshot, or the hardcoded 25% prior on first run).
+_MKT_EDGE_RATE = _mkt_calib.load_rate('NFL')
 
 
 def _sigmoid(x):
@@ -117,12 +125,12 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     # Shrink large model-vs-market disagreements — same guardrail added to
     # mlb_model.py, where 50 resolved games found 10+ point edges over the
     # vig-free market won only 25% of the time vs. ~58% under that threshold.
-    # Applied here on the same intuition rather than an NFL-specific study:
-    # pull back 25% of the edge beyond 10pts. Revisit once enough resolved
-    # NFL games with odds accumulate to check the threshold/rate hold here.
+    # The 10pt threshold is fixed; the pull-back rate (_MKT_EDGE_RATE) is
+    # data-driven — app.py's _recompute_market_edge_shrink('NFL') refits it
+    # from resolved game_predictions as NFL accumulates its own large-edge
+    # games, starting from the MLB-derived 25% prior until then.
     if market_home_prob is not None:
-        _MKT_EDGE_CAP  = 0.10
-        _MKT_EDGE_RATE = 0.25
+        _MKT_EDGE_CAP = 0.10
         edge = home_prob - market_home_prob
         excess = abs(edge) - _MKT_EDGE_CAP
         if excess > 0:
