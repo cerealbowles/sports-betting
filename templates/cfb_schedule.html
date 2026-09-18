@@ -53,6 +53,23 @@
 @media (max-width: 600px) {
     .rec-col-hide { display: none; }
 }
+.cfb-rec-summary {
+    cursor: pointer;
+    list-style: none;
+}
+.cfb-rec-summary::-webkit-details-marker { display: none; }
+.cfb-rec-summary::before {
+    content: "▸ ";
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+.cfb-rec-details[open] .cfb-rec-summary::before { content: "▾ "; }
+@media (min-width: 901px) {
+    /* Recommendations only collapse behind a dropdown on mobile — on
+       desktop the list stays open and the summary toggle is hidden. */
+    .cfb-rec-summary { display: none; cursor: default; }
+    .cfb-rec-details:not([open]) > *:not(.cfb-rec-summary) { display: block !important; }
+}
 </style>
 {% endblock %}
 
@@ -90,12 +107,14 @@
 {% else %}
 
 {% if recommended %}
-<div class="card" style="margin-bottom:14px;">
-  <div class="section-header" style="margin-bottom:10px;">
-    <h2>This Week's Recommendations</h2>
-    <span class="small">sorted by model edge · positive-Kelly picks only, top 15</span>
-  </div>
-  <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+<details class="card cfb-rec-details" style="margin-bottom:14px;">
+  <summary class="cfb-rec-summary">
+    <div class="section-header" style="margin-bottom:0;">
+      <h2>This Week's Recommendations</h2>
+      <span class="small">sorted by model edge · positive-Kelly picks only, top 15</span>
+    </div>
+  </summary>
+  <table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:10px;">
     <thead>
       <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
         <th style="padding:5px 8px;text-align:left;">#</th>
@@ -130,7 +149,7 @@
     {% endfor %}
     </tbody>
   </table>
-</div>
+</details>
 {% endif %}
 
 {% if conferences %}

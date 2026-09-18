@@ -37,6 +37,14 @@ app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+_STYLES_MTIME = str(int(os.path.getmtime(os.path.join(app.static_folder, 'styles.css'))))
+
+
+@app.context_processor
+def _inject_asset_version():
+    """Cache-bust styles.css so browsers pick up CSS changes without a hard refresh."""
+    return {'styles_version': _STYLES_MTIME}
+
 # Models
 class Setting(db.Model):
   id = db.Column(db.Integer, primary_key=True)
