@@ -1,99 +1,98 @@
-{# Model-vs-market "edge bobber" — shown on the always-visible card face for
-   upcoming and live games. Expects `game` in context.
-   Market always sits dead center on the track; Model is offset left/right
-   of it by a zoomed distance proportional to the edge, so the two markers
-   never collide regardless of how close the raw probabilities are (no need
-   to stack labels). Degrades to a blank market chip when sportsbook odds
-   aren't available (game.odds is None) — previously this showed an
-   oversized lone "Model 97%" line with no market context. #}
+{# Team-vs-team "confidence bobber" — shown on the always-visible card face
+   for upcoming and live games. Expects `game` in context.
+   The track spans the full matchup: away team's win probability pinned to
+   the left edge, home team's to the right edge, 50/50 dead center. A green
+   checkmark sits at the market's implied probability on whichever side is
+   favored, and the fill color/intensity reflects how confident the market
+   is in that side (near 50 = muted, near 100 = deep green). A solid line
+   overlays the model's own probability, offset from the market marker by
+   at most 10 points in either direction (clamped to the 0-100 track) so a
+   wild model read doesn't fly off past its own team's teammate. Degrades to
+   a blank market chip when sportsbook odds aren't available (game.odds is
+   None). #}
 {% if game.model and game.status != 'Final' %}
 {# MLB's schedule builder names this field `abbr`; every other sport uses
    `abbrev` — fall back to whichever is present so the team tag on the
    bobber isn't silently blank on the MLB page. #}
-{% if game.model.away_prob >= game.model.home_prob %}
-{% set qe_team = game.away.abbrev or game.away.abbr %}{% set qe_model_prob = game.model.away_prob %}
-{% else %}
-{% set qe_team = game.home.abbrev or game.home.abbr %}{% set qe_model_prob = game.model.home_prob %}
-{% endif %}
+{% set qe_away_team = game.away.abbrev or game.away.abbr %}
+{% set qe_home_team = game.home.abbrev or game.home.abbr %}
+{% set qe_model_home_pct = game.model.home_prob * 100 %}
 
 {% if game.odds %}
-{% if game.model.away_prob >= game.model.home_prob %}
-{% set qe_market_prob = game.odds.away_implied %}{% set qe_amer = game.odds.away_best %}
-{% else %}
-{% set qe_market_prob = game.odds.home_implied %}{% set qe_amer = game.odds.home_best %}
-{% endif %}
-{% set qe_edge = ((qe_model_prob - qe_market_prob) * 100) | round(1) %}
-{% set qe_amer = qe_amer | float %}
+{% set qe_market_home_pct = game.odds.home_implied * 100 %}
+{% set qe_market_pos = qe_market_home_pct %}
+{% set qe_market_favors_home = qe_market_home_pct >= 50 %}
+{% set qe_market_team = qe_home_team if qe_market_favors_home else qe_away_team %}
+{% set qe_market_team_pct = qe_market_home_pct if qe_market_favors_home else (100 - qe_market_home_pct) %}
+{% set qe_amer = (game.odds.home_best if qe_market_favors_home else game.odds.away_best) | float %}
 {% if qe_amer > 0 %}{% set qe_b = qe_amer / 100.0 %}{% elif qe_amer < 0 %}{% set qe_b = -100.0 / qe_amer %}{% else %}{% set qe_b = 0.0 %}{% endif %}
-{% set qe_kelly = (qe_b * qe_model_prob - (1 - qe_model_prob)) / qe_b if qe_b > 0 else -1 %}
+{% set qe_model_fav_prob = game.model.home_prob if qe_market_favors_home else game.model.away_prob %}
+{% set qe_kelly = (qe_b * qe_model_fav_prob - (1 - qe_model_fav_prob)) / qe_b if qe_b > 0 else -1 %}
+{% set qe_edge = ((qe_model_fav_prob * 100) - qe_market_team_pct) | round(1) %}
 
-{% set qe_model_pct = qe_model_prob * 100 %}
-{% set qe_market_pct = qe_market_prob * 100 %}
-{# Market always sits dead center on the track. Model is offset left/right
-   of center on a fixed linear scale: 0pts of edge = center, 10pts of edge
-   (or more) = the track's edge. Anything beyond 10pts still sits pinned at
-   the edge but is flagged as an overflow (yellow "!") rather than a normal
-   win/lose marker, since a shift that large is worth calling out rather
-   than just maxing out the scale silently. #}
-{% set qe_market_pos = 50 %}
-{% set qe_edge_abs = qe_edge | abs %}
-{% set qe_cap = 10 %}
-{% set qe_overflow = qe_edge_abs > qe_cap %}
-{% set qe_capped_abs = [qe_edge_abs, qe_cap] | min %}
-{% set qe_pct = (qe_capped_abs / qe_cap) * 50 %}
-{% set qe_model_pos = (50 + qe_pct) if qe_edge >= 0 else (50 - qe_pct) %}
-{% set qe_range_lo = qe_market_pct - qe_cap %}
-{% set qe_range_hi = qe_market_pct + qe_cap %}
-{% set qe_left_pos = [qe_model_pos, qe_market_pos] | min %}
-{% set qe_right_pos = [qe_model_pos, qe_market_pos] | max %}
-{# Fill is a solid color keyed to edge magnitude, not a gradient — a small
-   edge (model and market basically agree) reads as yellow/uncertain even
-   though it also gets a colored ✓/✗, so a 0.7-point gap doesn't visually
-   read the same as a 20-point one. An overflow edge gets the same yellow
-   treatment as its marker. #}
-{% if qe_overflow %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge_abs < 2 %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge >= 0 %}{% set qe_fill_color = '#22c55e' %}{% else %}{% set qe_fill_color = '#ef4444' %}{% endif %}
-{% set qe_model_right_of_market = qe_model_pos >= qe_market_pos %}
-{# Market's label centers under its marker by default. But when Model sits
-   close enough that a centered Market label would collide with Model's
-   label, Market instead grows away from Model (and vice versa), same as
-   before — only kicks in for small edges where the two markers are close
-   together on the track. #}
+{# Confidence = distance of the market's favored-side probability from the
+   50/50 midpoint, 0 (a coin flip) to 50 (a lock). Colors interpolate from a
+   muted amber at low confidence to a deep green at high confidence, rather
+   than snapping between a few fixed bands, so a 73% favorite reads visibly
+   more solid than a 55% one. #}
+{% set qe_confidence = (qe_market_pos - 50) | abs %}
+{% set qe_conf_t = ([qe_confidence, 50] | min) / 50 %}
+{% set qe_fill_r = (234 - (234 - 34) * qe_conf_t) | round(0) | int %}
+{% set qe_fill_g = (179 + (197 - 179) * qe_conf_t) | round(0) | int %}
+{% set qe_fill_b = (8 + (94 - 8) * qe_conf_t) | round(0) | int %}
+{% set qe_fill_color = 'rgb(' ~ qe_fill_r ~ ',' ~ qe_fill_g ~ ',' ~ qe_fill_b ~ ')' %}
+{% set qe_fill_left = 50 if qe_market_favors_home else qe_market_pos %}
+{% set qe_fill_width = (qe_market_pos - 50) if qe_market_favors_home else (50 - qe_market_pos) %}
+
+{# Model's line is pinned within 10 points of the market marker (either
+   direction), then clamped to the track itself so it can never overshoot
+   past 0% or 100%. #}
+{% set qe_model_raw_offset = qe_model_home_pct - qe_market_home_pct %}
+{% set qe_model_offset = [[qe_model_raw_offset, -10] | max, 10] | min %}
+{% set qe_model_pos = [[qe_market_pos + qe_model_offset, 0] | max, 100] | min %}
+
+{# Market's label centers under its marker by default, growing away from
+   Model only when the two markers sit close enough on the track that a
+   centered label would collide with Model's. Model's label normally grows
+   away from Market, but flips to grow inward once it's close enough to the
+   track's own edge that "away from Market" would clip against the card. #}
 {% set qe_gap = (qe_model_pos - qe_market_pos) | abs %}
 {% set qe_labels_close = qe_gap < 10 %}
-{# Model's label normally grows away from Market. But once Model is close
-   enough to the track's edge that "away from Market" would push the label
-   past the card's own edge and clip it — not just the exact-overflow case,
-   but anywhere in the last ~15% of the track — grow inward instead, toward
-   the center of the track. #}
+{% set qe_model_right_of_market = qe_model_pos >= qe_market_pos %}
 {% set qe_model_near_edge = qe_model_pos <= 15 or qe_model_pos >= 85 %}
 {% set qe_model_grow_left = (qe_model_pos >= 50) if qe_model_near_edge else (not qe_model_right_of_market) %}
 
 <div class="eb-wrap">
-    <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
+    <div class="eb-scale-labels">
+        <span>{{ qe_away_team }}</span>
+        <span>50%</span>
+        <span>{{ qe_home_team }}</span>
+    </div>
     <div class="eb-track">
-        <div class="eb-fill" style="left:{{ qe_left_pos }}%; width:{{ qe_right_pos - qe_left_pos }}%; background:{{ qe_fill_color }};"></div>
-        <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%;" title="Market {{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%"></div>
-        <div class="eb-marker eb-model {{ 'eb-model-overflow' if qe_overflow else ('eb-model-win' if qe_model_right_of_market else 'eb-model-lose') }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '!' if qe_overflow else ('✓' if qe_model_right_of_market else '✗') }}</div>
+        <div class="eb-fill" style="left:{{ qe_fill_left }}%; width:{{ qe_fill_width }}%; background:{{ qe_fill_color }};"></div>
+        <div class="eb-center-tick"></div>
+        <div class="eb-model-line" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_home_team }} {{ qe_model_home_pct | round(1) }}%"></div>
+        <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="Market {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
     <div class="eb-tags">
         <div class="eb-tag eb-tag-market {{ ('eb-tag-grow-left' if qe_model_right_of_market else 'eb-tag-grow-right') if qe_labels_close else 'eb-tag-center' }}" style="left:{{ qe_market_pos }}%;">
             <span class="eb-tag-label">Market</span>
-            <span class="eb-tag-val">{{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%</span>
+            <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
         </div>
         <div class="eb-tag eb-tag-model {{ 'eb-tag-grow-left' if qe_model_grow_left else 'eb-tag-grow-right' }}" style="left:{{ qe_model_pos }}%;">
             <span class="eb-tag-label">Model</span>
-            <span class="eb-tag-val">{{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%</span>
+            <span class="eb-tag-val">{{ (qe_home_team if qe_model_home_pct >= 50 else qe_away_team) }} {{ ((qe_model_home_pct if qe_model_home_pct >= 50 else (100 - qe_model_home_pct))) | round(1) }}%</span>
         </div>
     </div>
 </div>
 {% if qe_kelly > 0 and qe_edge >= 4 %}
-<div class="quick-edge-banner">★ Recommended bet <span class="qeb-sub">{{ qe_team }} · edge {{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span></div>
+<div class="quick-edge-banner">★ Recommended bet <span class="qeb-sub">{{ qe_market_team }} · edge {{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span></div>
 {% endif %}
 {% else %}
 <div class="eb-wrap">
     <div class="eb-noodds">
         <div class="eb-marker eb-market eb-market-noodds" title="No market line posted"></div>
-        <div class="eb-noodds-text">No market line posted — <b>{{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%</b> model</div>
+        <div class="eb-noodds-text">No market line posted — <b>{{ (qe_home_team if qe_model_home_pct >= 50 else qe_away_team) }} {{ ((qe_model_home_pct if qe_model_home_pct >= 50 else (100 - qe_model_home_pct))) | round(1) }}%</b> model</div>
     </div>
 </div>
 {% endif %}

@@ -1113,7 +1113,12 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .qe-val.edge-pos, .qe-val.edge-neg { padding: 1px 6px; border-radius: 4px; }
 
-/* Edge bobber — model-vs-market scale on the card face */
+/* Edge bobber — away/home confidence scale on the card face.
+   Track runs the full width: away team's win prob at the left edge, home
+   team's at the right edge, 50/50 dead center. The market marker (a green
+   checkmark) sits on whichever side is favored; the fill between it and
+   center is colored by how confident that read is. A thin solid line
+   overlays the model's own read, offset at most 10pts from the market. */
 .eb-wrap {
   margin-top: auto;
   padding: 10px 14px 14px;
@@ -1123,6 +1128,8 @@ body.embed-mode .container { padding-bottom: 0; }
   display: flex;
   justify-content: space-between;
   font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   color: var(--text-muted);
   margin-bottom: 4px;
 }
@@ -1139,6 +1146,26 @@ body.embed-mode .container { padding-bottom: 0; }
   height: 100%;
   border-radius: 3px;
 }
+.eb-center-tick {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,0.18);
+  border-radius: 1px;
+}
+.eb-model-line {
+  position: absolute;
+  top: -5px;
+  width: 3px;
+  height: 16px;
+  transform: translateX(-50%);
+  background: var(--orange);
+  border-radius: 1.5px;
+  z-index: 1;
+}
 .eb-marker {
   position: absolute;
   top: 50%;
@@ -1153,11 +1180,9 @@ body.embed-mode .container { padding-bottom: 0; }
   justify-content: center;
   font-size: 10px;
   line-height: 1;
+  z-index: 2;
 }
-.eb-marker.eb-market { background: var(--silver); color: #1D222C; }
-.eb-marker.eb-model.eb-model-win { background: var(--win); color: #0B0D12; }
-.eb-marker.eb-model.eb-model-lose { background: var(--loss); color: #0B0D12; }
-.eb-marker.eb-model.eb-model-overflow { background: #eab308; color: #0B0D12; }
+.eb-marker.eb-market { color: #0B0D12; font-weight: 800; }
 .eb-tags {
   position: relative;
   height: 26px;
