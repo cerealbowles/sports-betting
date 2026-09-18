@@ -7,10 +7,13 @@
    aren't available (game.odds is None) — previously this showed an
    oversized lone "Model 97%" line with no market context. #}
 {% if game.model and game.status != 'Final' %}
+{# MLB's schedule builder names this field `abbr`; every other sport uses
+   `abbrev` — fall back to whichever is present so the team tag on the
+   bobber isn't silently blank on the MLB page. #}
 {% if game.model.away_prob >= game.model.home_prob %}
-{% set qe_team = game.away.abbrev %}{% set qe_model_prob = game.model.away_prob %}
+{% set qe_team = game.away.abbrev or game.away.abbr %}{% set qe_model_prob = game.model.away_prob %}
 {% else %}
-{% set qe_team = game.home.abbrev %}{% set qe_model_prob = game.model.home_prob %}
+{% set qe_team = game.home.abbrev or game.home.abbr %}{% set qe_model_prob = game.model.home_prob %}
 {% endif %}
 
 {% if game.odds %}
