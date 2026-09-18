@@ -18,7 +18,10 @@
 {% set qe_home_team = game.home.abbrev or game.home.abbr %}
 {% set qe_model_home_pct = game.model.home_prob * 100 %}
 
-{% if game.odds %}
+{# home_implied/away_implied can be None on partial odds data (e.g. a book
+   posting a spread without a clean vig-free moneyline calc) — treat that
+   the same as no odds at all rather than crashing on None * 100. #}
+{% if game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
 {% set qe_market_home_pct = game.odds.home_implied * 100 %}
 {% set qe_market_pos = qe_market_home_pct %}
 {% set qe_market_favors_home = qe_market_home_pct >= 50 %}
