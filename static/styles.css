@@ -1141,6 +1141,7 @@ body.embed-mode .container { padding-bottom: 0; }
 .eb-marker.eb-market { background: var(--silver); color: #1D222C; }
 .eb-marker.eb-model.eb-model-win { background: var(--win); color: #0B0D12; }
 .eb-marker.eb-model.eb-model-lose { background: var(--loss); color: #0B0D12; }
+.eb-marker.eb-model.eb-model-overflow { background: #eab308; color: #0B0D12; }
 .eb-tags {
   position: relative;
   height: 26px;
@@ -1162,6 +1163,7 @@ body.embed-mode .container { padding-bottom: 0; }
    close together (a small edge), without needing a minimum marker gap. */
 .eb-tag.eb-tag-grow-left  { transform: translateX(-100%); align-items: flex-end; }
 .eb-tag.eb-tag-grow-right { transform: translateX(0); align-items: flex-start; }
+.eb-tag.eb-tag-center { transform: translateX(-50%); align-items: center; }
 .eb-tag .eb-tag-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .eb-tag.eb-tag-market .eb-tag-val { color: var(--silver); }
 .eb-tag.eb-tag-model .eb-tag-val { color: var(--orange); }

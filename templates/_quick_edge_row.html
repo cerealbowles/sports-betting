@@ -29,38 +29,47 @@
 
 {% set qe_model_pct = qe_model_prob * 100 %}
 {% set qe_market_pct = qe_market_prob * 100 %}
-{# Market is pinned to the center of the track; Model is offset left/right
-   of it by a zoomed distance based on the edge magnitude (a few points of
-   real edge reads as a clearly visible gap), clamped so it never runs off
-   the track edge. #}
+{# Market always sits dead center on the track. Model is offset left/right
+   of center on a fixed linear scale: 0pts of edge = center, 10pts of edge
+   (or more) = the track's edge. Anything beyond 10pts still sits pinned at
+   the edge but is flagged as an overflow (yellow "!") rather than a normal
+   win/lose marker, since a shift that large is worth calling out rather
+   than just maxing out the scale silently. #}
 {% set qe_market_pos = 50 %}
-{% set qe_pct = ([(qe_edge | abs) * 4, 6] | max) %}
-{% set qe_pct = [qe_pct, 35] | min %}
+{% set qe_edge_abs = qe_edge | abs %}
+{% set qe_cap = 10 %}
+{% set qe_overflow = qe_edge_abs > qe_cap %}
+{% set qe_capped_abs = [qe_edge_abs, qe_cap] | min %}
+{% set qe_pct = (qe_capped_abs / qe_cap) * 50 %}
 {% set qe_model_pos = (50 + qe_pct) if qe_edge >= 0 else (50 - qe_pct) %}
-{% set qe_range_lo = [qe_market_pct - (qe_pct + 5), 0] | max %}
-{% set qe_range_hi = [qe_market_pct + (qe_pct + 5), 100] | min %}
+{% set qe_range_lo = qe_market_pct - qe_cap %}
+{% set qe_range_hi = qe_market_pct + qe_cap %}
 {% set qe_left_pos = [qe_model_pos, qe_market_pos] | min %}
 {% set qe_right_pos = [qe_model_pos, qe_market_pos] | max %}
 {# Fill is a solid color keyed to edge magnitude, not a gradient — a small
    edge (model and market basically agree) reads as yellow/uncertain even
    though it also gets a colored ✓/✗, so a 0.7-point gap doesn't visually
-   read the same as a 20-point one. #}
-{% set qe_edge_abs = qe_edge | abs %}
-{% if qe_edge_abs < 2 %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge >= 0 %}{% set qe_fill_color = '#22c55e' %}{% else %}{% set qe_fill_color = '#ef4444' %}{% endif %}
-{# Market's label always grows away from Model's marker and vice versa, so
-   the two labels only ever move apart — never collide, no matter how close
-   together (or far apart) the markers themselves sit. #}
+   read the same as a 20-point one. An overflow edge gets the same yellow
+   treatment as its marker. #}
+{% if qe_overflow %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge_abs < 2 %}{% set qe_fill_color = '#eab308' %}{% elif qe_edge >= 0 %}{% set qe_fill_color = '#22c55e' %}{% else %}{% set qe_fill_color = '#ef4444' %}{% endif %}
 {% set qe_model_right_of_market = qe_model_pos >= qe_market_pos %}
+{# Market's label centers under its marker by default. But when Model sits
+   close enough that a centered Market label would collide with Model's
+   label, Market instead grows away from Model (and vice versa), same as
+   before — only kicks in for small edges where the two markers are close
+   together on the track. #}
+{% set qe_gap = (qe_model_pos - qe_market_pos) | abs %}
+{% set qe_labels_close = qe_gap < 10 %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels"><span>{{ qe_range_lo | round(0) | int }}%</span><span>{{ qe_range_hi | round(0) | int }}%</span></div>
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_left_pos }}%; width:{{ qe_right_pos - qe_left_pos }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%;" title="Market {{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%"></div>
-        <div class="eb-marker eb-model {{ 'eb-model-win' if qe_model_right_of_market else 'eb-model-lose' }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '✓' if qe_model_right_of_market else '✗' }}</div>
+        <div class="eb-marker eb-model {{ 'eb-model-overflow' if qe_overflow else ('eb-model-win' if qe_model_right_of_market else 'eb-model-lose') }}" style="left:{{ qe_model_pos }}%;" title="Model {{ qe_team }} {{ (qe_model_prob * 100) | round(1) }}%">{{ '!' if qe_overflow else ('✓' if qe_model_right_of_market else '✗') }}</div>
     </div>
     <div class="eb-tags">
-        <div class="eb-tag eb-tag-market {{ 'eb-tag-grow-left' if qe_model_right_of_market else 'eb-tag-grow-right' }}" style="left:{{ qe_market_pos }}%;">
+        <div class="eb-tag eb-tag-market {{ ('eb-tag-grow-left' if qe_model_right_of_market else 'eb-tag-grow-right') if qe_labels_close else 'eb-tag-center' }}" style="left:{{ qe_market_pos }}%;">
             <span class="eb-tag-label">Market</span>
             <span class="eb-tag-val">{{ qe_team }} {{ (qe_market_prob * 100) | round(1) }}%</span>
         </div>
