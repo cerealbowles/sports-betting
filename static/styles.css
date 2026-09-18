@@ -1643,10 +1643,13 @@ body.embed-mode .container { padding-bottom: 0; }
 .games-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: 18px;
     align-items: stretch;
 }
-.games-grid .game-card { margin-bottom: 0; display: flex; flex-direction: column; }
+/* Card bg (--bg-card) and page bg (--bg) are close in value, so the grid
+   gap alone barely reads as separation — a visible border makes each card
+   read as distinct even when the gap is subtle. */
+.games-grid .game-card { margin-bottom: 0; display: flex; flex-direction: column; border-color: rgba(255,255,255,0.16); }
 .games-grid .game-card-summary { display: flex; flex-direction: column; flex: 1; }
 .games-grid .scoreboard { grid-template-columns: 1fr 110px 1fr; }
 
