@@ -827,8 +827,10 @@ def build_schedule_context():
 
             game_date = game_time_utc[:13] if game_time_utc else None
             game_odds = odds_api.lookup_game_odds(odds_map, home['name'], away['name'], game_date=game_date)
+            market_home_prob = game_odds.get('home_implied') if game_odds else None
             try:
-                model = mlb_model.predict(home, away, matchups, game_time_utc=game_time_utc)
+                model = mlb_model.predict(home, away, matchups, game_time_utc=game_time_utc,
+                                           market_home_prob=market_home_prob)
             except Exception:
                 model = None
 

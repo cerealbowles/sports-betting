@@ -17,9 +17,14 @@ import atexit
 import mlb_api
 import mlb_model
 import nhl_api
+import nhl_model
 import nfl_api
+import nfl_model
 import cfb_api
+import cfb_model
 import nba_api
+import nba_model
+import market_edge_calibration
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo('America/New_York')
@@ -447,6 +452,86 @@ def _recompute_team_bias(sport='MLB'):
     total   = len(resolved)
     print(f'[team-bias] recomputed from {total} {sport} games: '
           f'{n_teams} teams with |bias|≥0.005 (n≥{MIN_N} per team)', flush=True)
+
+
+_MARKET_EDGE_MODEL_MODULE = {
+    'MLB': mlb_model, 'NFL': nfl_model, 'NBA': nba_model,
+    'NHL': nhl_model, 'CFB': cfb_model,
+}
+
+
+def _recompute_market_edge_shrink(sport='MLB'):
+    """Auto-recalibrate the model-vs-market disagreement shrink rate from
+    resolved games for `sport`.
+
+    Each *_model.py pulls a model's probability back toward the market once
+    they disagree by more than a fixed 10pp threshold (see the "Shrink large
+    model-vs-market disagreements" block in predict()). The 10pp threshold
+    itself stays fixed and hand-chosen; only the *rate* — how much of the
+    excess beyond 10pp to pull back — is refit here from data, replacing the
+    25% prior that MLB's initial one-off 50-game study produced.
+
+    For each resolved game with odds, compute the model's edge over the
+    vig-free market on its own pick side, keep only games where |edge| > 10pp,
+    then solve for the rate that would have made the bucket's average
+    predicted probability match its actual win rate. That raw rate is blended
+    with the 25% prior via a credibility weight (alpha = min(n/80, 1.0)) so a
+    handful of games can't swing the correction — same style as
+    _recompute_team_bias's alpha = min(n/150, 1.0) above. Sports with fewer
+    than MIN_N large-edge games keep whatever they had (prior on first run,
+    else their last recomputed snapshot) rather than overfitting to noise.
+    """
+    mod = _MARKET_EDGE_MODEL_MODULE.get(sport)
+    if mod is None:
+        return
+
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.home_won.isnot(None),
+            GamePrediction.home_prob.isnot(None),
+            GamePrediction.home_odds.isnot(None),
+            GamePrediction.away_odds.isnot(None),
+        ).all()
+
+    _CAP = 0.10  # matches the fixed threshold hardcoded in each *_model.py
+    records = []  # (pick_prob, market_pick_prob, model_won)
+    for p in resolved:
+        vf_h, vf_a = _vig_free_implied(p.home_odds, p.away_odds)
+        if vf_h is None:
+            continue
+        fav_home    = (p.home_prob or 0.5) >= 0.5
+        pick_prob   = p.home_prob if fav_home else 1.0 - p.home_prob
+        market_prob = vf_h if fav_home else vf_a
+        model_won   = fav_home == bool(p.home_won)
+        records.append((pick_prob, market_prob, model_won))
+
+    bucket = [(pp, mp, w) for pp, mp, w in records if abs(pp - mp) > _CAP]
+    n = len(bucket)
+
+    MIN_N = 20
+    if n < MIN_N:
+        print(f'[market-edge] {sport}: only {n} large-edge games (<{MIN_N}), '
+              f'keeping rate={mod._MKT_EDGE_RATE:.2f}', flush=True)
+        return
+
+    avg_model  = sum(pp for pp, _, _ in bucket) / n
+    actual_wr  = sum(1 for _, _, w in bucket if w) / n
+    avg_excess = sum(abs(pp - mp) - _CAP for pp, mp, _ in bucket) / n
+    if avg_excess <= 0:
+        return
+
+    raw_rate = max(0.0, min(1.0, (avg_model - actual_wr) / avg_excess))
+    alpha    = min(n / 80.0, 1.0)
+    new_rate = round(market_edge_calibration.PRIOR_RATE * (1 - alpha) + raw_rate * alpha, 4)
+
+    mod._MKT_EDGE_RATE = new_rate
+    market_edge_calibration.save_snapshot(sport, new_rate, n)
+
+    print(f'[market-edge] {sport} recomputed from {n} large-edge games: '
+          f'model_avg={avg_model:.1%} actual_wr={actual_wr:.1%} '
+          f'raw_rate={raw_rate:.2f} -> applied_rate={new_rate:.2f} (alpha={alpha:.2f})',
+          flush=True)
 
 
 def _recompute_trust_weights(sport='MLB'):
@@ -4783,6 +4868,7 @@ def _recompute_all_calibration(sport):
     function no-ops below its own minimum sample size)."""
     _recompute_trust_weights(sport)
     _recompute_team_bias(sport)
+    _recompute_market_edge_shrink(sport)
     _recompute_unified_weights(sport)
     _recompute_pick_of_day_weights(sport)
     _recompute_unified_rank_stats(sport)

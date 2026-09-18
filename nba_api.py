@@ -324,14 +324,16 @@ def _build_game(event, team_stats, game_log, nba_odds_map):
         team['form']        = _team_recent_form(game_log, name)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
 
-    # Run the model
-    try:
-        model = nba_model.predict(home, away, game_time_utc=event.get('date', ''))
-    except Exception:
-        model = None
-
     game_odds = odds_api.lookup_game_odds(nba_odds_map, home.get('name', ''), away.get('name', ''),
                                            game_date=event.get('date', '')[:13] or None)
+
+    # Run the model
+    try:
+        market_home_prob = game_odds.get('home_implied') if game_odds else None
+        model = nba_model.predict(home, away, game_time_utc=event.get('date', ''),
+                                   market_home_prob=market_home_prob)
+    except Exception:
+        model = None
 
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')

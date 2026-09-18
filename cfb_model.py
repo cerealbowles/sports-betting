@@ -19,7 +19,15 @@ keep hand-tuned, validate on the Model Performance page.
 """
 import math
 
+import market_edge_calibration as _mkt_calib
+
 LEAGUE_PPG = 28.5   # FBS scoring average runs meaningfully higher than the NFL's ~23
+
+# Model-vs-market shrink rate — data-driven, see market_edge_calibration.py.
+# app.py's _recompute_market_edge_shrink('CFB') overwrites this in place as
+# more resolved games accumulate; this is just the value at import time
+# (last snapshot, or the hardcoded 25% prior on first run).
+_MKT_EDGE_RATE = _mkt_calib.load_rate('CFB')
 
 _UNRANKED = 99   # ESPN's curatedRank.current sentinel for an unranked team
 
@@ -53,8 +61,12 @@ def _rank_score(rank):
     return (26 - r) / 25.0
 
 
-def predict(home, away, game_time_utc=None):
+def predict(home, away, game_time_utc=None, market_home_prob=None):
     """
+    Args:
+        market_home_prob – vig-free market-implied home win prob (0-1), if known.
+                            Used only for the large-disagreement shrink below;
+                            the model runs identically without it.
     Returns:
         home_prob  – estimated home win probability (float 0-1)
         away_prob  – 1 - home_prob
@@ -121,6 +133,22 @@ def predict(home, away, game_time_utc=None):
             _add('Short week (away)', 0.14)
 
     home_prob = _sigmoid(logit)
+
+    # Shrink large model-vs-market disagreements — same guardrail added to
+    # mlb_model.py, where 50 resolved games found 10+ point edges over the
+    # vig-free market won only 25% of the time vs. ~58% under that threshold.
+    # The 10pt threshold is fixed; the pull-back rate (_MKT_EDGE_RATE) is
+    # data-driven — app.py's _recompute_market_edge_shrink('CFB') refits it
+    # from resolved game_predictions as CFB accumulates its own large-edge
+    # games, starting from the MLB-derived 25% prior until then.
+    if market_home_prob is not None:
+        _MKT_EDGE_CAP = 0.10
+        edge = home_prob - market_home_prob
+        excess = abs(edge) - _MKT_EDGE_CAP
+        if excess > 0:
+            pull = excess * _MKT_EDGE_RATE
+            home_prob -= pull if edge > 0 else -pull
+
     return {
         'home_prob': round(home_prob, 4),
         'away_prob': round(1.0 - home_prob, 4),

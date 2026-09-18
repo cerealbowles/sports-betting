@@ -513,14 +513,16 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         if prior_stats:
             _apply_prior_season_blend(team, prior_stats)
 
-    # Run the model
-    try:
-        model = nfl_model.predict(home, away, game_time_utc=event.get('date', ''))
-    except Exception:
-        model = None
-
     game_odds = odds_api.lookup_game_odds(nfl_odds_map, home.get('name', ''), away.get('name', ''),
                                            game_date=event.get('date', '')[:13] or None)
+
+    # Run the model
+    try:
+        market_home_prob = game_odds.get('home_implied') if game_odds else None
+        model = nfl_model.predict(home, away, game_time_utc=event.get('date', ''),
+                                   market_home_prob=market_home_prob)
+    except Exception:
+        model = None
 
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
