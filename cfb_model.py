@@ -89,29 +89,45 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     _add('Ranking', (h_rank - a_rank) * 1.4)
 
     # ── 3. Overall win-percentage differential ────────────────────────────────
-    h_wp = _pct(home.get('wins', 0), home.get('losses', 0))
-    a_wp = _pct(away.get('wins', 0), away.get('losses', 0))
+    # 'blend_win_pct' (set by cfb_api._apply_prior_season_blend) mixes in last
+    # season's final record for teams with <EARLY_SEASON_GAMES games played
+    # this season — otherwise every team defaults to an identical 0-0 (50%)
+    # record in week 1, and this factor (and #4-6 below) contribute exactly
+    # 0 for every early-season game. Same reasoning as nfl_model.py.
+    h_wp = home.get('blend_win_pct')
+    if h_wp is None:
+        h_wp = _pct(home.get('wins', 0), home.get('losses', 0))
+    a_wp = away.get('blend_win_pct')
+    if a_wp is None:
+        a_wp = _pct(away.get('wins', 0), away.get('losses', 0))
     _add('Win percentage', (h_wp - a_wp) * 1.6)
 
     # ── 4. Home / road split record ───────────────────────────────────────────
-    h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
-    a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
+    h_split = home.get('blend_split_pct')
+    if h_split is None:
+        h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
+    a_split = away.get('blend_split_pct')
+    if a_split is None:
+        a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
     _add('Home/road record', (h_split - a_split) * 0.8)
 
     # ── 5. Offensive efficiency — points scored per game ─────────────────────
-    h_ppg = _safe_float(home.get('ppg'), LEAGUE_PPG)
-    a_ppg = _safe_float(away.get('ppg'), LEAGUE_PPG)
+    h_ppg = _safe_float(home.get('blend_ppg', home.get('ppg')), LEAGUE_PPG)
+    a_ppg = _safe_float(away.get('blend_ppg', away.get('ppg')), LEAGUE_PPG)
     _add('Points per game', (h_ppg - a_ppg) * 0.045)
 
     # ── 6. Defensive efficiency — points allowed per game ────────────────────
-    h_ppga = _safe_float(home.get('ppg_allowed'), LEAGUE_PPG)
-    a_ppga = _safe_float(away.get('ppg_allowed'), LEAGUE_PPG)
+    h_ppga = _safe_float(home.get('blend_ppg_allowed', home.get('ppg_allowed')), LEAGUE_PPG)
+    a_ppga = _safe_float(away.get('blend_ppg_allowed', away.get('ppg_allowed')), LEAGUE_PPG)
     _add('Points allowed/G', (a_ppga - h_ppga) * 0.045)
 
     # ── 7. Recent form — last 3 games ─────────────────────────────────────────
     h_form = home.get('form', [])
     a_form = away.get('form', [])
-    if h_form and a_form:
+    # Needs a full 3-game sample for BOTH teams — a 1-0 or 2-0 start is 100%
+    # form off a coin-flip-sized sample and swings this factor to its max
+    # contribution off noise. Skip rather than let single early games spike it.
+    if len(h_form) >= 3 and len(a_form) >= 3:
         h_f = h_form.count('W') / len(h_form)
         a_f = a_form.count('W') / len(a_form)
         _add('Recent form (L3)', (h_f - a_f) * 0.45)

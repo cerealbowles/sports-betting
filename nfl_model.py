@@ -100,7 +100,10 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     # ── 6. Recent form — last 3 games ─────────────────────────────────────────
     h_form = home.get('form', [])
     a_form = away.get('form', [])
-    if h_form and a_form:
+    # Needs a full 3-game sample for BOTH teams — a 1-0 or 2-0 start is 100%
+    # form off a coin-flip-sized sample and swings this factor to its max
+    # contribution off noise. Skip rather than let single early games spike it.
+    if len(h_form) >= 3 and len(a_form) >= 3:
         h_f = h_form.count('W') / len(h_form)
         a_f = a_form.count('W') / len(a_form)
         _add('Recent form (L3)', (h_f - a_f) * 0.45)

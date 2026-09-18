@@ -1156,16 +1156,6 @@ body.embed-mode .container { padding-bottom: 0; }
   background: rgba(255,255,255,0.18);
   border-radius: 1px;
 }
-.eb-model-line {
-  position: absolute;
-  top: -5px;
-  width: 3px;
-  height: 16px;
-  transform: translateX(-50%);
-  background: var(--orange);
-  border-radius: 1.5px;
-  z-index: 1;
-}
 .eb-marker {
   position: absolute;
   top: 50%;
@@ -1199,15 +1189,9 @@ body.embed-mode .container { padding-bottom: 0; }
   align-items: center;
   gap: 1px;
 }
-/* Grows away from the other tag's marker instead of always centering under
-   its own — keeps Market/Model from overlapping when their markers sit
-   close together (a small edge), without needing a minimum marker gap. */
-.eb-tag.eb-tag-grow-left  { transform: translateX(-100%); align-items: flex-end; }
-.eb-tag.eb-tag-grow-right { transform: translateX(0); align-items: flex-start; }
 .eb-tag.eb-tag-center { transform: translateX(-50%); align-items: center; }
 .eb-tag .eb-tag-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .eb-tag.eb-tag-market .eb-tag-val { color: var(--silver); }
-.eb-tag.eb-tag-model .eb-tag-val { color: var(--orange); }
 .eb-noodds {
   display: flex;
   align-items: center;
