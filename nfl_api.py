@@ -39,25 +39,35 @@ _cache = {}
 _TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600, 'prior_season_stats': 24 * 3600}
 
 
-def _parse_linescores(comp):
+def _parse_linescores(comp, regulation_periods=4):
     """Quarter-by-quarter scoring from ESPN's per-competitor `linescores`
-    array — only present once a game has started. Returns a list of
-    {'label', 'away', 'home'} periods (Q1-Q4, then OT/OT2/... for however
-    many overtimes were played), or None pre-kickoff."""
+    array — only present once a game has started. Always includes all
+    `regulation_periods` columns, padding not-yet-played quarters with None
+    so the table doesn't jump around as the game progresses, plus an
+    OT/OT2/... column for each overtime actually played. Values come back
+    as floats from ESPN (e.g. 10.0) even though scores are always whole
+    numbers — cast to int for display. Returns None pre-kickoff."""
     competitors = comp.get('competitors', [])
     home_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'home'), None) or []
     away_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'away'), None) or []
-    n = max(len(home_ls), len(away_ls))
-    if n == 0:
+    if not home_ls and not away_ls:
         return None
+    n = max(len(home_ls), len(away_ls), regulation_periods)
+
+    def _val(arr, i):
+        if i >= len(arr):
+            return None
+        v = arr[i].get('value')
+        return int(v) if v is not None else None
+
     periods = []
     for i in range(n):
-        label = str(i + 1) if i < 4 else ('OT' if n == 5 else f'OT{i - 3}')
-        periods.append({
-            'label': label,
-            'away':  away_ls[i].get('value') if i < len(away_ls) else None,
-            'home':  home_ls[i].get('value') if i < len(home_ls) else None,
-        })
+        if i < regulation_periods:
+            label = str(i + 1)
+        else:
+            ot_num = i - regulation_periods + 1
+            label = 'OT' if ot_num == 1 else f'OT{ot_num}'
+        periods.append({'label': label, 'away': _val(away_ls, i), 'home': _val(home_ls, i)})
     return periods
 
 # Below this many current-season games played, a team's win%/split/ppg

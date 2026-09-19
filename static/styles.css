@@ -1203,6 +1203,50 @@ body.embed-mode .container { padding-bottom: 0; }
 .eb-noodds-text { font-size: 0.68rem; color: var(--text-muted); }
 .eb-noodds-text b { color: var(--text); }
 
+/* ── Period/quarter/inning linescore table (details sheet) ── */
+.linescore-wrap {
+  margin-bottom: 10px;
+  overflow-x: auto;
+}
+.linescore {
+  border-collapse: collapse;
+  font-size: 0.74rem;
+  width: 100%;
+}
+.linescore th,
+.linescore td {
+  padding: 3px 8px;
+  text-align: center;
+  min-width: 22px;
+}
+.linescore thead th {
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--border);
+}
+.linescore .ls-team {
+  text-align: left;
+  color: var(--text);
+  font-weight: 700;
+  padding-left: 0;
+  white-space: nowrap;
+}
+.linescore td.ls-team { color: var(--text-muted); font-weight: 600; }
+.linescore .ls-total {
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 700;
+}
+.linescore td.ls-active {
+  color: var(--text);
+  font-weight: 700;
+  background: rgba(34,197,94,0.10);
+  border-radius: 4px;
+}
+
 .quick-edge-banner {
   margin: 8px 14px 14px;
   padding: 6px 10px;
