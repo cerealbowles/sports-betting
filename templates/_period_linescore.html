@@ -17,14 +17,14 @@
             <tr>
                 <td class="ls-team">{{ game.away.abbrev or game.away.abbr }}</td>
                 {% for p in game.linescore %}
-                <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ p.away if p.away is not none else '–' }}</td>
+                <td{% if game.status == 'Live' and loop.index == (game.live_state.period if game.live_state and game.live_state.period else game.linescore | length) %} class="ls-active"{% endif %}>{{ p.away if p.away is not none else '–' }}</td>
                 {% endfor %}
                 <td class="ls-total">{{ game.away.score if game.away.score is not none else '–' }}</td>
             </tr>
             <tr>
                 <td class="ls-team">{{ game.home.abbrev or game.home.abbr }}</td>
                 {% for p in game.linescore %}
-                <td{% if game.status == 'Live' and loop.last %} class="ls-active"{% endif %}>{{ p.home if p.home is not none else '–' }}</td>
+                <td{% if game.status == 'Live' and loop.index == (game.live_state.period if game.live_state and game.live_state.period else game.linescore | length) %} class="ls-active"{% endif %}>{{ p.home if p.home is not none else '–' }}</td>
                 {% endfor %}
                 <td class="ls-total">{{ game.home.score if game.home.score is not none else '–' }}</td>
             </tr>

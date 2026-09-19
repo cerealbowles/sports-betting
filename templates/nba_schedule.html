@@ -121,9 +121,15 @@
         <div class="small" style="margin-bottom:10px; color:var(--text-muted);">{{ game.venue }}</div>
         {% endif %}
 
+        {% if game.status == 'Live' and game.live_state and game.live_state.clock_text %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            {{ game.live_state.clock_text }}
+        </div>
+        {% else %}
         <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
             Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
+        {% endif %}
 
         {% include "_period_linescore.html" %}
 
