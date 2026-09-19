@@ -5,9 +5,10 @@
    checkmark sits at the market's implied probability on whichever side is
    favored, and the fill color/intensity reflects how confident the market
    is in that side (near 50 = muted, near 100 = deep green). Market-only —
-   no model marker/label clutter; the model's read still feeds the
-   "Recommended bet" banner below via edge/Kelly. Degrades to a blank
-   market chip when sportsbook odds aren't available (game.odds is None). #}
+   no model marker/label clutter; the model's read instead feeds the ★
+   recommended-bet star in the header bar (see _edge_star.html). Degrades
+   to a blank market chip when sportsbook odds aren't available
+   (game.odds is None). #}
 {% if game.model and game.status != 'Final' %}
 {# MLB's schedule builder names this field `abbr`; every other sport uses
    `abbrev` — fall back to whichever is present so the team tag on the
@@ -28,6 +29,7 @@
 {% set qe_market_team_pct = qe_market_home_pct if qe_market_favors_home else (100 - qe_market_home_pct) %}
 {% set qe_amer = (game.odds.home_best if qe_market_favors_home else game.odds.away_best) | float %}
 {% if qe_amer > 0 %}{% set qe_b = qe_amer / 100.0 %}{% elif qe_amer < 0 %}{% set qe_b = -100.0 / qe_amer %}{% else %}{% set qe_b = 0.0 %}{% endif %}
+{% set qe_amer_display = ('+' ~ qe_amer | round(0) | int) if qe_amer > 0 else (qe_amer | round(0) | int) %}
 {% set qe_model_fav_prob = game.model.home_prob if qe_market_favors_home else game.model.away_prob %}
 {% set qe_kelly = (qe_b * qe_model_fav_prob - (1 - qe_model_fav_prob)) / qe_b if qe_b > 0 else -1 %}
 {% set qe_edge = ((qe_model_fav_prob * 100) - qe_market_team_pct) | round(1) %}
@@ -73,18 +75,17 @@
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_fill_left }}%; width:{{ qe_fill_width }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-center-tick"></div>
-        <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
+        <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }}{{ ' ' ~ qe_amer_display if qe_has_market }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
     <div class="eb-tags">
         <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_tag_pos }}%;">
             <span class="eb-tag-label">{{ 'Market' if qe_has_market else 'Model' }}</span>
+            {% if qe_has_market %}
+            <span class="eb-tag-val">{{ qe_market_team }} {{ qe_amer_display }} <span class="eb-tag-pct">({{ qe_market_team_pct | round(1) }}%)</span></span>
+            {% else %}
             <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
+            {% endif %}
         </div>
     </div>
 </div>
-{% if not qe_has_market %}
-<div class="eb-noodds-note">No market line posted — showing model only</div>
-{% elif qe_kelly > 0 and qe_edge >= 4 %}
-<div class="quick-edge-banner">★ Recommended bet <span class="qeb-sub">{{ qe_market_team }} · edge {{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span></div>
-{% endif %}
 {% endif %}

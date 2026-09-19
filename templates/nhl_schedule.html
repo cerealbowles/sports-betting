@@ -39,6 +39,7 @@
 {% endblock %}
 
 {% block content %}
+{% from "_edge_star.html" import edge_star %}
 <div class="schedule-body">
 
 
@@ -87,6 +88,7 @@
                 <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
             <div class="game-header-right">
+                {{ edge_star(game) }}
                 {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
             </div>
         </div>
