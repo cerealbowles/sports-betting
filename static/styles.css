@@ -1784,13 +1784,18 @@ body.embed-mode .container { padding-bottom: 0; }
     .sb-team.sb-home { grid-area: home; align-items: flex-end; }
     .sb-center {
         grid-area: center;
-        flex-direction: row;
+        flex-direction: column;
         justify-content: center;
-        gap: 12px;
+        gap: 4px;
         padding: 6px 0 2px;
         border-top: 1px solid var(--border);
     }
     .sb-score { font-size: 1.5rem; }
+    .live-situation { width: 100%; }
+    .live-down-distance {
+        display: flex; width: 100%; justify-content: center;
+        white-space: normal; font-size: 0.7rem;
+    }
     .bet-pair.desktop-bet { display: none; }
     .sb-bet-mobile { display: inline-block; }
     .team-logo { width: 34px; height: 34px; }
