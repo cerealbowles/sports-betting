@@ -3595,14 +3595,10 @@ def model_performance():
 
   _fire_days = len(set(g['date'] for g in _fire_games))
 
-  # ── Enriched recent predictions (resolved only, excluding today) ────────────
-  from datetime import timezone as _tz
-  _today_et = datetime.now(timezone(timedelta(hours=-4))).strftime('%Y-%m-%d')  # ET (DST)
+  # ── Enriched recent predictions (resolved only) ────────────
   _team_pfx = re.compile(r'^(?:Hm|Aw) ')
   enriched_preds = []
   for p in resolved[:40]:
-    if p.game_date == _today_et:
-      continue
     ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json)
     fav_home = (p.home_prob or 0.5) >= 0.5
     actual_home_won = bool(p.home_won)
@@ -4791,7 +4787,14 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
         except Exception:
             pass
 
-    # MLB has its own nightly resolver/calibration path (_resolve_pending_outcomes);
+    # Resolve MLB outcomes on every warm cycle (not just the 5am cron) so a
+    # game that finalizes mid-day shows up in Recent Predictions right away
+    # instead of sitting pending until the nightly resolver run.
+    try:
+        _resolve_pending_outcomes()
+    except Exception:
+        pass
+
     # NFL/CFB/NHL/NBA resolve outcomes inline above via _upsert_predictions, so
     # recalibrate them here instead.
     for name in ('NFL', 'CFB', 'NHL', 'NBA'):
