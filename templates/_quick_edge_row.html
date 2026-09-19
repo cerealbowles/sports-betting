@@ -62,7 +62,7 @@
    the extremes (e.g. a 98.8% favorite) its text runs past the card edge.
    The marker dot stays at the true market_pos on the track; only the tag's
    horizontal anchor is clamped so its label always stays inside the card. #}
-{% set qe_tag_pos = [[qe_market_pos, 12] | max, 88] | min %}
+{% set qe_tag_pos = [[qe_market_pos, 12] | max, 92] | min %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels">
@@ -73,7 +73,7 @@
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_fill_left }}%; width:{{ qe_fill_width }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-center-tick"></div>
-        <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">{{ '✓' if qe_has_market else 'M' }}</div>
+        <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
     <div class="eb-tags">
         <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_tag_pos }}%;">
