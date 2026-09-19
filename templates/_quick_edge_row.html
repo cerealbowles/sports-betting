@@ -44,6 +44,11 @@
 {% set qe_fill_color = 'rgb(' ~ qe_fill_r ~ ',' ~ qe_fill_g ~ ',' ~ qe_fill_b ~ ')' %}
 {% set qe_fill_left = 50 if qe_market_favors_home else qe_market_pos %}
 {% set qe_fill_width = (qe_market_pos - 50) if qe_market_favors_home else (50 - qe_market_pos) %}
+{# The "Market" tag is centered on its position via translateX(-50%), so at
+   the extremes (e.g. a 98.8% favorite) its text runs past the card edge.
+   The marker dot stays at the true market_pos on the track; only the tag's
+   horizontal anchor is clamped so its label always stays inside the card. #}
+{% set qe_tag_pos = [[qe_market_pos, 12] | max, 88] | min %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels">
@@ -57,7 +62,7 @@
         <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="Market {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
     <div class="eb-tags">
-        <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_market_pos }}%;">
+        <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_tag_pos }}%;">
             <span class="eb-tag-label">Market</span>
             <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
         </div>

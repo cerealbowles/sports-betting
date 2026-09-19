@@ -38,6 +38,28 @@ _cache = {}
 # is plenty and keeps this to one extra request per game per refresh cycle.
 _TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600, 'prior_season_stats': 24 * 3600}
 
+
+def _parse_linescores(comp):
+    """Quarter-by-quarter scoring from ESPN's per-competitor `linescores`
+    array — only present once a game has started. Returns a list of
+    {'label', 'away', 'home'} periods (Q1-Q4, then OT/OT2/... for however
+    many overtimes were played), or None pre-kickoff."""
+    competitors = comp.get('competitors', [])
+    home_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'home'), None) or []
+    away_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'away'), None) or []
+    n = max(len(home_ls), len(away_ls))
+    if n == 0:
+        return None
+    periods = []
+    for i in range(n):
+        label = str(i + 1) if i < 4 else ('OT' if n == 5 else f'OT{i - 3}')
+        periods.append({
+            'label': label,
+            'away':  away_ls[i].get('value') if i < len(away_ls) else None,
+            'home':  home_ls[i].get('value') if i < len(home_ls) else None,
+        })
+    return periods
+
 # Below this many current-season games played, a team's win%/split/ppg
 # factors are blended with its final prior-season numbers (backtested on
 # 2023->2024 and 2024->2025 week 1-4: prior-season data picked the correct
@@ -396,6 +418,76 @@ def get_live_scores(date_str=None):
     return scores
 
 
+def get_live_game_states(date_str=None):
+    """
+    Returns {game_key: state_dict} for NFL games on `date_str` (defaults to
+    today, ET) — status, score, and quarter/clock/down-distance live_state,
+    matching the shape templates/_nfl_game_card.html renders server-side.
+    Reuses get_live_scores()'s 2-min cache (same underlying ESPN call) so
+    polling the /nfl schedule page adds no extra API traffic beyond what the
+    open-bets widget already costs.
+    """
+    from odds_api import _normalize
+    target_str = date_str or _today_et()
+    params = {'dates': target_str.replace('-', '')} if date_str else {}
+    data = _cached_get(ESPN_NFL, params, f'nfl_scores_{target_str}', 120)
+    states = {}
+    if not data:
+        return states
+    for event in data.get('events', []):
+        if _event_date_et(event.get('date', '')) != target_str:
+            continue
+        comp       = event.get('competitions', [{}])[0]
+        status_obj = comp.get('status', {}).get('type', {})
+        state      = status_obj.get('state', 'pre')
+        if state == 'in':
+            status = 'Live'
+        elif state == 'post':
+            status = 'Final'
+        else:
+            status = 'Preview'
+        teams = {}
+        for competitor in comp.get('competitors', []):
+            side = competitor.get('homeAway', 'home')
+            team = competitor.get('team', {})
+            teams[side] = {
+                'id':    team.get('id'),
+                'name':  team.get('displayName', ''),
+                'score': competitor.get('score'),
+            }
+        home = teams.get('home', {})
+        away = teams.get('away', {})
+        if not home or not away:
+            continue
+        gk = f"{_normalize(home['name'])}_{_normalize(away['name'])}"
+
+        live_state = None
+        if state == 'in':
+            live_status = comp.get('status', {}) or {}
+            situation   = comp.get('situation', {}) or {}
+            poss_id     = situation.get('possession')
+            live_state = {
+                'period':          live_status.get('period'),
+                'display_clock':   live_status.get('displayClock'),
+                'clock_text':      status_obj.get('shortDetail') or status_obj.get('detail'),
+                'down_distance':   situation.get('shortDownDistanceText') or situation.get('downDistanceText'),
+                'field_pos':       situation.get('possessionText'),
+                'is_redzone':      bool(situation.get('isRedZone')),
+                'home_timeouts':   situation.get('homeTimeouts'),
+                'away_timeouts':   situation.get('awayTimeouts'),
+                'possession_home': bool(poss_id) and poss_id == home.get('id'),
+                'possession_away': bool(poss_id) and poss_id == away.get('id'),
+            }
+
+        states[gk] = {
+            'status':      status,
+            'away_score':  away.get('score'),
+            'home_score':  home.get('score'),
+            'live_state':  live_state,
+        }
+    return states
+
+
 # ── Schedule context ───────────────────────────────────────────────────────────
 
 def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
@@ -546,6 +638,7 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'live_state':    live_state,
+        'linescore':     _parse_linescores(comp) if status != 'Preview' else None,
         # ESPN season.type: 1=preseason, 2=regular, 3=postseason. Still
         # shown live (useful to see today's score even in August), but
         # _upsert_predictions uses this to skip writing preseason games

@@ -4183,6 +4183,39 @@ def api_repair_pick_roi():
     return jsonify({'repaired': repaired, 'skipped': skipped, 'total': len(preds)})
 
 
+@app.route('/api/nfl/live-scores')
+def api_nfl_live_scores():
+    """Powers the auto-updating score/quarter/clock on the /nfl schedule
+    page's game cards (see _schedule_live_poll.html). Keyed by game_key,
+    same key the cards render with (id="gc-<game_key>")."""
+    from flask import jsonify
+    return jsonify(nfl_api.get_live_game_states())
+
+
+@app.route('/api/cfb/live-scores')
+def api_cfb_live_scores():
+    """Powers the auto-updating score/clock on the /cfb schedule page's
+    game cards — see api_nfl_live_scores() above."""
+    from flask import jsonify
+    return jsonify(cfb_api.get_live_game_states())
+
+
+@app.route('/api/nba/live-scores')
+def api_nba_live_scores():
+    """Powers the auto-updating score/clock on the /nba schedule page's
+    game cards — see api_nfl_live_scores() above."""
+    from flask import jsonify
+    return jsonify(nba_api.get_live_game_states())
+
+
+@app.route('/api/nhl/live-scores')
+def api_nhl_live_scores():
+    """Powers the auto-updating score/clock on the /nhl schedule page's
+    game cards — see api_nfl_live_scores() above."""
+    from flask import jsonify
+    return jsonify(nhl_api.get_live_game_states())
+
+
 @app.route('/api/live-scores')
 def api_live_scores():
     """

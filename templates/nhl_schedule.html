@@ -165,6 +165,8 @@
             Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
 
+        {% include "_period_linescore.html" %}
+
         <!-- ── Goalie section ── -->
         <div class="goalie-section">
             {% for team, col_class in [(game.away, 'col-away'), (game.home, 'col-home')] %}
@@ -317,4 +319,6 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     } catch(e) {}
 });
 </script>
+{% set live_scores_endpoint = url_for('api_nhl_live_scores') %}
+{% include "_schedule_live_poll.html" %}
 {% endblock %}

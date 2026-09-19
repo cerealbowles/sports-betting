@@ -1,0 +1,83 @@
+{# Auto-updating scoreboard for a schedule page's game cards (id="gc-<game_key>",
+   markup from _nfl_game_card.html / _cfb_game_card.html). Polls a per-sport
+   live-scores endpoint and patches status badge, quarter/clock, and score in
+   place — no full page reload needed while a game is live.
+   Expects `live_scores_endpoint` in context (e.g. "/api/nfl/live-scores"). #}
+<script>
+(function () {
+  var ENDPOINT = {{ live_scores_endpoint | tojson }};
+
+  function renderHeaderLeft(info) {
+    if (info.status === 'Live') {
+      var html = '<span class="status-live">● Live</span>';
+      var ls = info.live_state;
+      if (ls) {
+        if (ls.period) {
+          html += '<span class="live-qtr-clock">Q' + ls.period + (ls.display_clock ? ' · ' + ls.display_clock : '') + '</span>';
+        } else if (ls.clock_text) {
+          html += '<span class="live-qtr-clock">' + ls.clock_text + '</span>';
+        }
+      }
+      return html;
+    }
+    if (info.status === 'Final') return '<span class="status-final">Final</span>';
+    return null; // Preview — leave the kickoff-time text alone
+  }
+
+  function renderSbCenter(info) {
+    var away = info.away_score, home = info.home_score;
+    var html = '';
+    if (info.status === 'Live' || info.status === 'Final') {
+      var awayWin = away !== null && home !== null && Number(away) > Number(home);
+      var homeWin = away !== null && home !== null && Number(home) > Number(away);
+      html += '<div class="sb-score">'
+        + '<span class="sb-score-away' + (awayWin ? ' sb-score-win' : '') + '">' + (away !== null ? away : '–') + '</span>'
+        + '<span class="sb-score-sep">–</span>'
+        + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (home !== null ? home : '–') + '</span>'
+        + '</div>';
+    } else {
+      html += '<div class="sb-vs">vs</div>';
+    }
+    var ls = info.live_state;
+    if (info.status === 'Live' && ls && (ls.down_distance || ls.clock_text)) {
+      html += '<div class="live-situation">';
+      if (ls.down_distance) {
+        html += '<span class="live-down-distance' + (ls.is_redzone ? ' live-redzone' : '') + '">' + ls.down_distance
+          + (ls.field_pos ? ' · ' + ls.field_pos : '') + '</span>';
+      } else {
+        html += '<span class="live-down-distance">' + ls.clock_text + '</span>';
+      }
+      html += '</div>';
+    }
+    return html;
+  }
+
+  function applyUpdate(gk, info) {
+    var card = document.getElementById('gc-' + gk);
+    if (!card) return;
+
+    var header = card.querySelector('.game-header');
+    var left = header && header.firstElementChild;
+    if (left) {
+      var headerHtml = renderHeaderLeft(info);
+      if (headerHtml !== null) left.outerHTML = headerHtml;
+    }
+
+    if (info.status === 'Preview') return;
+    var center = card.querySelector('.sb-center');
+    if (center) center.innerHTML = renderSbCenter(info);
+  }
+
+  function poll() {
+    fetch(ENDPOINT)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        Object.keys(data).forEach(function (gk) { applyUpdate(gk, data[gk]); });
+      })
+      .catch(function () {});
+  }
+
+  poll();
+  setInterval(poll, 20000);
+}());
+</script>
