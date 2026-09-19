@@ -367,6 +367,77 @@ def _parse_injuries(summary):
     return result
 
 
+# ── Per-game detail: team stats (live/final only) ───────────────────────────
+# Same ESPN boxscore.teams[] schema cfb_api.py uses — see that module for the
+# format notes. Rendered as the "Team Stats" panel in the details sheet,
+# replacing the model factors panel while the game is live/final.
+_TEAM_STAT_ORDER = [
+    ('totalYards',          'Total Yards'),
+    ('turnovers',           'Turnovers'),
+    ('firstDowns',          '1st Downs'),
+    ('totalPenaltiesYards', 'Penalties'),
+    ('thirdDownEff',        '3rd Down'),
+    ('fourthDownEff',       '4th Down'),
+    ('possessionTime',      'Possession'),
+]
+
+
+def _stat_magnitude(val):
+    """Reduce an ESPN stat's displayValue ('9-75', '2/8', '14:25', '98') to a
+    single comparable number for sizing the away/home split bar."""
+    if val is None:
+        return 0.0
+    s = str(val).strip()
+    try:
+        if '-' in s and s.count('-') == 1 and not s.startswith('-'):
+            return float(s.split('-')[-1])
+        if '/' in s:
+            num, den = s.split('/')
+            den = float(den)
+            return (float(num) / den) if den else 0.0
+        if ':' in s:
+            m, sec = s.split(':')
+            return float(m) * 60 + float(sec)
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _parse_team_stats(summary, home_id, away_id):
+    """Returns a list of {label, away, home, away_pct, home_pct} rows for the
+    live/final team-stats panel, or None pre-kickoff / if ESPN hasn't
+    populated the boxscore yet."""
+    if not summary or not home_id or not away_id:
+        return None
+    teams = (summary.get('boxscore') or {}).get('teams') or []
+    if len(teams) < 2:
+        return None
+    stat_maps = {}
+    for t in teams:
+        tid = str((t.get('team') or {}).get('id') or '')
+        stat_maps[tid] = {s.get('name'): s.get('displayValue') for s in (t.get('statistics') or [])}
+    home_stats = stat_maps.get(str(home_id))
+    away_stats = stat_maps.get(str(away_id))
+    if not home_stats or not away_stats:
+        return None
+    rows = []
+    for key, label in _TEAM_STAT_ORDER:
+        away_val = away_stats.get(key)
+        home_val = home_stats.get(key)
+        if away_val is None and home_val is None:
+            continue
+        a_mag = _stat_magnitude(away_val)
+        h_mag = _stat_magnitude(home_val)
+        total = a_mag + h_mag
+        away_pct = (a_mag / total * 100) if total > 0 else 50.0
+        home_pct = 100 - away_pct
+        rows.append({
+            'label': label, 'away': away_val, 'home': home_val,
+            'away_pct': round(away_pct, 1), 'home_pct': round(home_pct, 1),
+        })
+    return rows or None
+
+
 # ── Live scores ────────────────────────────────────────────────────────────────
 
 def get_live_scores(date_str=None):
@@ -633,6 +704,8 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
     a_ab = away.get('abbrev', '')
     h_ab = home.get('abbrev', '')
 
+    team_stats = _parse_team_stats(summary, home.get('id'), away.get('id')) if status in ('Live', 'Final') else None
+
     return {
         'game_id':       event.get('id'),
         'game_time_utc': event.get('date', ''),
@@ -645,6 +718,7 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         'odds':          game_odds,
         'model':         model,
         'weather':       weather,
+        'team_stats':    team_stats,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'live_state':    live_state,

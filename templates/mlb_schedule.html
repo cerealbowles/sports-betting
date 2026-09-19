@@ -451,9 +451,15 @@
         </div>
         {% endif %}
 
+        {% if game.status == 'Live' and game.inning_info %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            {{ game.inning_info }}
+        </div>
+        {% else %}
         <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
             Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
+        {% endif %}
 
         <!-- ── Linescore ── -->
         {% if game.linescore %}

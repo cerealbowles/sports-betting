@@ -19,7 +19,8 @@
 {# home_implied/away_implied can be None on partial odds data (e.g. a book
    posting a spread without a clean vig-free moneyline calc) — treat that
    the same as no odds at all rather than crashing on None * 100. #}
-{% if game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
+{% set qe_has_market = game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
+{% if qe_has_market %}
 {% set qe_market_home_pct = game.odds.home_implied * 100 %}
 {% set qe_market_pos = qe_market_home_pct %}
 {% set qe_market_favors_home = qe_market_home_pct >= 50 %}
@@ -30,6 +31,19 @@
 {% set qe_model_fav_prob = game.model.home_prob if qe_market_favors_home else game.model.away_prob %}
 {% set qe_kelly = (qe_b * qe_model_fav_prob - (1 - qe_model_fav_prob)) / qe_b if qe_b > 0 else -1 %}
 {% set qe_edge = ((qe_model_fav_prob * 100) - qe_market_team_pct) | round(1) %}
+{% else %}
+{# No market line posted — drive the bobber off the model's own probability
+   instead, so the card still shows a filled/positioned track rather than a
+   blank "no odds" placeholder. No edge/Kelly banner without a market to
+   compare against. #}
+{% set qe_market_home_pct = qe_model_home_pct %}
+{% set qe_market_pos = qe_market_home_pct %}
+{% set qe_market_favors_home = qe_market_home_pct >= 50 %}
+{% set qe_market_team = qe_home_team if qe_market_favors_home else qe_away_team %}
+{% set qe_market_team_pct = qe_market_home_pct if qe_market_favors_home else (100 - qe_market_home_pct) %}
+{% set qe_kelly = -1 %}
+{% set qe_edge = 0 %}
+{% endif %}
 
 {# Confidence = distance of the market's favored-side probability from the
    50/50 midpoint, 0 (a coin flip) to 50 (a lock). Colors interpolate from a
@@ -59,24 +73,18 @@
     <div class="eb-track">
         <div class="eb-fill" style="left:{{ qe_fill_left }}%; width:{{ qe_fill_width }}%; background:{{ qe_fill_color }};"></div>
         <div class="eb-center-tick"></div>
-        <div class="eb-marker eb-market" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="Market {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">✓</div>
+        <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%">{{ '✓' if qe_has_market else 'M' }}</div>
     </div>
     <div class="eb-tags">
         <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_tag_pos }}%;">
-            <span class="eb-tag-label">Market</span>
+            <span class="eb-tag-label">{{ 'Market' if qe_has_market else 'Model' }}</span>
             <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
         </div>
     </div>
 </div>
-{% if qe_kelly > 0 and qe_edge >= 4 %}
+{% if not qe_has_market %}
+<div class="eb-noodds-note">No market line posted — showing model only</div>
+{% elif qe_kelly > 0 and qe_edge >= 4 %}
 <div class="quick-edge-banner">★ Recommended bet <span class="qeb-sub">{{ qe_market_team }} · edge {{ '+' if qe_edge > 0 }}{{ qe_edge }}%</span></div>
-{% endif %}
-{% else %}
-<div class="eb-wrap">
-    <div class="eb-noodds">
-        <div class="eb-marker eb-market eb-market-noodds" title="No market line posted"></div>
-        <div class="eb-noodds-text">No market line posted — <b>{{ (qe_home_team if qe_model_home_pct >= 50 else qe_away_team) }} {{ ((qe_model_home_pct if qe_model_home_pct >= 50 else (100 - qe_model_home_pct))) | round(1) }}%</b> model</div>
-    </div>
-</div>
 {% endif %}
 {% endif %}

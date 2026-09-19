@@ -214,36 +214,67 @@
             {% set ns = namespace(max_abs=0.01) %}
             {% for label, contrib in displayed %}{% if contrib | abs > ns.max_abs %}{% set ns.max_abs = contrib | abs %}{% endif %}{% endfor %}
             {% set pick_is_away = game.model.away_prob >= game.model.home_prob %}
-            <div class="factors-panel">
-                <div class="factors-header">
-                    <span class="fd-side-label fd-side-left">{{ game.away.abbrev }}</span>
-                    <span class="factors-title">Model Factors</span>
-                    <span class="fd-side-label fd-side-right">{{ game.home.abbrev }}</span>
-                </div>
-                <div class="factor-diverge-list">
-                    {% for label, contrib in displayed %}
-                    {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
-                    {% set favors_home = contrib > 0 %}
-                    {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
-                    {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
-                    {% set tone = 'pos' if agree else 'neg' %}
-                    <div class="factor-diverge-row">
-                        <div class="fd-track-wrap">
-                            <div class="fd-track">
-                                <div class="fd-center-line"></div>
-                                <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
-                                <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
-                                <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
-                            </div>
-                            <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
-                                <span class="fd-label-name">{{ label }}</span>
+            {# Live/final games with a populated team-stats box lead with that
+               instead — the factors panel folds behind a <details> toggle so
+               it's still one tap away, but doesn't push the boxscore down.
+               Pregame (or if ESPN hasn't posted a boxscore yet) it stays
+               expanded via the `open` attribute, same as before. #}
+            <details class="factors-collapsible"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
+                <summary class="factors-collapsible-summary">Model Factors</summary>
+                <div class="factors-panel">
+                    <div class="factors-header">
+                        <span class="fd-side-label fd-side-left">{{ game.away.abbrev }}</span>
+                        <span class="factors-title">Model Factors</span>
+                        <span class="fd-side-label fd-side-right">{{ game.home.abbrev }}</span>
+                    </div>
+                    <div class="factor-diverge-list">
+                        {% for label, contrib in displayed %}
+                        {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
+                        {% set favors_home = contrib > 0 %}
+                        {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
+                        {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
+                        {% set tone = 'pos' if agree else 'neg' %}
+                        <div class="factor-diverge-row">
+                            <div class="fd-track-wrap">
+                                <div class="fd-track">
+                                    <div class="fd-center-line"></div>
+                                    <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
+                                    <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
+                                    <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
+                                </div>
+                                <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
+                                    <span class="fd-label-name">{{ label }}</span>
+                                </div>
                             </div>
                         </div>
+                        {% endfor %}
                     </div>
-                    {% endfor %}
                 </div>
-            </div>
+            </details>
             {% endif %}
+            {% endif %}
+
+            {% if game.status in ('Live', 'Final') and game.team_stats %}
+            <div class="team-stats-panel">
+                <div class="team-stats-header">Team Stats</div>
+                <div class="team-stats-teams">
+                    <span class="ts-team ts-team-away"><img class="ts-team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">{{ game.away.abbrev }}</span>
+                    <span class="ts-team ts-team-home">{{ game.home.abbrev }}<img class="ts-team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'"></span>
+                </div>
+                {% for row in game.team_stats %}
+                <div class="ts-row">
+                    <div class="ts-row-vals">
+                        <span class="ts-val ts-val-away">{{ row.away }}</span>
+                        <span class="ts-row-label">{{ row.label }}</span>
+                        <span class="ts-val ts-val-home">{{ row.home }}</span>
+                    </div>
+                    <div class="ts-bar">
+                        <div class="ts-bar-away" style="width:{{ row.away_pct }}%;"></div>
+                        <div class="ts-bar-home" style="width:{{ row.home_pct }}%;"></div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
             {% endif %}
 
         </div>
