@@ -22,6 +22,11 @@
         <div class="game-header">
             {% if game.status == 'Live' %}
                 <span class="status-live">● Live</span>
+                {% if game.live_state and game.live_state.period %}
+                <span class="live-qtr-clock">Q{{ game.live_state.period }}{% if game.live_state.display_clock %} · {{ game.live_state.display_clock }}{% endif %}</span>
+                {% elif game.live_state and game.live_state.clock_text %}
+                <span class="live-qtr-clock">{{ game.live_state.clock_text }}</span>
+                {% endif %}
             {% elif game.status == 'Final' %}
                 <span class="status-final">Final</span>
             {% else %}
@@ -52,9 +57,12 @@
             <div class="sb-team sb-away">
                 <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
                 <div class="sb-team-info">
-                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
+                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}{% if game.status == 'Live' and game.live_state and game.live_state.possession_away %} <span class="poss-ico" title="Has the ball">🏈</span>{% endif %}</div>
                     <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
                     <div class="sb-split"><span class="conf-tag">{{ game.away.conference }}</span></div>
+                    {% if game.status == 'Live' and game.live_state and game.live_state.away_timeouts is not none %}
+                    <div class="timeout-dots" title="{{ game.live_state.away_timeouts }} timeout{{ 's' if game.live_state.away_timeouts != 1 }} left">{% for i in range(3) %}<span class="to-dot{{ ' to-used' if i >= game.live_state.away_timeouts }}"></span>{% endfor %}</div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -69,14 +77,26 @@
                 {% else %}
                 <div class="sb-vs">vs</div>
                 {% endif %}
+                {% if game.status == 'Live' and game.live_state and (game.live_state.down_distance or game.live_state.clock_text) %}
+                <div class="live-situation">
+                    {% if game.live_state.down_distance %}
+                    <span class="live-down-distance{{ ' live-redzone' if game.live_state.is_redzone }}">{{ game.live_state.down_distance }}{% if game.live_state.field_pos %} · {{ game.live_state.field_pos }}{% endif %}</span>
+                    {% else %}
+                    <span class="live-down-distance">{{ game.live_state.clock_text }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
             </div>
 
             <!-- Home -->
             <div class="sb-team sb-home">
                 <div class="sb-team-info">
-                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
+                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}{% if game.status == 'Live' and game.live_state and game.live_state.possession_home %} <span class="poss-ico" title="Has the ball">🏈</span>{% endif %}</div>
                     <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
                     <div class="sb-split"><span class="conf-tag">{{ game.home.conference }}</span></div>
+                    {% if game.status == 'Live' and game.live_state and game.live_state.home_timeouts is not none %}
+                    <div class="timeout-dots" title="{{ game.live_state.home_timeouts }} timeout{{ 's' if game.live_state.home_timeouts != 1 }} left">{% for i in range(3) %}<span class="to-dot{{ ' to-used' if i >= game.live_state.home_timeouts }}"></span>{% endfor %}</div>
+                    {% endif %}
                 </div>
                 <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
             </div>
@@ -130,6 +150,8 @@
         <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
             Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
+
+        {% include "_period_linescore.html" %}
 
         <!-- ── Recent form + season stats ── -->
         <div class="form-row-section">

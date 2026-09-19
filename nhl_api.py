@@ -103,6 +103,58 @@ def get_live_scores(date_str=None):
     return scores
 
 
+def get_live_game_states(date_str=None):
+    """
+    Returns {game_key: state_dict} for NHL games on `date_str` (defaults to
+    today, ET) — status, score, and a period/clock text — matching what the
+    /nhl schedule page's game cards render server-side. Reuses
+    get_live_scores()'s 2-min cache (same NHL API call) so polling the page
+    adds no extra API traffic.
+    """
+    from odds_api import _normalize
+    target = date_str or datetime.now(_ET).strftime('%Y-%m-%d')
+    url    = f"{NHL_API}/schedule/now" if not date_str else f"{NHL_API}/schedule/{target}"
+    data   = _cached_get(url, f'nhl_scores_{target}', 120)
+    states = {}
+    if not data:
+        return states
+    for day in data.get('gameWeek', []):
+        if day.get('date') != target:
+            continue
+        for game in day.get('games', []):
+            a_data = game.get('awayTeam', {})
+            h_data = game.get('homeTeam', {})
+            h_name = h_data.get('name', {}).get('default', h_data.get('abbrev', ''))
+            a_name = a_data.get('name', {}).get('default', a_data.get('abbrev', ''))
+            gk     = f"{_normalize(h_name)}_{_normalize(a_name)}"
+            state  = game.get('gameState', '')
+            if state in ('LIVE', 'CRIT'):
+                status = 'Live'
+            elif state in ('FINAL', 'OFF'):
+                status = 'Final'
+            else:
+                status = 'Preview'
+            clock_text = None
+            if status == 'Live':
+                pd    = game.get('periodDescriptor', {})
+                ptype = pd.get('periodType', 'REG')
+                pnum  = pd.get('number', '')
+                clock = game.get('clock', {}).get('timeRemaining', '')
+                if ptype == 'OT':
+                    clock_text = f"OT · {clock}"
+                elif ptype == 'SO':
+                    clock_text = 'Shootout'
+                else:
+                    clock_text = f"P{pnum} · {clock}"
+            states[gk] = {
+                'status':     status,
+                'away_score': a_data.get('score'),
+                'home_score': h_data.get('score'),
+                'live_state': {'clock_text': clock_text} if status == 'Live' else None,
+            }
+    return states
+
+
 def _get_standings_map():
     """Returns {abbrev: standings_row} for all NHL teams."""
     data = _cached_get(f"{NHL_API}/standings/now", 'nhl_standings', _TTL['standings'])
@@ -246,6 +298,41 @@ def get_today_game_count():
     return 0
 
 
+def _get_period_linescore(game_id):
+    """Period-by-period goals for one game from the gamecenter boxscore
+    endpoint — only meaningful once a game has started, and this is a
+    per-game call (not covered by the schedule/now cache), so callers
+    should only fetch it for Live/Final games. Tries the couple of key
+    paths NHL's api-web has used for this and fails soft to None (linescore
+    just won't render) rather than break the page if the shape drifts."""
+    if not game_id:
+        return None
+    data = _cached_get(f"{NHL_API}/gamecenter/{game_id}/boxscore", f'nhl_box_{game_id}', 60)
+    if not data:
+        return None
+    try:
+        by_period = (data.get('boxscore') or {}).get('linescore', {}).get('byPeriod')
+        if not by_period:
+            by_period = data.get('linescore', {}).get('byPeriod')
+        if not by_period:
+            return None
+        periods = []
+        for i, p in enumerate(by_period):
+            pd = p.get('periodDescriptor', {}) or {}
+            ptype = pd.get('periodType', 'REG')
+            num   = pd.get('number', i + 1)
+            if ptype == 'OT':
+                label = 'OT'
+            elif ptype == 'SO':
+                label = 'SO'
+            else:
+                label = str(num)
+            periods.append({'label': label, 'away': p.get('away'), 'home': p.get('home')})
+        return periods or None
+    except Exception:
+        return None
+
+
 def build_schedule_context():
     """Returns today's NHL games ready for the template."""
     from odds_api import _normalize
@@ -351,6 +438,7 @@ def build_schedule_context():
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
+            'linescore':     _get_period_linescore(game.get('id')) if status in ('Live', 'Final') else None,
         })
 
     try:

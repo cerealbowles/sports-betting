@@ -138,6 +138,8 @@
         </div>
         {% endif %}
 
+        {% include "_period_linescore.html" %}
+
         <!-- ── Recent form + season stats ── -->
         <div class="form-row-section">
             {% for team, fg_class in [(game.away, 'fg-away'), (game.home, 'fg-home')] %}

@@ -32,6 +32,28 @@ _cache = {}
 _TTL = {'scoreboard': 120, 'season_log': 3600}
 
 
+def _parse_linescores(comp):
+    """Quarter-by-quarter scoring from ESPN's per-competitor `linescores`
+    array — only present once a game has started. Returns a list of
+    {'label', 'away', 'home'} periods (Q1-Q4, then OT/OT2/... for however
+    many overtimes were played), or None pre-tipoff."""
+    competitors = comp.get('competitors', [])
+    home_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'home'), None) or []
+    away_ls = next((c.get('linescores') for c in competitors if c.get('homeAway') == 'away'), None) or []
+    n = max(len(home_ls), len(away_ls))
+    if n == 0:
+        return None
+    periods = []
+    for i in range(n):
+        label = str(i + 1) if i < 4 else ('OT' if n == 5 else f'OT{i - 3}')
+        periods.append({
+            'label': label,
+            'away':  away_ls[i].get('value') if i < len(away_ls) else None,
+            'home':  home_ls[i].get('value') if i < len(home_ls) else None,
+        })
+    return periods
+
+
 def _cached_get(url, params, key, ttl):
     now = time.time()
     if key in _cache:
@@ -247,6 +269,53 @@ def get_live_scores(date_str=None):
     return scores
 
 
+def get_live_game_states(date_str=None):
+    """
+    Returns {game_key: state_dict} for NBA games on `date_str` (defaults to
+    today, ET) — status, score, and a clock/period text — matching what the
+    /nba schedule page's game cards render server-side. Reuses
+    get_live_scores()'s 2-min cache (same ESPN call) so polling the page
+    adds no extra API traffic.
+    """
+    from odds_api import _normalize
+    target_str = date_str or _today_et()
+    params = {'dates': target_str.replace('-', '')} if date_str else {}
+    data = _cached_get(ESPN_NBA, params, f'nba_scores_{target_str}', 120)
+    states = {}
+    if not data:
+        return states
+    for event in data.get('events', []):
+        if _event_date_et(event.get('date', '')) != target_str:
+            continue
+        comp       = event.get('competitions', [{}])[0]
+        status_obj = comp.get('status', {}).get('type', {})
+        state      = status_obj.get('state', 'pre')
+        if state == 'in':
+            status = 'Live'
+        elif state == 'post':
+            status = 'Final'
+        else:
+            status = 'Preview'
+        teams = {}
+        for competitor in comp.get('competitors', []):
+            side = competitor.get('homeAway', 'home')
+            team = competitor.get('team', {})
+            teams[side] = {'name': team.get('displayName', ''), 'score': competitor.get('score')}
+        home = teams.get('home', {})
+        away = teams.get('away', {})
+        if not home or not away:
+            continue
+        gk = f"{_normalize(home['name'])}_{_normalize(away['name'])}"
+        clock_text = status_obj.get('detail') if status == 'Live' else None
+        states[gk] = {
+            'status':     status,
+            'away_score': away.get('score'),
+            'home_score': home.get('score'),
+            'live_state': {'clock_text': clock_text} if status == 'Live' else None,
+        }
+    return states
+
+
 # ── Schedule context ───────────────────────────────────────────────────────────
 
 def _build_game(event, team_stats, game_log, nba_odds_map):
@@ -355,6 +424,7 @@ def _build_game(event, team_stats, game_log, nba_odds_map):
         'model':         model,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
+        'linescore':     _parse_linescores(comp) if status != 'Preview' else None,
         # ESPN season.type: 1=preseason, 2=regular, 3=postseason/play-in.
         # _upsert_predictions uses this to skip writing preseason games into
         # game_predictions — min-effort preseason results would otherwise
