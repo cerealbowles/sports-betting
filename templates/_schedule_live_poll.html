@@ -52,6 +52,22 @@
     return html;
   }
 
+  // Rebuilds the details-sheet "Q3 · 5:42 · 2nd & 8 · BC 37 · 🏈 BC" line —
+  // same fields/format as the server-rendered .live-status-line, so the
+  // sheet stops showing whatever quarter/down was true when the page loaded
+  // once the poll below has fresher live_state.
+  function renderStatusLine(info, awayAbbr, homeAbbr) {
+    var ls = info.live_state;
+    if (!ls) return '';
+    var parts = [];
+    if (ls.period) parts.push('Q' + ls.period + (ls.display_clock ? ' · ' + ls.display_clock : ''));
+    else if (ls.display_clock) parts.push(ls.display_clock);
+    if (ls.down_distance) parts.push(ls.down_distance + (ls.field_pos ? ' · ' + ls.field_pos : ''));
+    if (ls.possession_home) parts.push('<span class="poss-ico" title="Has the ball">🏈</span> ' + homeAbbr);
+    else if (ls.possession_away) parts.push('<span class="poss-ico" title="Has the ball">🏈</span> ' + awayAbbr);
+    return parts.join(' · ');
+  }
+
   function applyUpdate(gk, info) {
     var card = document.getElementById('gc-' + gk);
     if (!card) return;
@@ -77,8 +93,32 @@
     }
 
     if (info.status === 'Preview') return;
-    var center = card.querySelector('.sb-center');
-    if (center) center.innerHTML = renderSbCenter(info);
+
+    // Both the always-visible summary and the details sheet render their own
+    // .sb-center (score) — the details sheet's copy was previously left
+    // stale at whatever it was on page load, showing an old score/quarter
+    // once reopened mid-game.
+    var centers = card.querySelectorAll('.sb-center');
+    for (var i = 0; i < centers.length; i++) centers[i].innerHTML = renderSbCenter(info);
+
+    var statusLine = card.querySelector('.live-status-line');
+    if (statusLine && info.status === 'Live') {
+      statusLine.innerHTML = renderStatusLine(info, statusLine.dataset.away, statusLine.dataset.home);
+    }
+
+    // Shift the linescore's "current period" highlight along with it — the
+    // period column itself was rendered once at page load, same staleness
+    // bug the status line above had.
+    var ls = info.live_state;
+    if (info.status === 'Live' && ls && ls.period) {
+      var rows = card.querySelectorAll('.linescore tbody tr');
+      for (var r = 0; r < rows.length; r++) {
+        var cells = rows[r].querySelectorAll('td:not(.ls-team):not(.ls-total)');
+        for (var c = 0; c < cells.length; c++) {
+          cells[c].classList.toggle('ls-active', (c + 1) === ls.period);
+        }
+      }
+    }
   }
 
   function poll() {

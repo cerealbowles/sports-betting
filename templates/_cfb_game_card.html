@@ -148,7 +148,7 @@
         {% endif %}
 
         {% if game.status == 'Live' and game.live_state %}
-        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+        <div class="small live-status-line" data-away="{{ game.away.abbrev or game.away.abbr }}" data-home="{{ game.home.abbrev or game.home.abbr }}" style="margin-bottom:10px; color:var(--text-muted);">
             {% if game.live_state.period %}Q{{ game.live_state.period }}{% endif %}{% if game.live_state.display_clock %} · {{ game.live_state.display_clock }}{% endif %}
             {%- if game.live_state.down_distance %} · {{ game.live_state.down_distance }}{% if game.live_state.field_pos %} · {{ game.live_state.field_pos }}{% endif %}{% endif %}
             {%- if game.live_state.possession_home %} · <span class="poss-ico" title="Has the ball">🏈</span> {{ game.home.abbrev or game.home.abbr }}
