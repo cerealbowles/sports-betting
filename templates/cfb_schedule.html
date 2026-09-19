@@ -177,11 +177,23 @@
     <span class="game-count">{{ (_live + _upcoming)|length }} game{{ 's' if (_live + _upcoming)|length != 1 }}</span>
     <span class="refresh-info"><a href="{{ url_for('cfb_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
+{% if _live %}
 <div class="games-grid">
-{% for game in _live + _upcoming %}
+{% for game in _live %}
 {% include "_cfb_game_card.html" %}
 {% endfor %}
 </div><!-- /.games-grid -->
+{% endif %}
+{% if _live and _upcoming %}
+<div class="games-section-hdr">Upcoming · {{ _upcoming|length }} game{{ 's' if _upcoming|length != 1 }}</div>
+{% endif %}
+{% if _upcoming %}
+<div class="games-grid">
+{% for game in _upcoming %}
+{% include "_cfb_game_card.html" %}
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endif %}
 {% endif %}
 {% endfor %}
 
