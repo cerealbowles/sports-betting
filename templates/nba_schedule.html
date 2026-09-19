@@ -2,6 +2,7 @@
 {% block title %}NBA Today — Spooky Sports{% endblock %}
 
 {% block content %}
+{% from "_edge_star.html" import edge_star %}
 <div class="schedule-body">
 
 
@@ -49,6 +50,9 @@
             {% else %}
                 <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
+            <div class="game-header-right">
+                {{ edge_star(game) }}
+            </div>
         </div>
 
         <!-- ── Scoreboard ── -->
