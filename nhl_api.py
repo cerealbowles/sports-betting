@@ -316,10 +316,6 @@ def _get_period_linescore(game_id):
             by_period = data.get('linescore', {}).get('byPeriod')
         if not by_period:
             return None
-
-        def _val(v):
-            return int(v) if v is not None else None
-
         periods = []
         for i, p in enumerate(by_period):
             pd = p.get('periodDescriptor', {}) or {}
@@ -331,15 +327,7 @@ def _get_period_linescore(game_id):
                 label = 'SO'
             else:
                 label = str(num)
-            periods.append({'label': label, 'away': _val(p.get('away')), 'home': _val(p.get('home'))})
-        # Pad to at least 3 regulation periods so the table doesn't jump
-        # around mid-game, matching the padding _parse_linescores() does
-        # for the other sports.
-        reg = [p for p in periods if p['label'] not in ('OT', 'SO')]
-        ot  = [p for p in periods if p['label'] in ('OT', 'SO')]
-        while len(reg) < 3:
-            reg.append({'label': str(len(reg) + 1), 'away': None, 'home': None})
-        periods = reg + ot
+            periods.append({'label': label, 'away': p.get('away'), 'home': p.get('home')})
         return periods or None
     except Exception:
         return None
