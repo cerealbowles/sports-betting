@@ -125,6 +125,8 @@
             Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
         </div>
 
+        {% include "_period_linescore.html" %}
+
         <!-- ── Recent form + team stats ── -->
         <div class="form-row-section">
             {% for team, fg_class in [(game.away, 'fg-away'), (game.home, 'fg-home')] %}
@@ -254,4 +256,6 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     } catch(e) {}
 });
 </script>
+{% set live_scores_endpoint = url_for('api_nba_live_scores') %}
+{% include "_schedule_live_poll.html" %}
 {% endblock %}

@@ -256,5 +256,7 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     if (confSel) confSel.addEventListener('change', apply);
 })();
 </script>
+{% set live_scores_endpoint = url_for('api_cfb_live_scores') %}
+{% include "_schedule_live_poll.html" %}
 {% include "_open_bets_scripts.html" with context %}
 {% endblock %}
