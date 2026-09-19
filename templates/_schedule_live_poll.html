@@ -57,10 +57,23 @@
     if (!card) return;
 
     var header = card.querySelector('.game-header');
-    var left = header && header.firstElementChild;
-    if (left) {
+    if (header) {
       var headerHtml = renderHeaderLeft(info);
-      if (headerHtml !== null) left.outerHTML = headerHtml;
+      if (headerHtml !== null) {
+        // renderHeaderLeft can return multiple sibling elements (status +
+        // quarter/clock spans), so replacing just firstElementChild's
+        // outerHTML left the previous poll's clock span orphaned as a
+        // sibling — clearing everything up to .game-header-right (or the
+        // whole header, if there isn't one) avoids that pileup.
+        var right = header.querySelector('.game-header-right');
+        while (header.firstChild && header.firstChild !== right) {
+          header.removeChild(header.firstChild);
+        }
+        var tmp = document.createElement('template');
+        tmp.innerHTML = headerHtml;
+        if (right) header.insertBefore(tmp.content, right);
+        else header.appendChild(tmp.content);
+      }
     }
 
     if (info.status === 'Preview') return;
