@@ -446,6 +446,8 @@ def build_schedule_context():
             'away':          away,
             'home':          home,
             'series_info':   series_info,
+            # api-web gameType: 1=preseason, 2=regular season, 3=playoffs.
+            'is_preseason':  game.get('gameType') == 1,
             'model':         model,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",

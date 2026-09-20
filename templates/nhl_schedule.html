@@ -59,11 +59,16 @@
 {% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
 {% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
 {% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
-{% set ns = namespace(final_hdr=False) %}
+{% set _favs = (_live + _upcoming + _final) | selectattr('is_favorite') | list %}
+{% set _rest = (_live + _upcoming + _final) | rejectattr('is_favorite') | list %}
+{% set _rest_final_n = _final | rejectattr('is_favorite') | list | length %}
+{% set ns = namespace(final_hdr=False, rest_hdr=False) %}
 <div class="games-grid">
-{% for game in _live + _upcoming + _final %}
-{% if game.status == 'Final' and not ns.final_hdr %}{% set ns.final_hdr = True %}
-<div class="games-section-hdr">Completed · {{ _final | length }} game{{ 's' if _final | length != 1 }}</div>
+{% for game in _favs + _rest %}
+{% if loop.first and game.is_favorite %}<div class="games-section-hdr games-section-hdr-fav">★ Favorites</div>{% endif %}
+{% if not game.is_favorite and not ns.rest_hdr %}{% set ns.rest_hdr = True %}{% if _favs %}<div class="games-section-hdr games-section-hdr-rest">All games</div>{% endif %}{% endif %}
+{% if game.status == 'Final' and not game.is_favorite and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr">Completed · {{ _rest_final_n }} game{{ 's' if _rest_final_n != 1 }}</div>
 {% endif %}
 
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=NHL&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
@@ -88,6 +93,7 @@
                 <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
             <div class="game-header-right">
+                {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
                 {{ edge_star(game) }}
                 {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
             </div>

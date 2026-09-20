@@ -1804,7 +1804,17 @@ body.embed-mode .container { padding-bottom: 0; }
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+.games-section-hdr-fav { color: #f5b301; border-top: none; margin-top: 0; }
+.games-section-hdr-lead { margin-top: 6px; margin-bottom: 4px; }
+.games-section-hdr-rest { margin-top: 12px; }
 .games-section-hdr-completed { margin-top: 20px; padding-top: 14px; }
+.preseason-badge {
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(148,163,184,0.14); color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.games-section-hdr-upcoming { margin-top: 28px; padding: 18px 2px 14px; }
 
 /* ── Schedule page — completed games moved to the bottom of the week ─────
    Every date's Final games are pulled out of day-by-day order into one

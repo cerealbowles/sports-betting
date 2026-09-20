@@ -61,6 +61,28 @@
   </form>
 </div>
 
+<!-- Favorite Teams ───────────────────────────────────── -->
+<div class="card" style="max-width:520px;margin:14px auto 0;">
+  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">★ Favorite Teams</div>
+  <p style="font-size:0.72rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
+    Games for these teams are pulled to the top of each schedule in their own section.
+  </p>
+  {% for sport in favorite_sports %}
+  <div class="fav-sport" data-sport="{{ sport }}" style="margin-bottom:14px;">
+    <div style="font-size:0.75rem;font-weight:700;margin-bottom:6px;">{{ sport }}</div>
+    <div class="fav-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;"></div>
+    <div style="display:flex;gap:8px;">
+      <input type="text" class="fav-input" list="fav-list-{{ sport }}" placeholder="Add a team…" autocomplete="off"
+             style="flex:1;min-width:0;padding:7px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;">
+      <datalist id="fav-list-{{ sport }}"></datalist>
+      <button type="button" class="fav-add"
+              style="font-size:0.75rem;padding:6px 14px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">Add</button>
+    </div>
+  </div>
+  {% endfor %}
+  <span id="fav-status" style="font-size:0.72rem;color:var(--text-muted);"></span>
+</div>
+
 <!-- Model Backfill ───────────────────────────────────── -->
 <div class="card" style="max-width:520px;margin:14px auto 0;">
   <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Model · 2026 Backfill</div>
@@ -193,6 +215,81 @@ document.getElementById('send-daily-picks').addEventListener('click', function (
     btn.disabled    = false;
   });
 });
+
+/* ── Favorite teams ───────────────────────────────────── */
+(function () {
+  var favs   = {{ favorites | tojson }};
+  var status = document.getElementById('fav-status');
+
+  function save() {
+    fetch('/api/favorites', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(favs),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      status.textContent = d.ok ? '✓ Saved' : '✗ Failed to save';
+      status.style.color = d.ok ? 'var(--win)' : 'var(--loss)';
+    }).catch(function () {
+      status.textContent = '✗ Failed to save';
+      status.style.color = 'var(--loss)';
+    });
+  }
+
+  function render(box) {
+    var sport = box.getAttribute('data-sport');
+    var chips = box.querySelector('.fav-chips');
+    chips.innerHTML = '';
+    (favs[sport] || []).forEach(function (name) {
+      var chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;background:var(--orange-dim);border:1px solid var(--orange);border-radius:999px;font-size:0.75rem;font-weight:600;color:var(--orange);';
+      chip.appendChild(document.createTextNode('★ ' + name));
+      var x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '✕';
+      x.setAttribute('aria-label', 'Remove ' + name);
+      x.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;font-size:0.72rem;padding:0 2px;';
+      x.addEventListener('click', function () {
+        favs[sport] = favs[sport].filter(function (n) { return n !== name; });
+        render(box); save();
+      });
+      chip.appendChild(x);
+      chips.appendChild(chip);
+    });
+  }
+
+  document.querySelectorAll('.fav-sport').forEach(function (box) {
+    var sport = box.getAttribute('data-sport');
+    var input = box.querySelector('.fav-input');
+    var list  = box.querySelector('datalist');
+    var known = [];
+    render(box);
+
+    fetch('/api/team-names/' + sport).then(function (r) { return r.json(); }).then(function (names) {
+      known = names;
+      names.forEach(function (n) {
+        var o = document.createElement('option');
+        o.value = n;
+        list.appendChild(o);
+      });
+    }).catch(function () {});
+
+    function add() {
+      var v = input.value.trim();
+      if (!v) return;
+      var match = known.filter(function (n) { return n.toLowerCase() === v.toLowerCase(); })[0];
+      if (known.length && !match) {
+        status.textContent = '✗ Pick a team from the suggestions';
+        status.style.color = 'var(--loss)';
+        return;
+      }
+      v = match || v;
+      favs[sport] = favs[sport] || [];
+      if (favs[sport].indexOf(v) === -1) favs[sport].push(v);
+      input.value = '';
+      render(box); save();
+    }
+    box.querySelector('.fav-add').addEventListener('click', add);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  });
+})();
 
 /* ── Backfill ─────────────────────────────────────────── */
 var _backfillSource = null;

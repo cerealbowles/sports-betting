@@ -29,6 +29,7 @@
                 <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
             <div class="game-header-right">
+                {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
                 {{ edge_star(game) }}
                 {% if game.odds_line %}<span class="nfl-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
             </div>

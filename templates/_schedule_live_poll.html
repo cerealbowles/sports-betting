@@ -68,6 +68,25 @@
     return parts.join(' · ');
   }
 
+  // Pages that split a day into live/upcoming grids (data-live-grid /
+  // data-upcoming-grid) — a game that kicks off after page load is moved out
+  // of the upcoming grid into the live one instead of staying under "Upcoming".
+  function moveToSection(card, isLive) {
+    var up = card.closest('[data-upcoming-grid]');
+    if (!up || !isLive) return;
+    var day = up.getAttribute('data-upcoming-grid');
+    var liveGrid = document.querySelector('[data-live-grid="' + day + '"]');
+    if (!liveGrid) return;
+    liveGrid.appendChild(card);
+    var hdr = document.querySelector('[data-upcoming-hdr="' + day + '"]');
+    var left = up.querySelectorAll('.game-card').length;
+    if (hdr) {
+      var n = hdr.querySelector('[data-upcoming-count]');
+      if (n) n.textContent = left;
+      hdr.hidden = left === 0;
+    }
+  }
+
   function applyUpdate(gk, info) {
     var card = document.getElementById('gc-' + gk);
     if (!card) return;
@@ -91,6 +110,8 @@
         else header.appendChild(tmp.content);
       }
     }
+
+    if (info.status !== 'Preview') moveToSection(card, info.status === 'Live');
 
     if (info.status === 'Preview') return;
 

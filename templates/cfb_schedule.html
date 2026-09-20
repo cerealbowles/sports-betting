@@ -165,35 +165,49 @@
 </div>
 {% endif %}
 
+{% set _fav_total = namespace(n=0) %}
+{% for day in week_ctx.days %}{% set _fav_total.n = _fav_total.n + (day.games | selectattr('is_favorite') | list | length) %}{% endfor %}
+{% if _fav_total.n %}
+<div class="games-section-hdr games-section-hdr-fav games-section-hdr-lead">★ Favorite Teams</div>
+{% for day in week_ctx.days %}
+{% set _f  = day.games | selectattr('is_favorite') | list %}
+{% set _fl = _f | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _ff = _f | selectattr('status', 'equalto', 'Final') | list %}
+{% set _fu = _f | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% if _f %}
+<div class="completed-date-label">{{ day.date_display }}</div>
+<div class="games-grid" style="margin-bottom:8px;">
+{% for game in _fl + _fu + _ff %}
+{% include "_cfb_game_card.html" %}
+{% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% set _week_final_total = namespace(n=0) %}
 {% for day in week_ctx.days %}
-{% set _final = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _final = day.games | selectattr('status', 'equalto', 'Final') | rejectattr('is_favorite') | list %}
 {% set _week_final_total.n = _week_final_total.n + _final | length %}
-{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
-{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | rejectattr('is_favorite') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | rejectattr('is_favorite') | list %}
 {% if _live + _upcoming %}
 <div class="day-header{{ ' day-header-today' if day.is_today }}">
     <h2>{{ day.date_display }}{% if day.is_today %} <span class="today-badge">Today</span>{% endif %}</h2>
     <span class="game-count">{{ (_live + _upcoming)|length }} game{{ 's' if (_live + _upcoming)|length != 1 }}</span>
     <span class="refresh-info"><a href="{{ url_for('cfb_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
-{% if _live %}
-<div class="games-grid">
+<div class="games-grid" data-live-grid="{{ loop.index }}">
 {% for game in _live %}
 {% include "_cfb_game_card.html" %}
 {% endfor %}
 </div><!-- /.games-grid -->
-{% endif %}
-{% if _live and _upcoming %}
-<div class="games-section-hdr">Upcoming · {{ _upcoming|length }} game{{ 's' if _upcoming|length != 1 }}</div>
-{% endif %}
-{% if _upcoming %}
-<div class="games-grid">
+<div class="games-section-hdr games-section-hdr-upcoming" data-upcoming-hdr="{{ loop.index }}"{% if not (_live and _upcoming) %} hidden{% endif %}>Upcoming (<span data-upcoming-count>{{ _upcoming|length }}</span>)</div>
+<div class="games-grid" data-upcoming-grid="{{ loop.index }}">
 {% for game in _upcoming %}
 {% include "_cfb_game_card.html" %}
 {% endfor %}
 </div><!-- /.games-grid -->
-{% endif %}
 {% endif %}
 {% endfor %}
 
@@ -204,7 +218,7 @@
 {% if _week_final_total.n > 0 %}
 <div class="games-section-hdr games-section-hdr-completed">Completed this week · {{ _week_final_total.n }} game{{ 's' if _week_final_total.n != 1 }}</div>
 {% for day in week_ctx.days %}
-{% set _final = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _final = day.games | selectattr('status', 'equalto', 'Final') | rejectattr('is_favorite') | list %}
 {% if _final %}
 <div class="completed-date-label">{{ day.date_display }}</div>
 <div class="games-grid-condensed">

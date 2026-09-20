@@ -56,6 +56,7 @@ class Setting(db.Model):
   bankroll = db.Column(db.Float, default=20)
   percent_bankroll = db.Column(db.Float, default=0.25)  # fraction of bankroll
   discord_webhook_url = db.Column(db.Text, default='')
+  favorite_teams_json = db.Column(db.Text, default='{}')  # {"NFL": ["Chicago Bears", ...], ...}
 
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
@@ -168,6 +169,7 @@ def ensure_column_exists():
     _add('game_predictions', 'movement_profile',  'TEXT DEFAULT NULL')
     _add('game_predictions', 'movement_pct',      'FLOAT DEFAULT NULL')
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
+    _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
 
 # Migrations must run before any Setting.query access
@@ -1300,6 +1302,37 @@ def _et_date(utc_str):
     return ''
 
 
+FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'NHL', 'MLB')
+
+
+def _load_favorites():
+  s = Setting.query.first()
+  try:
+    data = json.loads((s.favorite_teams_json if s else '') or '{}')
+  except (TypeError, ValueError):
+    return {}
+  return data if isinstance(data, dict) else {}
+
+
+def _norm_team(name):
+  return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+
+def _mark_favorites(days, sport):
+  """Tag each game dict with is_favorite so templates can pull favorites into
+  their own section. Matches on normalized full team name, also allowing a
+  nickname-only source name (e.g. 'Avalanche' vs 'Colorado Avalanche')."""
+  favs = [_norm_team(f) for f in (_load_favorites().get(sport) or []) if f]
+
+  def _hit(team):
+    n = _norm_team((team or {}).get('name'))
+    return bool(n) and any(n == f or f.endswith(n) or n.endswith(f) for f in favs)
+
+  for day in (days or []):
+    for game in day.get('games', []):
+      game['is_favorite'] = bool(favs) and (_hit(game.get('home')) or _hit(game.get('away')))
+
+
 def _upsert_predictions(schedule, sport='MLB'):
   """Save model predictions and record outcomes for completed games."""
   now = datetime.now(timezone.utc)
@@ -2132,7 +2165,38 @@ def settings_page():
   import odds_api as _oa
   odds_stats = odds_history.get_storage_stats()
   odds_key_usage = _oa.get_key_usage()
-  return render_template('settings.html', settings=s, odds_stats=odds_stats, odds_key_usage=odds_key_usage)
+  return render_template('settings.html', settings=s, odds_stats=odds_stats, odds_key_usage=odds_key_usage,
+                         favorites=_load_favorites(), favorite_sports=FAVORITE_SPORTS)
+
+
+@app.route('/api/team-names/<sport>')
+def api_team_names(sport):
+  import team_catalog
+  sport = sport.upper()
+  if sport not in FAVORITE_SPORTS:
+    abort(404)
+  return jsonify(team_catalog.get_team_names(sport))
+
+
+@app.route('/api/favorites', methods=['POST'])
+def api_save_favorites():
+  data = request.get_json(silent=True) or {}
+  clean = {}
+  for sport in FAVORITE_SPORTS:
+    seen = []
+    for name in (data.get(sport) or [])[:50]:
+      name = str(name).strip()[:80]
+      if name and name not in seen:
+        seen.append(name)
+    if seen:
+      clean[sport] = seen
+  s = Setting.query.first()
+  if not s:
+    s = Setting()
+    db.session.add(s)
+  s.favorite_teams_json = json.dumps(clean)
+  db.session.commit()
+  return jsonify({'ok': True, 'favorites': clean})
 
 @app.route('/save_settings', methods=['POST'])
 def save_settings():
@@ -2624,6 +2688,7 @@ def mlb_schedule():
       game['open_bets'] = matched
 
   _upsert_predictions(schedule, 'MLB')
+  _mark_favorites(schedule, 'MLB')
 
   # Build candidate list.
   # Preview games: use live schedule data (model + odds) for a fresh trust score.
@@ -3712,6 +3777,7 @@ def model_performance():
 def nhl_schedule():
   schedule = nhl_api.build_schedule_context()
   _upsert_predictions(schedule, 'NHL')
+  _mark_favorites(schedule, 'NHL')
   resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL'))
   return _set_last_sport_cookie(resp, 'NHL')
 
@@ -3719,6 +3785,7 @@ def nhl_schedule():
 def nba_schedule():
   schedule = nba_api.build_schedule_context()
   _upsert_predictions(schedule, 'NBA')
+  _mark_favorites(schedule, 'NBA')
   resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA'))
   return _set_last_sport_cookie(resp, 'NBA')
 
@@ -3727,6 +3794,7 @@ def nfl_schedule():
   week = request.args.get('week', type=int)
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
+  _mark_favorites(week_ctx['days'], 'NFL')
   _match_open_bets_to_games(week_ctx['days'], sport='NFL')
 
   settings = Setting.query.first()
@@ -3764,6 +3832,7 @@ def cfb_schedule():
   week = request.args.get('week', type=int)
   week_ctx = cfb_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'CFB')
+  _mark_favorites(week_ctx['days'], 'CFB')
   _match_open_bets_to_games(week_ctx['days'], sport='CFB')
 
   # Today's Recommendations: a lightweight edge-ranked list, not MLB's full
