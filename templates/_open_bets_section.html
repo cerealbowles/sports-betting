@@ -5,9 +5,8 @@
    bug this app has already hit once (see the Kelly-grade fix).
 
    Expected context variables:
-     open_bets            – list of non-paper OpenBet rows, already run
+     open_bets            – list of OpenBet rows, already run
                              through _annotate_open_bets()/_tier_open_bets()
-     paper_bets           – list of paper OpenBet rows (may be empty)
      unit_size            – float, for the Stake/Return columns
      closing_suggestions  – {bet_id: american_odds}, rendered into JS below
      open_stats           – dict from _open_bets_summary_stats(), or None to
@@ -164,25 +163,105 @@
 
       </div><!-- /.game-card-summary -->
 
-      <!-- Edit / Close / Delete — moved into the bottom sheet on tap -->
-      <div class="game-card-details bc-details" id="gd-bet-{{ b.id }}" hidden>
+      <!-- Bet management — lives entirely in the bottom sheet on tap:
+           summary -> Edit / Close Bet views switch in place; Delete confirms in a modal. -->
+      <div class="game-card-details bc-details" id="gd-bet-{{ b.id }}" hidden
+           data-id="{{ b.id }}" data-name="{{ b.name | e }}" data-stake="{{ '%.2f' % b.stake }}"
+           data-entry-amer="{{ b.original_american }}"
+           data-curr-amer="{{ b.current_american if b.current_american is not none else '' }}">
           <div class="bc-name-line" style="margin-bottom:14px;">
               <span class="bc-name">{{ b.name }}</span>
               {% if b.sport %}<span class="bet-sport">{{ b.sport }}</span>{% endif %}
               {% if b.tier %}<span class="tier-badge {{ b.tier_cls }}">{{ b.tier }}</span>{% endif %}
           </div>
-          <div class="bdm-actions">
-              <a href="{{ url_for('edit_open', bet_id=b.id) }}" class="small secondary">Edit</a>
-              <button type="button" class="small"
-                  data-id="{{ b.id }}"
-                  data-name="{{ b.name | e }}"
-                  data-stake="{{ '%.2f' % b.stake }}"
-                  data-entry-amer="{{ b.original_american }}"
-                  data-curr-amer="{{ b.current_american if b.current_american is not none else '' }}"
-                  onclick="openCloseBetModal(this)">Close Bet</button>
-              <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" onsubmit="return confirm('Delete this bet?');">
-                  <button type="submit" class="danger small">Delete</button>
+
+          <!-- Summary -->
+          <div class="bdm-view" data-view="main">
+              <div class="bdm-stats">
+                  <div class="bdm-stat"><span class="bdm-stat-label">Stake</span><span class="bdm-stat-val">${{ '%.2f' % b.stake }}</span></div>
+                  <div class="bdm-stat"><span class="bdm-stat-label">Return</span><span class="bdm-stat-val">${{ '%.2f' % (b.stake * b.odds) }}</span></div>
+                  <div class="bdm-stat"><span class="bdm-stat-label">Odds</span><span class="bdm-stat-val">{% if b.original_american is not none %}{{ '+' if b.original_american > 0 }}{{ b.original_american }}{% else %}—{% endif %}</span></div>
+              </div>
+              {% if b.notes %}<div class="bdm-notes">{{ b.notes }}</div>{% endif %}
+              <div class="bdm-actions">
+                  <button type="button" class="small secondary" onclick="bdmShow(this, 'edit')">Edit</button>
+                  <button type="button" class="small" onclick="bdmShow(this, 'close')">Close Bet</button>
+                  <button type="button" class="danger small" onclick="openDeleteBetModal(this)">Delete</button>
+              </div>
+          </div>
+
+          <!-- Edit -->
+          <div class="bdm-view" data-view="edit" hidden>
+              <h3 class="bdm-view-title">Edit bet</h3>
+              <form method="post" action="{{ url_for('edit_open', bet_id=b.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+                  <div class="form-row"><label>Name</label><input name="name" value="{{ b.name }}" required></div>
+                  <div class="form-row"><label>Sport</label><input name="sport" value="{{ b.sport }}"></div>
+                  <div class="form-row">
+                      <label>Type</label>
+                      <select name="bet_type">
+                          {% for t in ['Moneyline', 'Spread', 'Over/Under', 'Player'] %}
+                          <option value="{{ t }}" {% if b.bet_type == t %}selected{% endif %}>{{ t }}</option>
+                          {% endfor %}
+                      </select>
+                  </div>
+                  <div class="form-row"><label>Decimal Odds</label><input name="odds" type="number" step="0.01" inputmode="decimal" value="{{ b.odds }}" required></div>
+                  <div class="form-row"><label>Win Probability (0–1)</label><input name="prob" type="number" step="0.01" inputmode="decimal" value="{{ b.prob }}" required></div>
+                  <div class="form-row"><label>Stake ($)</label><input name="stake" type="number" step="0.01" inputmode="decimal" value="{{ b.stake }}" required></div>
+                  <div class="form-row">
+                      <label>Notes</label>
+                      <textarea name="notes" rows="2" style="resize:vertical;font-family:inherit;font-size:0.9rem;padding:9px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text);width:100%;">{{ b.notes or '' }}</textarea>
+                  </div>
+                  <div class="bdm-form-actions">
+                      <button type="submit">Save Changes</button>
+                      <button type="button" class="secondary" onclick="bdmShow(this, 'main')">Back</button>
+                  </div>
               </form>
+          </div>
+
+          <!-- Close bet (win / loss / cashout) -->
+          <div class="bdm-view" data-view="close" hidden>
+              <h3 class="bdm-view-title">Save result</h3>
+              <div class="bdm-seg">
+                  <button type="button" data-outcome="win" onclick="bdmOutcome(this, 'win')">Win</button>
+                  <button type="button" data-outcome="loss" onclick="bdmOutcome(this, 'loss')">Loss</button>
+                  <button type="button" data-outcome="cashout" onclick="bdmOutcome(this, 'cashout')">Cashout</button>
+              </div>
+
+              <form class="bdm-winloss" method="post" action="{{ url_for('close_open', bet_id=b.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+                  <input type="hidden" name="outcome" value="win">
+                  <div class="form-row">
+                      <label>Closing Line <span style="font-weight:400;text-transform:none;letter-spacing:0;">(American odds)</span></label>
+                      <input class="bdm-closing-line" name="closing_line" type="text" inputmode="text" placeholder="e.g. -215">
+                      <div class="bdm-cl-note small" style="color:var(--text-muted);min-height:1.1em;"></div>
+                  </div>
+                  <div class="form-row">
+                      <label>Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
+                      <textarea name="notes" rows="2" style="resize:vertical;font-family:inherit;font-size:0.9rem;padding:9px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text);width:100%;">{{ b.notes or '' }}</textarea>
+                  </div>
+                  <div class="bdm-form-actions">
+                      <button type="submit" class="bdm-submit">Confirm Win</button>
+                      <button type="button" class="secondary" onclick="bdmShow(this, 'main')">Back</button>
+                  </div>
+              </form>
+
+              <div class="bdm-cashout" hidden>
+                  <div class="bdm-cashout-box">
+                      <div class="row bdm-co-line-row" hidden><span>Line movement</span><span class="bdm-co-line" style="font-weight:600;font-family:monospace;"></span></div>
+                      <div class="row"><span>Stake</span><span style="font-weight:600;">${{ '%.2f' % b.stake }}</span></div>
+                      <div class="row" style="border-top:1px solid var(--border);padding-top:10px;">
+                          <label style="color:var(--text-muted);white-space:nowrap;">Cashout amount</label>
+                          <input class="bdm-co-amount" type="number" step="0.01" min="0.01" placeholder="Enter offer"
+                                 style="width:140px;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.88rem;font-weight:700;text-align:right;">
+                      </div>
+                      <div class="row" style="justify-content:flex-end;"><span class="bdm-co-pnl" style="font-size:0.78rem;font-weight:700;"></span></div>
+                  </div>
+                  <div class="bdm-form-actions">
+                      <button type="button" class="bdm-co-confirm" onclick="bdmConfirmCashout(this)">Confirm Cashout</button>
+                      <button type="button" class="secondary" onclick="bdmShow(this, 'main')">Back</button>
+                  </div>
+              </div>
           </div>
       </div>
 
@@ -195,109 +274,17 @@
 </div>
 {% endif %}
 
-<!-- Tracked Picks (paper bets) -->
-{% if paper_bets %}
-<div class="card" style="margin-bottom:14px;">
-    <div class="section-header" style="margin-bottom:12px;">
-        <h2>Tracked Picks <span class="paper-badge">Paper</span></h2>
-        <span class="small">no bankroll impact · for model training</span>
-    </div>
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Pick</th>
-                <th>Sport</th>
-                <th>Odds</th>
-                <th>Prob</th>
-                <th>Game Time</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for b in paper_bets %}
-        <tr>
-            <td style="font-weight:600;">{{ b.name }}</td>
-            <td>{% if b.sport %}<span class="small" style="color:var(--blue);">{{ b.sport }}</span>{% else %}—{% endif %}</td>
-            <td>{{ b.odds | round(3) }}</td>
-            <td>{{ (b.prob * 100) | round(1) }}%</td>
-            <td class="small">{% if b.eventstart %}{{ b.eventstart.strftime('%m/%d %H:%M') }}{% else %}—{% endif %}</td>
-            <td>
-                <div class="actions">
-                    <button class="small" onclick="openCloseBetModal({{ b.id }}, '{{ b.name | replace("'","\\'")}}')" style="background:transparent;color:var(--win);border:1px solid rgba(21,128,61,0.3);">Result</button>
-                    <form method="post" action="{{ url_for('delete_open', bet_id=b.id) }}" style="display:inline;">
-                        <button class="danger small">✕</button>
-                    </form>
-                </div>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
-
-<!-- Close Bet Modal -->
-<div id="closeBetModal" class="modal-overlay" onclick="if(event.target===this)closeCloseBetModal()">
-    <div class="modal">
-        <button class="modal-close" onclick="closeCloseBetModal()" aria-label="Close">&#215;</button>
-        <h2 style="margin-bottom:4px;">Save Result</h2>
-        <p id="close_bet_name" class="small" style="margin-bottom:16px;color:var(--silver);"></p>
-
-        <!-- Outcome selector -->
-        <div style="display:flex;gap:0;margin-bottom:18px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
-            <button type="button" id="cbm-opt-win" onclick="setCbmOutcome('win')"
-                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;border-right:1px solid var(--border);cursor:pointer;transition:background 0.15s;">
-                Win
-            </button>
-            <button type="button" id="cbm-opt-loss" onclick="setCbmOutcome('loss')"
-                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;border-right:1px solid var(--border);cursor:pointer;transition:background 0.15s;">
-                Loss
-            </button>
-            <button type="button" id="cbm-opt-cashout" onclick="setCbmOutcome('cashout')"
-                    style="flex:1;padding:9px 4px;font-size:0.82rem;font-weight:700;border:none;cursor:pointer;transition:background 0.15s;">
-                Cashout
-            </button>
-        </div>
-
-        <!-- Win / Loss fields -->
-        <form id="cbm-winloss-form" method="post" action="">
-            <div class="form-row">
-                <label>Closing Line <span style="font-weight:400;text-transform:none;letter-spacing:0;">(American odds)</span></label>
-                <input id="modal_closing_line" name="closing_line" type="text" inputmode="text" placeholder="e.g. -215">
-                <div id="modal_cl_note" class="small" style="color:var(--text-muted);min-height:1.1em;"></div>
-            </div>
-            <div class="form-row">
-                <label>Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
-                <textarea name="notes" rows="2" style="resize:vertical;font-family:inherit;font-size:0.9rem;padding:9px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text);width:100%;"></textarea>
-            </div>
-            <input type="hidden" name="outcome" id="cbm-outcome-hidden" value="win">
-            <button type="submit" id="cbm-submit-btn" style="width:100%;margin-top:4px;">Confirm Win</button>
+<!-- Delete confirmation — z-index sits above the bet sheet -->
+<div id="deleteBetModal" class="modal-overlay" onclick="if(event.target===this)closeDeleteBetModal()">
+    <div class="modal" style="max-width:380px;">
+        <button class="modal-close" onclick="closeDeleteBetModal()" aria-label="Close">&#215;</button>
+        <h2 style="margin-bottom:8px;">Delete bet?</h2>
+        <p id="delete_bet_name" style="margin:0 0 6px;font-weight:600;"></p>
+        <p id="delete_bet_note" class="small" style="margin:0 0 18px;color:var(--text-muted);line-height:1.5;"></p>
+        <form id="deleteBetForm" method="post" action="" class="bdm-form-actions">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+            <button type="button" class="secondary" onclick="closeDeleteBetModal()">Cancel</button>
+            <button type="submit" class="danger">Delete</button>
         </form>
-
-        <!-- Cashout fields -->
-        <div id="cbm-cashout-fields" style="display:none;">
-            <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px;">
-                <div id="cbm-co-line-row" style="display:none;justify-content:space-between;font-size:0.8rem;">
-                    <span style="color:var(--text-muted);">Line movement</span>
-                    <span id="cbm-co-line" style="font-weight:600;font-family:monospace;"></span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:0.8rem;">
-                    <span style="color:var(--text-muted);">Stake</span>
-                    <span id="cbm-co-stake" style="font-weight:600;"></span>
-                </div>
-                <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                    <label style="font-size:0.82rem;color:var(--text-muted);white-space:nowrap;">Cashout amount</label>
-                    <input id="cbm-co-amount" type="number" step="0.01" min="0.01" placeholder="Enter FanDuel offer"
-                           style="width:140px;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.88rem;font-weight:700;text-align:right;">
-                </div>
-                <div style="display:flex;justify-content:flex-end;">
-                    <span id="cbm-co-pnl" style="font-size:0.78rem;font-weight:700;"></span>
-                </div>
-            </div>
-            <button type="button" id="cbm-co-confirm" onclick="confirmCashout()"
-                    style="width:100%;padding:10px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;font-size:0.85rem;font-weight:700;cursor:pointer;">
-                Confirm Cashout
-            </button>
-        </div>
     </div>
 </div>

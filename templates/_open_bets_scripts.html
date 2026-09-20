@@ -16,124 +16,113 @@ document.querySelectorAll('.bc-time[data-utc]').forEach(function(el) {
 });
 
 var _closingSuggestions = {{ (closing_suggestions or {}) | tojson }};
-var _cbmBetId   = null;
-var _cbmStake   = 0;
-var _cbmOutcome = 'win';
+// ── In-sheet bet management (edit / close / delete) ─────────────────────────
+// The modals are rendered inside .container, whose stacking context sits below
+// the body-level bottom sheets no matter the z-index — hoist them to <body> so
+// they can open above an open sheet.
+function bdmHoist(id) {
+    var m = document.getElementById(id);
+    if (m && m.parentElement !== document.body) document.body.appendChild(m);
+    return m;
+}
 
-function openCloseBetModal(btn) {
-    // Accept either a button element (new) or legacy (betId, betName) call signature
-    var betId, betName, stake, entryAmer, currAmer;
-    if (typeof btn === 'object' && btn !== null && btn.dataset) {
-        betId    = btn.dataset.id;
-        betName  = btn.dataset.name;
-        stake    = parseFloat(btn.dataset.stake) || 0;
-        entryAmer = btn.dataset.entryAmer || '';
-        currAmer  = btn.dataset.currAmer  || '';
-    } else {
-        // legacy: openCloseBetModal(id, name)
-        betId    = btn;
-        betName  = arguments[1] || '';
-        stake    = 0;
-        entryAmer = '';
-        currAmer  = '';
-    }
-    _cbmBetId = betId;
-    _cbmStake = stake;
+function bdmDetails(el) { return el.closest('.bc-details'); }
 
-    document.getElementById('close_bet_name').textContent = betName;
-    document.getElementById('cbm-winloss-form').action = '/close_open/' + betId;
+function bdmShow(el, view) {
+    var d = bdmDetails(el);
+    if (!d) return;
+    d.querySelectorAll('.bdm-view').forEach(function (v) { v.hidden = v.getAttribute('data-view') !== view; });
+    if (view === 'close') bdmInitClose(d);
+    var sb = d.closest('.sheet-body');
+    if (sb) sb.scrollTop = 0;
+}
 
-    // Auto-fill closing line if available
-    var cl   = document.getElementById('modal_closing_line');
-    var note = document.getElementById('modal_cl_note');
-    var suggested = _closingSuggestions[betId];
+function bdmInitClose(d) {
+    var id  = d.getAttribute('data-id');
+    var cl  = d.querySelector('.bdm-closing-line');
+    var note = d.querySelector('.bdm-cl-note');
+    var suggested = _closingSuggestions[id];
     if (suggested !== undefined) {
         cl.value = (suggested > 0 ? '+' : '') + suggested;
-        if (note) note.textContent = 'Auto-filled from FanDuel at game start — edit if needed.';
+        note.textContent = 'Auto-filled from FanDuel at game start — edit if needed.';
     } else {
         cl.value = '';
-        if (note) note.textContent = 'Will be auto-filled from FanDuel history when game starts.';
+        note.textContent = 'Will be auto-filled from FanDuel history when game starts.';
     }
-
-    // Cashout line context
-    document.getElementById('cbm-co-stake').textContent = stake ? '$' + stake.toFixed(2) : '—';
-    var lineRow = document.getElementById('cbm-co-line-row');
-    if (entryAmer && currAmer) {
-        var eStr = (parseFloat(entryAmer) > 0 ? '+' : '') + entryAmer;
-        var cStr = (parseFloat(currAmer)  > 0 ? '+' : '') + currAmer;
-        document.getElementById('cbm-co-line').textContent = eStr + ' → ' + cStr;
-        lineRow.style.display = 'flex';
+    var entry = d.getAttribute('data-entry-amer'), curr = d.getAttribute('data-curr-amer');
+    var row = d.querySelector('.bdm-co-line-row');
+    if (entry && curr) {
+        var fmt = function (v) { return (parseFloat(v) > 0 ? '+' : '') + v; };
+        d.querySelector('.bdm-co-line').textContent = fmt(entry) + ' → ' + fmt(curr);
+        row.hidden = false;
     } else {
-        lineRow.style.display = 'none';
+        row.hidden = true;
     }
-    document.getElementById('cbm-co-amount').value = '';
-    document.getElementById('cbm-co-pnl').textContent = '';
-    document.getElementById('cbm-co-amount').oninput = function() {
-        var amt = parseFloat(this.value) || 0;
-        var pnl = amt - _cbmStake;
-        var el  = document.getElementById('cbm-co-pnl');
-        el.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' vs stake';
-        el.style.color = pnl >= 0 ? 'var(--win)' : 'var(--loss)';
+    var amt = d.querySelector('.bdm-co-amount');
+    var pnl = d.querySelector('.bdm-co-pnl');
+    var stake = parseFloat(d.getAttribute('data-stake')) || 0;
+    amt.value = '';
+    pnl.textContent = '';
+    amt.oninput = function () {
+        var diff = (parseFloat(this.value) || 0) - stake;
+        pnl.textContent = (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) + ' vs stake';
+        pnl.style.color = diff >= 0 ? 'var(--win)' : 'var(--loss)';
     };
-
-    setCbmOutcome('win');
-    document.getElementById('closeBetModal').style.display = 'flex';
+    bdmOutcome(d.querySelector('.bdm-seg button'), 'win');
 }
 
-function setCbmOutcome(outcome) {
-    _cbmOutcome = outcome;
-    var opts = ['win', 'loss', 'cashout'];
-    var colors = {win: 'var(--win)', loss: 'var(--loss)', cashout: '#6366f1'};
-    opts.forEach(function(o) {
-        var btn = document.getElementById('cbm-opt-' + o);
-        if (o === outcome) {
-            btn.style.background = o === 'win' ? 'rgba(21,128,61,0.18)'
-                                 : o === 'loss' ? 'rgba(239,68,68,0.14)'
-                                 : 'rgba(99,102,241,0.14)';
-            btn.style.color = colors[o];
-        } else {
-            btn.style.background = 'var(--bg-card-2)';
-            btn.style.color = 'var(--text-muted)';
-        }
+function bdmOutcome(btn, outcome) {
+    var d = bdmDetails(btn);
+    d.querySelectorAll('.bdm-seg button').forEach(function (b) {
+        var o = b.getAttribute('data-outcome');
+        b.className = o === outcome ? 'on-' + o : '';
     });
-
-    var wlForm  = document.getElementById('cbm-winloss-form');
-    var coFields = document.getElementById('cbm-cashout-fields');
+    var wl = d.querySelector('.bdm-winloss'), co = d.querySelector('.bdm-cashout');
     if (outcome === 'cashout') {
-        wlForm.style.display   = 'none';
-        coFields.style.display = 'block';
-        setTimeout(function() { document.getElementById('cbm-co-amount').focus(); }, 50);
+        wl.hidden = true; co.hidden = false;
+        setTimeout(function () { d.querySelector('.bdm-co-amount').focus(); }, 50);
     } else {
-        wlForm.style.display   = 'block';
-        coFields.style.display = 'none';
-        document.getElementById('cbm-outcome-hidden').value = outcome;
-        document.getElementById('cbm-submit-btn').textContent = outcome === 'win' ? 'Confirm Win' : 'Confirm Loss';
+        wl.hidden = false; co.hidden = true;
+        wl.querySelector('input[name="outcome"]').value = outcome;
+        wl.querySelector('.bdm-submit').textContent = outcome === 'win' ? 'Confirm Win' : 'Confirm Loss';
     }
 }
 
-function closeCloseBetModal() {
-    document.getElementById('closeBetModal').style.display = 'none';
-    _cbmBetId = null;
-}
-
-function confirmCashout() {
-    var amount = parseFloat(document.getElementById('cbm-co-amount').value);
+function bdmConfirmCashout(btn) {
+    var d = bdmDetails(btn);
+    var amount = parseFloat(d.querySelector('.bdm-co-amount').value);
     if (!amount || amount <= 0) { alert('Enter the cashout amount from your sportsbook.'); return; }
-    var btn = document.getElementById('cbm-co-confirm');
     btn.disabled = true;
     btn.textContent = 'Processing…';
-    fetch('/api/cashout/' + _cbmBetId, {
+    fetch('/api/cashout/' + d.getAttribute('data-id'), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({cashout_amount: amount}),
     })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.ok) { closeCloseBetModal(); window.location.reload(); }
-        else { alert('Error: ' + (d.error || 'Unknown')); btn.disabled = false; btn.textContent = 'Confirm Cashout'; }
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+        if (res.ok) { window.location.reload(); }
+        else { alert('Error: ' + (res.error || 'Unknown')); btn.disabled = false; btn.textContent = 'Confirm Cashout'; }
     })
-    .catch(function() { alert('Network error.'); btn.disabled = false; btn.textContent = 'Confirm Cashout'; });
+    .catch(function () { alert('Network error.'); btn.disabled = false; btn.textContent = 'Confirm Cashout'; });
 }
+
+function openDeleteBetModal(btn) {
+    var d = bdmDetails(btn);
+    document.getElementById('delete_bet_name').textContent = d.getAttribute('data-name');
+    document.getElementById('delete_bet_note').textContent = '$' + d.getAttribute('data-stake') + ' will be returned to your bankroll.';
+    document.getElementById('deleteBetForm').action = '/delete_open/' + d.getAttribute('data-id');
+    bdmHoist('deleteBetModal').style.display = 'flex';
+}
+
+function closeDeleteBetModal() {
+    document.getElementById('deleteBetModal').style.display = 'none';
+}
+
+document.addEventListener('gamedetailsopen', function (e) {
+    var d = e.detail && e.detail.el;
+    if (d && d.classList.contains('bc-details')) bdmShow(d.querySelector('.bdm-view'), 'main');
+});
 
 // ── Live score polling ────────────────────────────────────────────────────────
 (function () {

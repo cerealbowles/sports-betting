@@ -199,11 +199,7 @@
         </div>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button id="top3-paper-btn" onclick="placeTop3(true)"
-                style="font-size:0.78rem;padding:7px 14px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;font-weight:600;">
-          Paper Only
-        </button>
-        <button id="top3-place-btn" onclick="placeTop3(false)"
+        <button id="top3-place-btn" onclick="placeTop3()"
                 style="font-size:0.82rem;padding:8px 18px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;cursor:pointer;font-weight:700;">
           Place All 3 Bets
         </button>
@@ -1202,7 +1198,7 @@ function closeTop3Modal() {
   document.getElementById('top3Modal').style.display = 'none';
 }
 
-function placeTop3(isPaper) {
+function placeTop3() {
   var inputs = document.querySelectorAll('.top3-stake-input');
   var betsPayload = _top3Bets.map(function(bet, idx) {
     var stake = parseFloat(inputs[idx] ? inputs[idx].value : bet._stake) || bet._stake;
@@ -1221,15 +1217,13 @@ function placeTop3(isPaper) {
   });
 
   var placeBtn  = document.getElementById('top3-place-btn');
-  var paperBtn  = document.getElementById('top3-paper-btn');
   placeBtn.disabled = true;
-  paperBtn.disabled = true;
   placeBtn.textContent = 'Placing…';
 
   fetch('/api/place-top3', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({bets: betsPayload, is_paper: isPaper}),
+    body: JSON.stringify({bets: betsPayload}),
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
@@ -1239,14 +1233,12 @@ function placeTop3(isPaper) {
     } else {
       alert('Error: ' + (data.error || 'Unknown error'));
       placeBtn.disabled = false;
-      paperBtn.disabled = false;
       placeBtn.textContent = 'Place All ' + _top3Bets.length + ' Bets';
     }
   })
   .catch(function() {
     alert('Network error — bets not placed.');
     placeBtn.disabled = false;
-    paperBtn.disabled = false;
   });
 }
 </script>

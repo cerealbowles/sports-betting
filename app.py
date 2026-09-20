@@ -71,7 +71,6 @@ class OpenBet(db.Model):
   notes = db.Column(db.Text, default='')
   game_key = db.Column(db.String(300), default='')  # odds_history lookup key
   bet_side = db.Column(db.String(10), default='')   # 'home' or 'away'
-  is_paper = db.Column(db.Boolean, default=False)   # paper/sim bet — no bankroll impact
 
 class ClosedBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
@@ -87,7 +86,6 @@ class ClosedBet(db.Model):
   eventstart = db.Column(db.DateTime, default=None)
   notes = db.Column(db.Text, default='')
   closing_line   = db.Column(db.Float, default=None)  # decimal odds at settlement
-  is_paper       = db.Column(db.Boolean, default=False)
   cashout_amount = db.Column(db.Float, default=None)   # for outcome='cashout': amount received
 
   @property
@@ -152,8 +150,6 @@ def ensure_column_exists():
     _add('closed_bet',  'closing_line', 'FLOAT DEFAULT NULL')
     _add('open_bet',    'game_key',     'TEXT DEFAULT NULL')
     _add('open_bet',    'bet_side',     'TEXT DEFAULT NULL')
-    _add('open_bet',         'is_paper', 'BOOLEAN DEFAULT 0')
-    _add('closed_bet',       'is_paper', 'BOOLEAN DEFAULT 0')
     _add('game_predictions', 'wind_mph',          'FLOAT DEFAULT NULL')
     _add('game_predictions', 'wind_dir',          'TEXT DEFAULT NULL')
     _add('game_predictions', 'edge_grade',        'TEXT DEFAULT NULL')
@@ -171,6 +167,14 @@ def ensure_column_exists():
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
+
+    # Paper picks were removed; drop any leftover rows so they don't resurface
+    # as $0 real bets. The is_paper column itself is left in place (SQLite,
+    # defaulted, harmless).
+    for table in ('open_bet', 'closed_bet'):
+      if 'is_paper' in [c['name'] for c in inspector.get_columns(table)]:
+        with db.engine.begin() as conn:
+          conn.execute(text(f'DELETE FROM {table} WHERE is_paper = 1'))
 
 # Migrations must run before any Setting.query access
 ensure_column_exists()
@@ -1524,15 +1528,12 @@ def _naive(dt):
 
 
 def compute_stats(open_bets, closed_bets):
-  # Exclude paper bets from all financial stats
-  real_open   = [b for b in open_bets   if not b.is_paper]
-  real_closed  = [b for b in closed_bets if not b.is_paper]
-  decided      = [b for b in real_closed if b.outcome in ('win', 'loss')]
-  total_staked = sum(cb.stake for cb in real_closed)
-  total_profit = sum(cb.profit for cb in real_closed)
+  decided      = [b for b in closed_bets if b.outcome in ('win', 'loss')]
+  total_staked = sum(cb.stake for cb in closed_bets)
+  total_profit = sum(cb.profit for cb in closed_bets)
   wins         = sum(1 for cb in decided if cb.outcome == 'win')
-  cashouts     = sum(1 for cb in real_closed if cb.outcome == 'cashout')
-  n = len(real_closed)
+  cashouts     = sum(1 for cb in closed_bets if cb.outcome == 'cashout')
+  n = len(closed_bets)
   nd = len(decided)
   return {
     'total_pl':     round(total_profit, 2),
@@ -1543,13 +1544,12 @@ def compute_stats(open_bets, closed_bets):
     'losses':       nd - wins,
     'cashouts':     cashouts,
     'total_closed': n,
-    'open_count':   len(real_open),
-    'open_staked':  round(sum(b.stake for b in real_open), 2),
+    'open_count':   len(open_bets),
+    'open_staked':  round(sum(b.stake for b in open_bets), 2),
   }
 
 
 def compute_chart_data(closed_bets):
-  closed_bets = [b for b in closed_bets if not b.is_paper]
   sorted_bets = sorted(closed_bets, key=lambda b: _naive(b.closed_at))
 
   # 1. Cumulative P&L over time
@@ -1683,11 +1683,11 @@ def _score_map_for_open_bets(open_bets):
 
 def _unsettled_finished_bets():
     """
-    Real-money (non-paper) open bets whose game has already gone Final but
+    Open bets whose game has already gone Final but
     haven't been closed out yet — used to block placing new bets until the
     user settles them and the bankroll reflects the result.
     """
-    open_bets = OpenBet.query.filter_by(is_paper=False).filter(OpenBet.game_key != '').all()
+    open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
     if not open_bets:
         return []
     score_map = _score_map_for_open_bets(open_bets)
@@ -1773,7 +1773,7 @@ def _annotate_open_bets(open_bets):
 
 def _tier_open_bets(real_open):
     """
-    Per-bet book-implied prob / edge / EV / tier grading for non-paper open
+    Per-bet book-implied prob / edge / EV / tier grading for open
     bets. Split out from _annotate_open_bets so callers needing just the
     CLV/line-move side (or just the tier side) don't have to run both, but
     in practice the Dashboard and /mlb use both together.
@@ -1798,7 +1798,7 @@ def _tier_open_bets(real_open):
 
 def _open_bets_summary_stats(real_open):
     """Aggregate summary row (avg edge / avg CLV / % positive CLV / expected
-    ROI) over a set of already-annotated-and-tiered non-paper open bets.
+    ROI) over a set of already-annotated-and-tiered open bets.
     Used for both the Dashboard's all-sports summary row and a sport-scoped
     page's own summary row (e.g. /mlb, MLB-only)."""
     bets_with_edge = [b for b in real_open if b.edge_pct is not None]
@@ -1889,7 +1889,7 @@ def _inject_global_exposure():
         settings = Setting.query.first()
         if not settings:
             return {'global_exposure': None}
-        open_bets   = OpenBet.query.filter_by(is_paper=False).all()
+        open_bets   = OpenBet.query.all()
         open_staked = sum((b.stake or 0.0) for b in open_bets)
         # Total working capital = uncommitted bankroll + whatever's already
         # staked (matches the _adj_bankroll convention used for unit sizing
@@ -1922,13 +1922,13 @@ def _inject_nav_context():
     filter rather than its own nav destination and other pages need to
     remember where you last were.
 
-    Also exposes nav_open_bet_count (real, non-paper open bet count, for the
+    Also exposes nav_open_bet_count (open bet count, for the
     Bets nav badge)."""
     sport = (request.cookies.get('last_sport') or 'MLB').upper()
     if sport not in _SPORT_SCHEDULE_ENDPOINTS:
         sport = 'MLB'
 
-    nav_open_bet_count = OpenBet.query.filter_by(is_paper=False).count()
+    nav_open_bet_count = OpenBet.query.count()
 
     return {
         'nav_last_sport': sport,
@@ -1979,7 +1979,7 @@ def history():
   _adj_bankroll = (settings.bankroll + stats['open_staked']) if settings else 1.0
   unit_size = max(0.01, round(_adj_bankroll * settings.percent_bankroll, 4))
 
-  real_closed = [b for b in closed_bets if not b.is_paper]
+  real_closed = closed_bets
 
   # CLV summary across all closed bets with a closing line
   clv_vals = [b.clv for b in real_closed if b.clv is not None]
@@ -2031,10 +2031,8 @@ def bets_page():
   all_bets = OpenBet.query.order_by(
       OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
   closing_suggestions = _annotate_open_bets(all_bets)
-  real_open  = [b for b in all_bets if not b.is_paper]
-  paper_open = [b for b in all_bets if b.is_paper]
-  _tier_open_bets(real_open)
-  open_stats = _open_bets_summary_stats(real_open)
+  _tier_open_bets(all_bets)
+  open_stats = _open_bets_summary_stats(all_bets)
 
   settings = Setting.query.first()
   bankroll = settings.bankroll if settings else 0.0
@@ -2046,11 +2044,11 @@ def bets_page():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
-  return render_template('bets.html', open_bets=real_open, paper_bets=paper_open,
+  return render_template('bets.html', open_bets=all_bets,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(real_open)} Open Bet{'s' if len(real_open) != 1 else ''}",
+                         heading=f"{len(all_bets)} Open Bet{'s' if len(all_bets) != 1 else ''}",
                          sync_next=url_for('bets_page'))
 
 
@@ -2269,7 +2267,7 @@ def api_calc():
   except Exception:
     return {'recommended': 0.0}
 
-  closed_bets = [b for b in ClosedBet.query.all() if not b.is_paper]
+  closed_bets = ClosedBet.query.all()
   recommended = compute_recommended_amount(settings.bankroll, settings.percent_bankroll, odds, prob, closed_bets, sport=sport, bet_type=bet_type)
   return {'recommended': recommended}
 
@@ -2307,7 +2305,7 @@ def empirical_info():
             "bucket_label": label,
         })
 
-  closed_bets = [b for b in ClosedBet.query.all() if not b.is_paper]
+  closed_bets = ClosedBet.query.all()
   now = datetime.now(timezone.utc)
   weights_sum = 0.0
   weighted_wins = 0.0
@@ -2348,17 +2346,15 @@ def empirical_info():
 def place_top3():
   data     = request.get_json(silent=True) or {}
   bets     = data.get('bets', [])
-  is_paper = bool(data.get('is_paper', False))
   if not bets or len(bets) > 5:
     return jsonify({'error': 'Invalid bets list'}), 400
-  if not is_paper:
-    unsettled = _unsettled_finished_bets()
-    if unsettled:
-      names = ', '.join(b.name for b, _info in unsettled)
-      return jsonify({
-        'error': f'Close out finished bet(s) before placing new ones: {names}',
-        'unsettled': [b.id for b, _info in unsettled],
-      }), 409
+  unsettled = _unsettled_finished_bets()
+  if unsettled:
+    names = ', '.join(b.name for b, _info in unsettled)
+    return jsonify({
+      'error': f'Close out finished bet(s) before placing new ones: {names}',
+      'unsettled': [b.id for b, _info in unsettled],
+    }), 409
   settings = Setting.query.first()
   if not settings:
     return jsonify({'error': 'No settings'}), 400
@@ -2395,13 +2391,11 @@ def place_top3():
           game_key = f"{h_norm}_{a_norm}_{utc_dt.strftime('%Y-%m-%dT%H')}"
         else:
           game_key = f"{h_norm}_{a_norm}"
-      b = OpenBet(name=name, odds=odds_dec, prob=prob,
-                  stake=0.0 if is_paper else stake,
+      b = OpenBet(name=name, odds=odds_dec, prob=prob, stake=stake,
                   sport=sport, bet_type=bet_type, eventstart=eventstart,
-                  game_key=game_key, bet_side=side, is_paper=is_paper)
+                  game_key=game_key, bet_side=side)
       db.session.add(b)
-      if not is_paper:
-        settings.bankroll = round(settings.bankroll - stake, 2)
+      settings.bankroll = round(settings.bankroll - stake, 2)
       placed.append({'name': name, 'stake': stake})
     db.session.commit()
     return jsonify({'ok': True, 'placed': placed, 'count': len(placed)})
@@ -2411,23 +2405,21 @@ def place_top3():
 
 @app.route('/add_open', methods=['POST'])
 def add_open():
-  is_paper = request.form.get('is_paper') == '1'
-  if not is_paper:
-    unsettled = _unsettled_finished_bets()
-    if unsettled:
-      names = ', '.join(b.name for b, _info in unsettled)
-      next_url = request.form.get('next', '').strip()
-      back_url = next_url if next_url.startswith('/') and not next_url.startswith('//') else url_for('index')
-      return (
-        f"<p>Close out finished bet(s) before placing a new one: {names}.</p>"
-        f"<p><a href='{back_url}'>Back to open bets</a></p>",
-        409,
-      )
+  unsettled = _unsettled_finished_bets()
+  if unsettled:
+    names = ', '.join(b.name for b, _info in unsettled)
+    next_url = request.form.get('next', '').strip()
+    back_url = next_url if next_url.startswith('/') and not next_url.startswith('//') else url_for('index')
+    return (
+      f"<p>Close out finished bet(s) before placing a new one: {names}.</p>"
+      f"<p><a href='{back_url}'>Back to open bets</a></p>",
+      409,
+    )
   try:
     name     = request.form.get('name', 'Bet')
     odds     = float(request.form.get('odds'))
     prob     = float(request.form.get('prob'))
-    stake    = 0.0 if is_paper else float(request.form.get('stake'))
+    stake    = float(request.form.get('stake'))
     sport    = request.form.get('sport', '')
     bet_type = request.form.get('bet_type', 'Moneyline')
   except Exception:
@@ -2467,18 +2459,25 @@ def add_open():
     else:
       game_key = f"{h_norm}_{a_norm}"
   b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type,
-              eventstart=eventstart, notes=notes, game_key=game_key, bet_side=bet_side,
-              is_paper=is_paper)
+              eventstart=eventstart, notes=notes, game_key=game_key, bet_side=bet_side)
   db.session.add(b)
-  if not is_paper:
-    settings = Setting.query.first()
-    if settings:
-      settings.bankroll = round(settings.bankroll - stake, 2)
+  settings = Setting.query.first()
+  if settings:
+    settings.bankroll = round(settings.bankroll - stake, 2)
   db.session.commit()
   next_url = request.form.get('next', '').strip()
   if next_url and next_url.startswith('/') and not next_url.startswith('//'):
     return redirect(next_url)
   return redirect(url_for('index'))
+
+def _redirect_next(default_endpoint='index'):
+  """Redirect to the same-site `next` path a form sent along (so acting on a
+  bet from a schedule page's sheet returns there), else the dashboard."""
+  nxt = (request.form.get('next') or '').strip()
+  if nxt.startswith('/') and not nxt.startswith('//'):
+    return redirect(nxt)
+  return redirect(url_for(default_endpoint))
+
 
 @app.route('/edit_open/<int:bet_id>', methods=['GET', 'POST'])
 def edit_open(bet_id):
@@ -2493,12 +2492,11 @@ def edit_open(bet_id):
       b.sport    = request.form.get('sport', b.sport)
       b.bet_type = request.form.get('bet_type', b.bet_type)
       b.notes    = request.form.get('notes', b.notes or '')
-      if not b.is_paper:
-        settings = Setting.query.first()
-        if settings:
-          settings.bankroll = round(settings.bankroll + old_stake - b.stake, 2)
+      settings = Setting.query.first()
+      if settings:
+        settings.bankroll = round(settings.bankroll + old_stake - b.stake, 2)
       db.session.commit()
-      return redirect(url_for('index'))
+      return _redirect_next()
     except Exception:
       pass
   return render_template('edit_open.html', b=b)
@@ -2506,13 +2504,12 @@ def edit_open(bet_id):
 @app.route('/delete_open/<int:bet_id>', methods=['POST'])
 def delete_open(bet_id):
   b = OpenBet.query.get_or_404(bet_id)
-  if not b.is_paper:
-    settings = Setting.query.first()
-    if settings:
-      settings.bankroll = round(settings.bankroll + b.stake, 2)
+  settings = Setting.query.first()
+  if settings:
+    settings.bankroll = round(settings.bankroll + b.stake, 2)
   db.session.delete(b)
   db.session.commit()
-  return redirect(url_for('index'))
+  return _redirect_next()
 
 @app.route('/api/cashout/<int:bet_id>', methods=['POST'])
 def api_cashout(bet_id):
@@ -2527,14 +2524,13 @@ def api_cashout(bet_id):
     sport=b.sport, bet_type=b.bet_type, eventstart=b.eventstart,
     outcome='cashout', profit=profit, cashout_amount=cashout_amount,
     closed_at=datetime.now(timezone.utc), notes=b.notes or '',
-    closing_line=None, is_paper=b.is_paper,
+    closing_line=None,
   )
   db.session.add(cb)
   db.session.delete(b)
-  if not b.is_paper:
-    settings = Setting.query.first()
-    if settings:
-      settings.bankroll = round(settings.bankroll + cashout_amount, 2)
+  settings = Setting.query.first()
+  if settings:
+    settings.bankroll = round(settings.bankroll + cashout_amount, 2)
   db.session.commit()
   return jsonify({'ok': True, 'profit': profit})
 
@@ -2574,17 +2570,16 @@ def close_open(bet_id):
     name=b.name, odds=b.odds, prob=b.prob, stake=b.stake,
     sport=b.sport, bet_type=b.bet_type, eventstart=b.eventstart,
     outcome=outcome, profit=profit, closed_at=datetime.now(timezone.utc),
-    notes=notes, closing_line=closing_line, is_paper=b.is_paper,
+    notes=notes, closing_line=closing_line,
   )
   db.session.add(cb)
   db.session.delete(b)
-  # Paper bets never affect bankroll — they were never deducted on placement
-  if not b.is_paper and outcome == 'win':
+  if outcome == 'win':
     settings = Setting.query.first()
     if settings:
       settings.bankroll = round(settings.bankroll + b.stake + profit, 2)
   db.session.commit()
-  return redirect(url_for('index'))
+  return _redirect_next()
 
 @app.route('/add_closed', methods=['POST'])
 def add_closed():
@@ -2917,10 +2912,8 @@ def mlb_schedule():
   mlb_bets       = OpenBet.query.filter_by(sport='MLB').order_by(
       OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
   closing_suggestions = _annotate_open_bets(mlb_bets)
-  mlb_real_open  = [b for b in mlb_bets if not b.is_paper]
-  mlb_paper_open = [b for b in mlb_bets if b.is_paper]
-  _tier_open_bets(mlb_real_open)
-  open_stats = _open_bets_summary_stats(mlb_real_open)
+  _tier_open_bets(mlb_bets)
+  open_stats = _open_bets_summary_stats(mlb_bets)
 
   # Unit size uses ALL sports' open stake (not just MLB's) added back to
   # bankroll — Kelly sizing is bankroll-wide, not per-sport (same reasoning
@@ -2936,11 +2929,11 @@ def mlb_schedule():
 
   resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
                          bankroll=bankroll, kelly_cap=kelly_cap, pick_of_day=pick_of_day,
-                         open_bets=mlb_real_open, paper_bets=mlb_paper_open,
+                         open_bets=mlb_bets,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(mlb_real_open)} Open MLB Bet{'s' if len(mlb_real_open) != 1 else ''}",
+                         heading=f"{len(mlb_bets)} Open MLB Bet{'s' if len(mlb_bets) != 1 else ''}",
                          sync_next='/mlb', subnav_sport='MLB'))
   return _set_last_sport_cookie(resp, 'MLB')
 
@@ -3803,10 +3796,8 @@ def nfl_schedule():
   nfl_bets       = OpenBet.query.filter_by(sport='NFL').order_by(
       OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
   closing_suggestions = _annotate_open_bets(nfl_bets)
-  nfl_real_open  = [b for b in nfl_bets if not b.is_paper]
-  nfl_paper_open = [b for b in nfl_bets if b.is_paper]
-  _tier_open_bets(nfl_real_open)
-  open_stats = _open_bets_summary_stats(nfl_real_open)
+  _tier_open_bets(nfl_bets)
+  open_stats = _open_bets_summary_stats(nfl_bets)
 
   _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
   _adj_bankroll = bankroll + _all_open_stats['open_staked']
@@ -3817,11 +3808,11 @@ def nfl_schedule():
   odds_next_fetch = _oa.get_next_fetch_time()
 
   resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
-                         open_bets=nfl_real_open, paper_bets=nfl_paper_open,
+                         open_bets=nfl_bets,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(nfl_real_open)} Open NFL Bet{'s' if len(nfl_real_open) != 1 else ''}",
+                         heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
                          sync_next='/nfl'))
   return _set_last_sport_cookie(resp, 'NFL')
 
@@ -3914,10 +3905,8 @@ def cfb_schedule():
   cfb_bets       = OpenBet.query.filter_by(sport='CFB').order_by(
       OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
   closing_suggestions = _annotate_open_bets(cfb_bets)
-  cfb_real_open  = [b for b in cfb_bets if not b.is_paper]
-  cfb_paper_open = [b for b in cfb_bets if b.is_paper]
-  _tier_open_bets(cfb_real_open)
-  open_stats = _open_bets_summary_stats(cfb_real_open)
+  _tier_open_bets(cfb_bets)
+  open_stats = _open_bets_summary_stats(cfb_bets)
 
   _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
   _adj_bankroll = bankroll + _all_open_stats['open_staked']
@@ -3929,11 +3918,11 @@ def cfb_schedule():
 
   resp = make_response(render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
                          recommended=recommended, conferences=sorted(conferences),
-                         open_bets=cfb_real_open, paper_bets=cfb_paper_open,
+                         open_bets=cfb_bets,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(cfb_real_open)} Open CFB Bet{'s' if len(cfb_real_open) != 1 else ''}",
+                         heading=f"{len(cfb_bets)} Open CFB Bet{'s' if len(cfb_bets) != 1 else ''}",
                          sync_next='/cfb'))
   return _set_last_sport_cookie(resp, 'CFB')
 

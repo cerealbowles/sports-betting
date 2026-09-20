@@ -36,11 +36,10 @@ document.body.style.overflow = '';
 function closeModalOutside(e) {
 if (e.target === e.currentTarget) {
     closeAddClosedModal();
-    closeCloseBetModal();
 }
 }
 document.addEventListener('keydown', function(e) {
-if (e.key === 'Escape') { closeAddClosedModal(); closeCloseBetModal(); closeBetSheet(); closeGameDetails(); }
+if (e.key === 'Escape') { closeAddClosedModal(); closeBetSheet(); closeGameDetails(); }
 });
 
 /* ── Game details bottom sheet ────────────────────────
@@ -184,23 +183,6 @@ frame.addEventListener('load', function () {
     } catch (err) { /* cross-origin — ignore */ }
 });
 });
-
-/* ── Modal: Close Bet ────────────────────────────────── */
-function openCloseBetModal(betId, betName) {
-var modal = document.getElementById('closeBetModal');
-if (!modal) return;
-var nameEl = document.getElementById('close_bet_name');
-if (nameEl) nameEl.textContent = betName;
-var form = modal.querySelector('form');
-if (form) form.action = '/close_open/' + betId;
-modal.classList.add('open');
-document.body.style.overflow = 'hidden';
-}
-function closeCloseBetModal() {
-var modal = document.getElementById('closeBetModal');
-if (modal) modal.classList.remove('open');
-document.body.style.overflow = '';
-}
 
 /* ── Utility: American → decimal ────────────────────── */
 function americanToDecimal(a) {
@@ -534,7 +516,6 @@ fd.append('home_name',     d.homeName || '');
 fd.append('away_name',     d.awayName || '');
 fd.append('bet_side',      d.betSide || '');
 fd.append('eventstartutc', d.eventstartutc || '');
-fd.append('is_paper',      '0');
 
 fetch('/add_open', { method: 'POST', body: fd })
     .then(function (r) {

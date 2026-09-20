@@ -582,7 +582,7 @@ a.action-link:hover { color: var(--silver); }
   position: fixed;
   inset: 0;
   background: rgba(5, 8, 16, 0.82);
-  z-index: 200;
+  z-index: 400;  /* above the bottom sheets (210/220) */
   align-items: center;
   justify-content: center;
   padding: 20px;
@@ -1694,14 +1694,6 @@ body.embed-mode .container { padding-bottom: 0; }
 
 .track-pair { display: flex; gap: 5px; }
 
-.paper-badge {
-    display: inline-block; font-size: 0.65rem; font-weight: 700;
-    padding: 1px 6px; border-radius: 3px; letter-spacing: 0.2px;
-    background: var(--blue-dim); color: var(--blue);
-    border: 1px solid rgba(96,165,250,0.22);
-    vertical-align: middle; margin-left: 4px;
-}
-
 .form-row-section {
     display: grid; grid-template-columns: 1fr 1fr;
     border-top: 1px solid var(--border);
@@ -2197,6 +2189,46 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .bdm-actions form { display: flex; }
 .bdm-actions form button { width: 100%; }
+
+/* Bet detail sheet — in-sheet views (summary / edit / close) */
+.bdm-view[hidden] { display: none; }
+.bdm-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.bdm-stat {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
+  text-align: center;
+}
+.bdm-stat-label { display: block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.bdm-stat-val { display: block; margin-top: 3px; font-size: 0.95rem; font-weight: 700; color: var(--text); }
+.bdm-notes { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5; white-space: pre-wrap; }
+.bdm-view-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin: 0 0 12px; }
+.bdm-seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 16px; }
+.bdm-seg button {
+  flex: 1; padding: 9px 4px; font-size: 0.82rem; font-weight: 700;
+  border: none; border-right: 1px solid var(--border); border-radius: 0;
+  background: var(--bg-card-2); color: var(--text-muted); cursor: pointer;
+  box-shadow: none; transform: none;
+}
+.bdm-seg button:last-child { border-right: none; }
+.bdm-seg button.on-win  { background: rgba(21,128,61,0.18);  color: var(--win); }
+.bdm-seg button.on-loss { background: rgba(239,68,68,0.14);  color: var(--loss); }
+.bdm-seg button.on-cashout { background: rgba(99,102,241,0.14); color: #6366f1; }
+.bdm-form-actions { display: flex; gap: 8px; margin-top: 8px; }
+.bdm-form-actions > * { flex: 1; }
+.bdm-cashout-box {
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.bdm-cashout-box .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.8rem; }
+.bdm-cashout-box .row[hidden] { display: none; }
+.bdm-cashout-box .row span:first-child { color: var(--text-muted); }
 
 /* ── History page — filter bar ───────────────────────── */
 .filter-bar {

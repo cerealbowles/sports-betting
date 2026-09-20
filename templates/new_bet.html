@@ -46,10 +46,6 @@
             </select>
         </div>
     </div>
-    <div id="paper_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:var(--blue-dim); border:1px solid rgba(37,99,235,0.22); border-radius:var(--radius-sm); font-size:0.8rem; color:var(--blue); font-weight:700;">
-        📋 Paper Pick — no bankroll impact
-        <span style="font-weight:400; color:var(--text-muted); margin-left:6px;">Result logged for model training only</span>
-    </div>
     <div id="game_context_banner" style="display:none; margin-bottom:10px; padding:9px 12px; background:rgba(35,97,146,0.09); border:1px solid rgba(35,97,146,0.22); border-radius:var(--radius-sm); font-size:0.78rem;">
         <div style="display:flex; flex-wrap:wrap; gap:10px; color:var(--text-muted);">
             <span id="ctx_fd"></span>
@@ -101,7 +97,6 @@
         <input type="hidden" id="form_home_name"    name="home_name">
         <input type="hidden" id="form_away_name"    name="away_name">
         <input type="hidden" id="form_bet_side"     name="bet_side">
-        <input type="hidden" id="form_is_paper"     name="is_paper" value="0">
         <input type="hidden" id="form_eventstartutc" name="eventstartutc">
         <input type="hidden" id="form_next"           name="next" value="">
         <button type="submit" id="submit_btn" style="width:100%; margin-top:4px;">Place Bet</button>
@@ -130,7 +125,6 @@
     var awayName   = params.get('away_name');
     var betSide    = params.get('bet_side');
     var betType    = params.get('bet_type');
-    var isPaper    = params.get('paper') === '1';
     var unfRank    = params.get('unf_rank');
 
     // Set immediately (not deferred) so it's available before any
@@ -226,20 +220,6 @@
 
         var nextUrl = params.get('next');
         if (nextUrl) { var el = document.getElementById('form_next'); if (el) el.value = nextUrl; }
-
-        if (isPaper) {
-            var pb = document.getElementById('form_is_paper');
-            if (pb) pb.value = '1';
-            var paperBanner = document.getElementById('paper_banner');
-            if (paperBanner) paperBanner.style.display = 'block';
-            // Hide stake field — paper bets have no stake
-            var stakeRow = document.getElementById('actual_stake');
-            if (stakeRow && stakeRow.closest('.form-row')) {
-                stakeRow.closest('.form-row').style.display = 'none';
-            }
-            var submitBtn = document.getElementById('submit_btn');
-            if (submitBtn) submitBtn.textContent = 'Save Paper Pick';
-        }
 
         window.history.replaceState({}, '', window.location.pathname);
     }

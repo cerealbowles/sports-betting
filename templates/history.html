@@ -84,7 +84,7 @@
         <tr data-sport="{{ (cb.sport or '') | lower }}" data-outcome="{{ cb.outcome }}">
             <td class="hide-mobile small">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
             <td>
-                <div>{{ cb.name }}{% if cb.sport %}<span class="small" style="color:var(--blue); margin-left:6px;">{{ cb.sport }}</span>{% endif %}{% if cb.is_paper %}<span class="paper-badge">Paper</span>{% endif %}</div>
+                <div>{{ cb.name }}{% if cb.sport %}<span class="small" style="color:var(--blue); margin-left:6px;">{{ cb.sport }}</span>{% endif %}</div>
                 {% if cb.notes %}<div class="small" style="color:var(--text-muted); margin-top:2px;">{{ cb.notes[:80] }}{% if cb.notes|length > 80 %}…{% endif %}</div>{% endif %}
             </td>
             <td>{{ '%.2f' % (cb.stake / unit_size) }}u</td>
