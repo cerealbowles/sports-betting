@@ -1702,6 +1702,35 @@ def _unsettled_finished_bets():
     return unsettled
 
 
+def _as_decimal_odds(odds):
+    """Coerce a stored/entered price to decimal odds. Decimal odds never reach
+    100, so a value at/above +100 or at/below -100 is American and gets converted
+    (a hand-typed -210 in a Decimal Odds field otherwise yields a negative return)."""
+    odds = float(odds)
+    if odds >= 100:
+        return round(1 + odds / 100, 4)
+    if odds <= -100:
+        return round(1 + 100 / -odds, 4)
+    return odds
+
+
+@app.template_filter('bet_return')
+def _bet_return_filter(bet):
+    """Total payout (stake included) for an open bet, tolerant of American odds."""
+    return bet.stake * _as_decimal_odds(bet.odds)
+
+
+@app.template_filter('bet_pill_label')
+def _bet_pill_label_filter(name):
+    """Compact bet selection for the game-card pill: 'SEA Moneyline' -> 'SEA ML',
+    'Over 40.5' -> 'O 40.5'."""
+    label = (name or '').replace('Moneyline', 'ML').strip()
+    for long, short in (('Over ', 'O '), ('Under ', 'U ')):
+        if label.startswith(long):
+            label = short + label[len(long):]
+    return label
+
+
 def _annotate_open_bets(open_bets):
     """
     Attaches live CLV, line movement, and closing-line-suggestion display
@@ -2419,7 +2448,7 @@ def add_open():
     )
   try:
     name     = request.form.get('name', 'Bet')
-    odds     = float(request.form.get('odds'))
+    odds     = _as_decimal_odds(request.form.get('odds'))
     prob     = float(request.form.get('prob'))
     stake    = float(request.form.get('stake'))
     sport    = request.form.get('sport', '')
@@ -2488,7 +2517,7 @@ def edit_open(bet_id):
     try:
       old_stake = b.stake
       b.name     = request.form.get('name', b.name)
-      b.odds     = float(request.form.get('odds', b.odds))
+      b.odds     = _as_decimal_odds(request.form.get('odds', b.odds))
       b.prob     = float(request.form.get('prob', b.prob))
       b.stake    = float(request.form.get('stake', b.stake))
       b.sport    = request.form.get('sport', b.sport)

@@ -35,23 +35,11 @@
             {% endif %}
             <div class="game-header-right">
                 {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
+                {% for bet in game.open_bets or [] %}<span class="open-bet-pill" title="Open bet: {{ bet.name }}">{{ bet.name | bet_pill_label }} · ${{ '%.2f' % bet.stake }} → ${{ '%.2f' % (bet | bet_return) }}</span>{% endfor %}
                 {{ edge_star(game) }}
                 {% if game.odds_line %}<span class="cfb-odds-badge">{{ game.odds_line }}{% if game.over_under %} · O/U {{ game.over_under }}{% endif %}</span>{% endif %}
             </div>
         </div>
-
-        <!-- ── Open bet indicator ── -->
-        {% if game.open_bets %}
-        <div class="open-bet-strip">
-            {% for bet in game.open_bets %}
-            <span class="obi-badge">
-                📋 <strong>{{ bet.name }}</strong>
-                · ${{ '%.2f' % bet.stake }} at risk
-                · return ${{ '%.2f' % (bet.stake * bet.odds) }}
-            </span>
-            {% endfor %}
-        </div>
-        {% endif %}
 
         <!-- ── Scoreboard ── -->
         <div class="scoreboard">
