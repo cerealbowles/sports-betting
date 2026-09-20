@@ -46,6 +46,7 @@ SPORT_KEYS = {
     'nfl': 'americanfootball_nfl',
     'cfb': 'americanfootball_ncaaf',
     'nba': 'basketball_nba',
+    'wnba': 'basketball_wnba',
 }
 
 # Abbreviate long bookmaker names for compact display

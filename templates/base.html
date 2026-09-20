@@ -15,8 +15,8 @@
 </head>
 {% set _embed = request.args.get('embed') == '1' %}
 <body{% if _embed %} class="embed-mode"{% endif %}>
-{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule'} %}
-{% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀'} %}
+{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule'} %}
+{% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀', 'WNBA': '🏀'} %}
 {# The header sport switcher is global (every page), driven by the last-visited-sport
    cookie (nav_last_sport) rather than a per-page var, since child templates can't set
    context this early in a base-template extends chain. The one exception is the Model

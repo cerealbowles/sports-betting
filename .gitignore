@@ -19,6 +19,8 @@ cfb_training_2024.json
 cfb_training_2025.json
 cfb_training_combined.json
 nhl_refit_results.json
+wnba_refit_results.json
+wnba_training_*.json
 nhl_training_20232024.json
 nhl_training_20242025.json
 nhl_training_20252026.json

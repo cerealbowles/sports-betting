@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% block title %}WNBA Today — Spooky Sports{% endblock %}
+
+{% block content %}
+{% from "_edge_star.html" import edge_star %}
+<div class="schedule-body">
+
+
+{% if not schedule %}
+<div class="card" style="padding:24px; text-align:center;">
+    <p style="color:var(--text-muted);">No WNBA games today, or unable to reach the WNBA API. Try refreshing.</p>
+</div>
+{% else %}
+
+{% for day in schedule %}
+<div class="day-header">
+    <h2>{{ day.date_display }}</h2>
+    <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
+    <span class="refresh-info"><a href="{{ url_for('wnba_schedule') }}" class="refresh-link">↻ Refresh</a></span>
+</div>
+
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set _favs = (_live + _upcoming + _final) | selectattr('is_favorite') | list %}
+{% set _rest = (_live + _upcoming + _final) | rejectattr('is_favorite') | list %}
+{% set _rest_final_n = _final | rejectattr('is_favorite') | list | length %}
+{% set _rest_live_n = _live | rejectattr('is_favorite') | list | length %}
+{% set _rest_up_n = _upcoming | rejectattr('is_favorite') | list | length %}
+{% set ns = namespace(final_hdr=False, rest_hdr=False, up_hdr=False) %}
+<div class="games-grid">
+{% for game in _favs + _rest %}
+{% if loop.first and game.is_favorite %}<div class="games-section-hdr games-section-hdr-fav">★ Favorites</div>{% endif %}
+{% if not game.is_favorite and not ns.rest_hdr %}{% set ns.rest_hdr = True %}{% if _favs %}<div class="games-section-hdr games-section-hdr-rest">All games</div>{% endif %}{% endif %}
+{% if not game.is_favorite and game.status not in ('Live', 'Final') and not ns.up_hdr %}{% set ns.up_hdr = True %}<div class="games-section-hdr games-section-hdr-upcoming" data-upcoming-hdr-inline{% if not _rest_live_n %} hidden{% endif %}>Upcoming (<span data-upcoming-count>{{ _rest_up_n }}</span>)</div>{% endif %}
+{% if game.status == 'Final' and not game.is_favorite and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr">Completed · {{ _rest_final_n }} game{{ 's' if _rest_final_n != 1 }}</div>
+{% endif %}
+
+{% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
+{% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
+{% if game.odds and game.odds.total_line %}
+{% set over_url %}{{ url_for('new_bet') }}?name={{ ('Over ' + game.odds.total_line|string) | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.over_odds %}&odds={{ game.odds.over_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
+{% set under_url %}{{ url_for('new_bet') }}?name={{ ('Under ' + game.odds.total_line|string) | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.under_odds %}&odds={{ game.odds.under_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
+{% endif %}
+
+<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
+
+    <!-- ── Simplified, always-visible summary — tap to open full stats ── -->
+    <div class="game-card-summary" role="button" tabindex="0" aria-label="View stats and bet on {{ game.away.abbrev }} at {{ game.home.abbrev }}">
+
+        <!-- ── Header bar ── -->
+        <div class="game-header">
+            {% if game.status == 'Live' %}
+                <span class="status-live">● Live</span>
+            {% elif game.status == 'Final' %}
+                <span class="status-final">Final</span>
+            {% else %}
+                <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
+            {% endif %}
+            <div class="game-header-right">
+                {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
+                {{ edge_star(game) }}
+            </div>
+        </div>
+
+        <!-- ── Scoreboard ── -->
+        <div class="scoreboard">
+
+            <!-- Away -->
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ game.away.name }}</div>
+                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
+                </div>
+            </div>
+
+            <!-- Center: score -->
+            <div class="sb-center">
+                {% if game.status in ('Live', 'Final') %}
+                <div class="sb-score">
+                    <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
+                </div>
+                {% else %}
+                <div class="sb-vs">vs</div>
+                {% endif %}
+            </div>
+
+            <!-- Home -->
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ game.home.name }}</div>
+                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
+                </div>
+                <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+
+        </div><!-- /.scoreboard -->
+
+        {% include "_quick_edge_row.html" %}
+
+    </div><!-- /.game-card-summary -->
+
+    <!-- ── Full stats + betting, moved into the details sheet on tap ── -->
+    <div class="game-card-details" id="gd-{{ game.game_key }}" hidden>
+
+        <div class="sheet-game-title">{{ game.away.abbrev }} @ {{ game.home.abbrev }}</div>
+
+        <!-- Scoreboard, repeated here (not just in the collapsed summary) so
+             the team logos/records stay visible once the summary is hidden
+             behind the details sheet. -->
+        <div class="scoreboard" style="margin-bottom:14px;">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
+                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
+                </div>
+            </div>
+            <div class="sb-center"><div class="sb-vs">vs</div></div>
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
+                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
+                </div>
+                <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+        </div>
+
+        {% if game.venue %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">{{ game.venue }}</div>
+        {% endif %}
+
+        {% if game.status == 'Live' and game.live_state and game.live_state.clock_text %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            {{ game.live_state.clock_text }}
+        </div>
+        {% else %}
+        <div class="small" style="margin-bottom:10px; color:var(--text-muted);">
+            Away {{ game.away.split_w }}–{{ game.away.split_l }} · Home {{ game.home.split_w }}–{{ game.home.split_l }}
+        </div>
+        {% endif %}
+
+        {% include "_period_linescore.html" %}
+
+        <!-- ── Recent form + team stats ── -->
+        <div class="form-row-section">
+            {% for team, fg_class in [(game.away, 'fg-away'), (game.home, 'fg-home')] %}
+            <div class="form-group {{ fg_class }}">
+                <span class="form-label">Recent</span>
+                <div class="form-dots">
+                    {% for r in team.form %}<span class="dot {{ 'dot-w' if r == 'W' else 'dot-l' }}">{{ r }}</span>{% endfor %}
+                </div>
+                <div class="team-stat-row">
+                    <span>PPG <b>{{ team.ppg }}</b></span>
+                    <span>PPG-A <b>{{ team.ppg_allowed }}</b></span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- ── FanDuel + Model analysis ── -->
+        {% if game.odds or game.model %}
+        <div class="analysis-section">
+
+        {% if game.odds %}
+        <div class="analysis-row">
+            <span class="analysis-label">FanDuel</span>
+            <div class="analysis-data">
+                <span class="odds-team">
+                    <span>{{ game.away.abbrev }}</span>
+                    <span class="odds-price {{ 'status-win' if game.odds.away_best > 0 else '' }}">{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}</span>
+                    {% if game.odds.opening_away %}{% set mv = game.odds.away_best - game.odds.opening_away %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_away > 0 }}{{ game.odds.opening_away }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.away_implied * 100) | round(1) }}%</span>
+                </span>
+                <span class="odds-sep">·</span>
+                <span class="odds-team">
+                    <span>{{ game.home.abbrev }}</span>
+                    <span class="odds-price">{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}</span>
+                    {% if game.odds.opening_home %}{% set mv = game.odds.home_best - game.odds.opening_home %}{% if mv != 0 %}<span class="odds-move {{ 'move-up' if mv > 0 else 'move-dn' }}" title="Opening: {{ '+' if game.odds.opening_home > 0 }}{{ game.odds.opening_home }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>{% endif %}{% endif %}
+                    <span class="odds-book">{{ (game.odds.home_implied * 100) | round(1) }}%</span>
+                </span>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if game.model %}
+        {% include "_quick_edge_row.html" %}
+
+        {% set displayed = game.model.factors | rejectattr(1, 'equalto', 0) | list %}
+        {% if displayed %}
+        {% set ns = namespace(max_abs=0.01) %}
+        {% for label, contrib in displayed %}{% if contrib | abs > ns.max_abs %}{% set ns.max_abs = contrib | abs %}{% endif %}{% endfor %}
+        {% set pick_is_away = game.model.away_prob >= game.model.home_prob %}
+        <div class="factors-panel">
+            <div class="factors-header">
+                <span class="fd-side-label fd-side-left">{{ game.away.abbrev }}</span>
+                <span class="factors-title">Model Factors</span>
+                <span class="fd-side-label fd-side-right">{{ game.home.abbrev }}</span>
+            </div>
+            <div class="factor-diverge-list">
+                {% for label, contrib in displayed %}
+                {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
+                {% set favors_home = contrib > 0 %}
+                {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
+                {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
+                {% set tone = 'pos' if agree else 'neg' %}
+                <div class="factor-diverge-row">
+                    <div class="fd-track-wrap">
+                        <div class="fd-track">
+                            <div class="fd-center-line"></div>
+                            <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
+                            <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
+                            <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
+                        </div>
+                        <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
+                            <span class="fd-label-name">{{ label }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+
+        </div>
+        {% endif %}
+
+        <!-- ── Bet ── -->
+        {% if game.status != 'Final' %}
+        <div class="bet-type-section">
+            <div class="bet-type-row">
+                <span class="bet-type-label">Moneyline</span>
+                <div class="bet-type-chips">
+                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbrev }}</a>
+                </div>
+            </div>
+            {% if game.odds and game.odds.total_line %}
+            <div class="bet-type-row">
+                <span class="bet-type-label">Over/Under</span>
+                <div class="bet-type-chips">
+                    <a href="{{ over_url }}" class="btn-bet-team">O {{ game.odds.total_line }}</a>
+                    <a href="{{ under_url }}" class="btn-bet-team">U {{ game.odds.total_line }}</a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div><!-- /.game-card-details -->
+
+</div><!-- /.game-card -->
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endfor %}
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+</script>
+{% set live_scores_endpoint = url_for('api_wnba_live_scores') %}
+{% include "_schedule_live_poll.html" %}
+{% endblock %}

@@ -24,6 +24,8 @@ import cfb_api
 import cfb_model
 import nba_api
 import nba_model
+import wnba_api
+import wnba_model
 import market_edge_calibration
 from zoneinfo import ZoneInfo
 
@@ -461,7 +463,7 @@ def _recompute_team_bias(sport='MLB'):
 
 
 _MARKET_EDGE_MODEL_MODULE = {
-    'MLB': mlb_model, 'NFL': nfl_model, 'NBA': nba_model,
+    'MLB': mlb_model, 'NFL': nfl_model, 'NBA': nba_model, 'WNBA': wnba_model,
     'NHL': nhl_model, 'CFB': cfb_model,
 }
 
@@ -1306,7 +1308,7 @@ def _et_date(utc_str):
     return ''
 
 
-FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'NHL', 'MLB')
+FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'WNBA', 'NHL', 'MLB')
 
 
 def _load_favorites():
@@ -1640,12 +1642,12 @@ def compute_chart_data(closed_bets):
 
 
 # Routes
-_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba'}
+_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba'}
 
 _LIVE_SCORE_FETCHERS = {
     'MLB': mlb_api.get_live_scores, 'NHL': nhl_api.get_live_scores,
     'NFL': nfl_api.get_live_scores, 'CFB': cfb_api.get_live_scores,
-    'NBA': nba_api.get_live_scores,
+    'NBA': nba_api.get_live_scores, 'WNBA': wnba_api.get_live_scores,
 }
 
 _GAME_KEY_TS_STRIP = re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
@@ -1910,7 +1912,7 @@ def _inject_global_exposure():
 _SPORT_SCHEDULE_ENDPOINTS = {
     'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule',
     'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
-    'NBA': 'nba_schedule',
+    'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule',
 }
 
 @app.context_processor
@@ -2554,7 +2556,7 @@ def close_open(bet_id):
   if closing_line is None and b.game_key and b.bet_side and b.eventstart:
     try:
       import odds_history as _oh
-      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba'}
+      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba'}
       sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
       es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
       snap = _oh.get_closing_line(sk, b.game_key, es)
@@ -2944,6 +2946,7 @@ _SPORT_META = {
   'NFL': {'emoji': '🏈', 'schedule_endpoint': 'nfl_schedule', 'baseline': '~57% (home field)'},
   'CFB': {'emoji': '🎓', 'schedule_endpoint': 'cfb_schedule', 'baseline': '~59% (home field)'},
   'NBA': {'emoji': '🏀', 'schedule_endpoint': 'nba_schedule', 'baseline': '~58-60% (home court)'},
+  'WNBA': {'emoji': '🏀', 'schedule_endpoint': 'wnba_schedule', 'baseline': '~53-54% (home court)'},
 
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
@@ -3782,6 +3785,14 @@ def nba_schedule():
   resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA'))
   return _set_last_sport_cookie(resp, 'NBA')
 
+@app.route('/wnba')
+def wnba_schedule():
+  schedule = wnba_api.build_schedule_context()
+  _upsert_predictions(schedule, 'WNBA')
+  _mark_favorites(schedule, 'WNBA')
+  resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA'))
+  return _set_last_sport_cookie(resp, 'WNBA')
+
 @app.route('/nfl')
 def nfl_schedule():
   week = request.args.get('week', type=int)
@@ -4260,6 +4271,14 @@ def api_nba_live_scores():
     game cards — see api_nfl_live_scores() above."""
     from flask import jsonify
     return jsonify(nba_api.get_live_game_states())
+
+
+@app.route('/api/wnba/live-scores')
+def api_wnba_live_scores():
+    """Powers the auto-updating score/clock on the /wnba schedule page's
+    game cards — see api_nfl_live_scores() above."""
+    from flask import jsonify
+    return jsonify(wnba_api.get_live_game_states())
 
 
 @app.route('/api/nhl/live-scores')
@@ -4828,7 +4847,8 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
                                ('NHL', nhl_api.build_schedule_context, False),
                                ('NFL', nfl_api.build_week_schedule_context, True),
                                ('CFB', cfb_api.build_week_schedule_context, True),
-                               ('NBA', nba_api.build_schedule_context, False)]:
+                               ('NBA', nba_api.build_schedule_context, False),
+                               ('WNBA', wnba_api.build_schedule_context, False)]:
         try:
             result = fn()
             schedule = result.get('days') if is_week else result
@@ -4853,9 +4873,9 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     except Exception:
         pass
 
-    # NFL/CFB/NHL/NBA resolve outcomes inline above via _upsert_predictions, so
+    # NFL/CFB/NHL/NBA/WNBA resolve outcomes inline above via _upsert_predictions, so
     # recalibrate them here instead.
-    for name in ('NFL', 'CFB', 'NHL', 'NBA'):
+    for name in ('NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
         try:
             _recompute_all_calibration(name)
         except Exception:
@@ -5006,7 +5026,7 @@ def _start_cache_warmer():
     # Calibrations are fast (DB-only) — run synchronously so the first page load
     # sees correct Platt scaling, grade adjustments, and Trust Score weights.
     _refit_mlb_platt()
-    for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA'):
+    for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
         _recompute_all_calibration(_sport)
 
     # API cache warming and outcome resolution are slow (network calls) — run in background.
@@ -5014,7 +5034,7 @@ def _start_cache_warmer():
         _warm_all_caches(send_alerts=False)
         _resolve_pending_outcomes()
         _refit_mlb_platt()
-        for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA'):
+        for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
             _recompute_all_calibration(_sport)
     threading.Thread(target=_startup, daemon=True, name='warm-startup').start()
 
