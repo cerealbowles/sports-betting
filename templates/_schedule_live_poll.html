@@ -73,6 +73,7 @@
   // of the upcoming grid into the live one instead of staying under "Upcoming".
   function moveToSection(card, isLive) {
     var up = card.closest('[data-upcoming-grid]');
+    if (!up && isLive) return moveInline(card);
     if (!up || !isLive) return;
     var day = up.getAttribute('data-upcoming-grid');
     var liveGrid = document.querySelector('[data-live-grid="' + day + '"]');
@@ -85,6 +86,23 @@
       if (n) n.textContent = left;
       hdr.hidden = left === 0;
     }
+  }
+
+  // Single-grid pages (NHL/NBA): an "Upcoming" header sits inside the grid;
+  // a card that goes live below it is lifted above it.
+  function moveInline(card) {
+    var grid = card.closest('.games-grid');
+    var hdr = grid && grid.querySelector('[data-upcoming-hdr-inline]');
+    if (!hdr || !(hdr.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
+    grid.insertBefore(card, hdr);
+    hdr.hidden = false;
+    var left = 0;
+    for (var el = hdr.nextElementSibling; el && !el.classList.contains('games-section-hdr'); el = el.nextElementSibling) {
+      if (el.classList.contains('game-card')) left++;
+    }
+    var n = hdr.querySelector('[data-upcoming-count]');
+    if (n) n.textContent = left;
+    hdr.hidden = left === 0;
   }
 
   function applyUpdate(gk, info) {

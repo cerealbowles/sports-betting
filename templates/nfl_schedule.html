@@ -64,8 +64,14 @@
     <span class="game-count">{{ (_live + _upcoming)|length }} game{{ 's' if (_live + _upcoming)|length != 1 }}</span>
     <span class="refresh-info"><a href="{{ url_for('nfl_schedule', week=week_ctx.week) }}" class="refresh-link">↻ Refresh</a></span>
 </div>
-<div class="games-grid">
-{% for game in _live + _upcoming %}
+<div class="games-grid" data-live-grid="{{ loop.index }}">
+{% for game in _live %}
+{% include "_nfl_game_card.html" %}
+{% endfor %}
+</div><!-- /.games-grid -->
+<div class="games-section-hdr games-section-hdr-upcoming" data-upcoming-hdr="{{ loop.index }}"{% if not (_live and _upcoming) %} hidden{% endif %}>Upcoming (<span data-upcoming-count>{{ _upcoming|length }}</span>)</div>
+<div class="games-grid" data-upcoming-grid="{{ loop.index }}">
+{% for game in _upcoming %}
 {% include "_nfl_game_card.html" %}
 {% endfor %}
 </div><!-- /.games-grid -->

@@ -39,6 +39,40 @@ def _cached_get(url, key, ttl):
     return data
 
 
+def _period_label(pd):
+    ptype = (pd or {}).get('periodType', 'REG')
+    if ptype == 'SO':
+        return 'Shootout'
+    if ptype == 'OT':
+        return 'OT'
+    num = (pd or {}).get('number')
+    return f"P{num}" if num else ''
+
+
+def _live_clock_map():
+    """{game_id: 'P2 · 13:48'} for in-progress games. The schedule endpoint
+    carries the period but no clock; scoreboard/now has both, so live cards
+    combine them. Short cache since the clock changes every second."""
+    data = _cached_get(f"{NHL_API}/scoreboard/now", 'nhl_scoreboard_now', 15)
+    out = {}
+    for day in (data or {}).get('gamesByDate', []):
+        for g in day.get('games', []):
+            if g.get('gameState') not in ('LIVE', 'CRIT'):
+                continue
+            label = _period_label(g.get('periodDescriptor'))
+            clock = g.get('clock') or {}
+            if label == 'Shootout':
+                text = label
+            elif clock.get('inIntermission'):
+                text = f"{label} · INT" if label else 'INT'
+            elif clock.get('timeRemaining'):
+                text = f"{label} · {clock['timeRemaining']}" if label else clock['timeRemaining']
+            else:
+                text = label
+            out[g.get('id')] = text
+    return out
+
+
 def _get_schedule_raw():
     return _cached_get(f"{NHL_API}/schedule/now", 'nhl_sched_now', _TTL['schedule'])
 
@@ -56,6 +90,7 @@ def get_live_scores(date_str=None):
     scores = {}
     if not data:
         return scores
+    clocks = _live_clock_map()
     for day in data.get('gameWeek', []):
         if day.get('date') != target:
             continue
@@ -74,16 +109,7 @@ def get_live_scores(date_str=None):
                 status = 'Preview'
             period = None
             if status == 'Live':
-                pd    = game.get('periodDescriptor', {})
-                ptype = pd.get('periodType', 'REG')
-                pnum  = pd.get('number', '')
-                clock = game.get('clock', {}).get('timeRemaining', '')
-                if ptype == 'OT':
-                    period = f"OT · {clock}"
-                elif ptype == 'SO':
-                    period = 'Shootout'
-                else:
-                    period = f"P{pnum} · {clock}"
+                period = clocks.get(game.get('id')) or _period_label(game.get('periodDescriptor')) or None
             elif status == 'Final':
                 pd    = game.get('periodDescriptor', {})
                 ptype = pd.get('periodType', 'REG')
@@ -118,6 +144,7 @@ def get_live_game_states(date_str=None):
     states = {}
     if not data:
         return states
+    clocks = _live_clock_map()
     for day in data.get('gameWeek', []):
         if day.get('date') != target:
             continue
@@ -136,16 +163,7 @@ def get_live_game_states(date_str=None):
                 status = 'Preview'
             clock_text = None
             if status == 'Live':
-                pd    = game.get('periodDescriptor', {})
-                ptype = pd.get('periodType', 'REG')
-                pnum  = pd.get('number', '')
-                clock = game.get('clock', {}).get('timeRemaining', '')
-                if ptype == 'OT':
-                    clock_text = f"OT · {clock}"
-                elif ptype == 'SO':
-                    clock_text = 'Shootout'
-                else:
-                    clock_text = f"P{pnum} · {clock}"
+                clock_text = clocks.get(game.get('id')) or _period_label(game.get('periodDescriptor')) or None
             states[gk] = {
                 'status':     status,
                 'away_score': a_data.get('score'),
@@ -383,6 +401,7 @@ def build_schedule_context():
             except Exception:
                 goalies[ab] = None
 
+    live_clocks = _live_clock_map()
     games = []
     for game in today_games:
         state = game.get('gameState', '')
@@ -448,6 +467,7 @@ def build_schedule_context():
             'series_info':   series_info,
             # api-web gameType: 1=preseason, 2=regular season, 3=playoffs.
             'is_preseason':  game.get('gameType') == 1,
+            'live_clock':    (live_clocks.get(game.get('id')) or _period_label(game.get('periodDescriptor'))) if status == 'Live' else '',
             'model':         model,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",

@@ -62,11 +62,14 @@
 {% set _favs = (_live + _upcoming + _final) | selectattr('is_favorite') | list %}
 {% set _rest = (_live + _upcoming + _final) | rejectattr('is_favorite') | list %}
 {% set _rest_final_n = _final | rejectattr('is_favorite') | list | length %}
-{% set ns = namespace(final_hdr=False, rest_hdr=False) %}
+{% set _rest_live_n = _live | rejectattr('is_favorite') | list | length %}
+{% set _rest_up_n = _upcoming | rejectattr('is_favorite') | list | length %}
+{% set ns = namespace(final_hdr=False, rest_hdr=False, up_hdr=False) %}
 <div class="games-grid">
 {% for game in _favs + _rest %}
 {% if loop.first and game.is_favorite %}<div class="games-section-hdr games-section-hdr-fav">★ Favorites</div>{% endif %}
 {% if not game.is_favorite and not ns.rest_hdr %}{% set ns.rest_hdr = True %}{% if _favs %}<div class="games-section-hdr games-section-hdr-rest">All games</div>{% endif %}{% endif %}
+{% if not game.is_favorite and game.status not in ('Live', 'Final') and not ns.up_hdr %}{% set ns.up_hdr = True %}<div class="games-section-hdr games-section-hdr-upcoming" data-upcoming-hdr-inline{% if not _rest_live_n %} hidden{% endif %}>Upcoming (<span data-upcoming-count>{{ _rest_up_n }}</span>)</div>{% endif %}
 {% if game.status == 'Final' and not game.is_favorite and not ns.final_hdr %}{% set ns.final_hdr = True %}
 <div class="games-section-hdr">Completed · {{ _rest_final_n }} game{{ 's' if _rest_final_n != 1 }}</div>
 {% endif %}
@@ -87,6 +90,7 @@
         <div class="game-header">
             {% if game.status == 'Live' %}
                 <span class="status-live">● Live</span>
+                {% if game.live_clock %}<span class="live-qtr-clock">{{ game.live_clock }}</span>{% endif %}
             {% elif game.status == 'Final' %}
                 <span class="status-final">Final</span>
             {% else %}
