@@ -6,6 +6,7 @@ A new row is only written when the odds actually change, so the table stays smal
 
 get_movement() returns opening + previous observations for display.
 """
+import json
 import os
 import re
 import sqlite3
@@ -74,6 +75,13 @@ CREATE TABLE IF NOT EXISTS odds_snapshot (
     recorded_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_odds_key ON odds_snapshot(sport, game_key);
+CREATE TABLE IF NOT EXISTS pregame_odds (
+    sport       TEXT NOT NULL,
+    game_key    TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (sport, game_key)
+);
 '''
 
 
@@ -102,6 +110,34 @@ def record(sport, game_key, home_odds, away_odds):
             )
     except Exception:
         pass
+
+
+def save_pregame(sport, game_key, payload):
+    """Overwrite the stored pre-game odds display payload for a game. Called on
+    every pre-game refresh, so once a game starts (and callers stop saving) the
+    row holds the last odds seen before kickoff."""
+    try:
+        with _conn() as c:
+            c.execute(
+                'INSERT OR REPLACE INTO pregame_odds (sport, game_key, payload, recorded_at) '
+                'VALUES (?,?,?,?)',
+                (sport, game_key, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+            )
+    except Exception:
+        pass
+
+
+def get_pregame(sport, game_key):
+    """Last pre-game odds payload saved by save_pregame(), or None."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                'SELECT payload FROM pregame_odds WHERE sport=? AND game_key=?',
+                (sport, game_key),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+    except Exception:
+        return None
 
 
 def get_movement(sport, game_key):

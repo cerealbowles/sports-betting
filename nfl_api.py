@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, date as _date
 from zoneinfo import ZoneInfo
 import odds_api
+import odds_history
 import nfl_model
 
 _ET = ZoneInfo('America/New_York')
@@ -700,6 +701,17 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
     over_under = espn_odds.get('overUnder')
+    # ESPN's spread/total move in-play too — hold the last pre-game line once live.
+    _espn_key = str(event.get('id') or '')
+    if _espn_key:
+        if status == 'Preview':
+            if odds_line or over_under is not None:
+                odds_history.save_pregame('nfl_espn', _espn_key,
+                                          {'odds_line': odds_line, 'over_under': over_under})
+        else:
+            _frozen = odds_history.get_pregame('nfl_espn', _espn_key)
+            if _frozen:
+                odds_line, over_under = _frozen['odds_line'], _frozen['over_under']
 
     a_ab = away.get('abbrev', '')
     h_ab = home.get('abbrev', '')
