@@ -132,7 +132,7 @@
                 <span class="bc-fin-val">{{ '%.2f' % (b.stake * b.odds / unit_size) }}u</span>
             </div>
             <div class="bc-fin-item">
-                {% if b.closing_american is not none %}
+                {% if b.closing_american is not none and b.original_american is not none %}
                 <span class="bc-fin-label">Closed</span>
                 <span class="bc-fin-val">
                     <span class="line-cell">

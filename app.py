@@ -1754,8 +1754,9 @@ def _annotate_open_bets(open_bets):
     closing_suggestions = {}
     now_utc = datetime.now(timezone.utc)
     for bet in open_bets:
+        odds_dec = _as_decimal_odds(bet.odds) if bet.odds else bet.odds
         bet.live_clv          = None
-        bet.original_american = _to_american(bet.odds)
+        bet.original_american = _to_american(odds_dec)
         bet.current_american  = None
         bet.line_move         = None
         bet.closing_american  = None  # pre-game closing line (American odds)
@@ -1781,12 +1782,12 @@ def _annotate_open_bets(open_bets):
                 ca  = latest[f'{bet.bet_side}_odds']
                 mkt = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
                 bet.current_american = ca
-                bet.live_clv  = round((bet.odds / mkt - 1) * 100, 1)
+                bet.live_clv  = round((odds_dec / mkt - 1) * 100, 1)
                 if bet.original_american is not None:
                     bet.line_move = ca - bet.original_american
                 # Cashout = fair value of position at current market price
-                if mkt > 1 and bet.odds and bet.stake:
-                    bet.cashout_value = round(bet.stake * bet.odds / mkt, 2)
+                if mkt > 1 and odds_dec and bet.stake:
+                    bet.cashout_value = round(bet.stake * odds_dec / mkt, 2)
         else:
             # Post-start: show closing line — ignore in-game odds entirely
             if es:
@@ -1796,7 +1797,7 @@ def _annotate_open_bets(open_bets):
                     closing_suggestions[bet.id] = ca
                     bet.closing_american = ca
                     cl_dec = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
-                    closing_clv = (bet.odds / cl_dec - 1) * 100 if cl_dec > 1 else 0
+                    closing_clv = (odds_dec / cl_dec - 1) * 100 if cl_dec > 1 else 0
                     bet.closing_clv_pos = closing_clv >= 0
 
     return closing_suggestions
@@ -1810,10 +1811,11 @@ def _tier_open_bets(real_open):
     in practice the Dashboard and /mlb use both together.
     """
     for bet in real_open:
-        implied = 1.0 / bet.odds if bet.odds and bet.odds > 1 else None
+        odds_dec = _as_decimal_odds(bet.odds) if bet.odds else bet.odds
+        implied = 1.0 / odds_dec if odds_dec and odds_dec > 1 else None
         bet.book_implied = round(implied * 100, 1) if implied else None
         bet.edge_pct     = round((bet.prob - implied) * 100, 1) if (bet.prob and implied) else None
-        bet.ev_pct       = round((bet.prob * bet.odds - 1) * 100, 1) if (bet.prob and bet.odds and bet.odds > 1) else None
+        bet.ev_pct       = round((bet.prob * odds_dec - 1) * 100, 1) if (bet.prob and odds_dec and odds_dec > 1) else None
         ep = bet.edge_pct
         if ep is None:
             bet.tier, bet.tier_cls = None, ''
@@ -2571,7 +2573,7 @@ def close_open(bet_id):
   outcome = request.form.get('outcome', 'loss')
   if outcome not in ('win', 'loss'):
     outcome = 'loss'
-  profit = b.stake * (b.odds - 1.0) if outcome == 'win' else -b.stake
+  profit = b.stake * (_as_decimal_odds(b.odds) - 1.0) if outcome == 'win' else -b.stake
 
   # Closing line: use manually entered value, else auto-lookup from FanDuel history
   closing_line = None

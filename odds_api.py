@@ -205,6 +205,10 @@ def get_key_usage():
     return out
 
 
+# Sports whose card odds stop updating at kickoff (in-play prices are hidden).
+_FREEZE_AFTER_START = {'americanfootball_nfl'}
+
+
 def get_odds_map(sport):
     """
     Returns {normalized_home_team: game_odds_dict} for today's games (FanDuel only).
@@ -341,7 +345,7 @@ def get_odds_map(sport):
         movement = odds_history.get_movement(sport_key, hist_key)
 
         map_key = f"{_normalize(home_name)}_{event_time}"
-        result[map_key] = {
+        entry = {
             'away_team':    away_name,
             'home_team':    home_name,
             'away_best':    away_price,
@@ -351,8 +355,15 @@ def get_odds_map(sport):
             'total_line':   total_line,
             'over_odds':    over_odds,
             'under_odds':   under_odds,
-            **movement,
         }
+        if sport_key in _FREEZE_AFTER_START:
+            # Keep the last pre-game prices on the card once the game is live, so a
+            # bet can be compared against where the market stood at kickoff.
+            if is_preview:
+                odds_history.save_pregame(sport_key, hist_key, entry)
+            else:
+                entry = odds_history.get_pregame(sport_key, hist_key) or entry
+        result[map_key] = {**entry, **movement}
 
     _cache[cache_key] = (result, now)
     _fc_save(cache_key, result, now)
