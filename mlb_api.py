@@ -831,6 +831,7 @@ def build_schedule_context():
             try:
                 model = mlb_model.predict(home, away, matchups, game_time_utc=game_time_utc,
                                            market_home_prob=market_home_prob)
+                model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
             except Exception:
                 model = None
 

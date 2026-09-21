@@ -448,6 +448,7 @@ def build_schedule_context():
             market_home_prob = game_odds.get('home_implied') if game_odds else None
             model = nhl_model.predict(home, away, game_time_utc=game.get('startTimeUTC', ''),
                                        market_home_prob=market_home_prob)
+            model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
         except Exception:
             model = None
 
