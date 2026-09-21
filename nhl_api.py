@@ -267,7 +267,7 @@ def _get_team_goalie(abbrev):
     }
 
 
-def _build_team_info(team_data, side, standings, form, goalie, rest_days=None):
+def _build_team_info(team_data, side, standings, form, goalie, rest_days=None, fresh_record=True):
     abbrev = team_data.get('abbrev', '')
     st     = standings.get(abbrev, {})
     gp     = st.get('gamesPlayed', 1) or 1
@@ -288,6 +288,11 @@ def _build_team_info(team_data, side, standings, form, goalie, rest_days=None):
         'wins':        st.get('wins', 0),
         'losses':      st.get('losses', 0),
         'ot_losses':   st.get('otLosses', 0),
+        # Display record. wins/losses above stay as last season's numbers (the model
+        # uses them as a prior); the card shows 0-0-0 until standings are for this season.
+        'rec_w':       st.get('wins', 0) if fresh_record else 0,
+        'rec_l':       st.get('losses', 0) if fresh_record else 0,
+        'rec_otl':     st.get('otLosses', 0) if fresh_record else 0,
         'split_w':     split_w,
         'split_l':     split_l,
         'split_label': split_label,
@@ -417,10 +422,18 @@ def build_schedule_context():
         a_ab   = a_data.get('abbrev', '')
         h_ab   = h_data.get('abbrev', '')
 
+        # /standings/now still returns last season's final table during the
+        # preseason (gameType 1) — don't show those as the teams' current records.
+        game_season = game.get('season')
+        def _fresh(ab):
+            if game.get('gameType') == 1:
+                return False
+            sid = standings.get(ab, {}).get('seasonId')
+            return not (sid and game_season and str(sid) != str(game_season))
         away = _build_team_info(a_data, 'away', standings, form, goalies.get(a_ab),
-                                 _rest_days(last_game_date, a_ab, today_str))
+                                 _rest_days(last_game_date, a_ab, today_str), _fresh(a_ab))
         home = _build_team_info(h_data, 'home', standings, form, goalies.get(h_ab),
-                                 _rest_days(last_game_date, h_ab, today_str))
+                                 _rest_days(last_game_date, h_ab, today_str), _fresh(h_ab))
 
         # Inject injury status onto goalie info
         for team in (away, home):

@@ -39,7 +39,7 @@
 {% endblock %}
 
 {% block content %}
-{% from "_edge_star.html" import edge_star %}
+{% from "_edge_star.html" import edge_star, edge_pick %}
 <div class="schedule-body">
 
 
@@ -111,7 +111,7 @@
                 <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
                 <div class="sb-team-info">
                     <div class="sb-name">{{ game.away.name }}</div>
-                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}–{{ game.away.ot_losses }}</div>
+                    <div class="sb-record">{{ game.away.rec_w }}–{{ game.away.rec_l }}–{{ game.away.rec_otl }}</div>
                 </div>
             </div>
 
@@ -132,7 +132,7 @@
             <div class="sb-team sb-home">
                 <div class="sb-team-info">
                     <div class="sb-name">{{ game.home.name }}</div>
-                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}–{{ game.home.ot_losses }}</div>
+                    <div class="sb-record">{{ game.home.rec_w }}–{{ game.home.rec_l }}–{{ game.home.rec_otl }}</div>
                 </div>
                 <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
             </div>
@@ -156,14 +156,14 @@
                 <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
                 <div class="sb-team-info">
                     <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
-                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}–{{ game.away.ot_losses }}</div>
+                    <div class="sb-record">{{ game.away.rec_w }}–{{ game.away.rec_l }}–{{ game.away.rec_otl }}</div>
                 </div>
             </div>
             <div class="sb-center"><div class="sb-vs">vs</div></div>
             <div class="sb-team sb-home">
                 <div class="sb-team-info">
                     <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
-                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}–{{ game.home.ot_losses }}</div>
+                    <div class="sb-record">{{ game.home.rec_w }}–{{ game.home.rec_l }}–{{ game.home.rec_otl }}</div>
                 </div>
                 <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
             </div>
@@ -298,8 +298,8 @@
             <div class="bet-type-row">
                 <span class="bet-type-label">Moneyline</span>
                 <div class="bet-type-chips">
-                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
-                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbrev }}</a>
+                    <a href="{{ bet_away_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.away.abbrev }}{{ game.away.abbrev }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.home.abbrev }}{{ game.home.abbrev }}</a>
                 </div>
             </div>
             {% if game.odds and game.odds.total_line %}
