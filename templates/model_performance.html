@@ -221,6 +221,105 @@
     {% endif %}
 </div>
 
+{% if rec_bets %}
+<!-- ══ Recommended Bets ══ -->
+<div class="zone-divider">
+    <h3>Recommended Bets</h3>
+    <span class="zone-sub">the ★ picks replayed over resolved games · flat 1u at the stored price</span>
+    <span class="zone-line"></span>
+</div>
+<div class="dashboard" style="margin-bottom:14px;">
+    <div class="stat-card">
+        <div class="stat-label">Record</div>
+        <div class="stat-value">{{ rec_bets.wins }}-{{ rec_bets.losses }}</div>
+        <div class="stat-sub">{{ rec_bets.n }} picks</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value">{{ rec_bets.win_rate }}%</div>
+        <div class="stat-sub">{% if rec_bets.baseline_wr is not none %}other favorites {{ rec_bets.baseline_wr }}% (n={{ rec_bets.baseline_n }}){% else %}&nbsp;{% endif %}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Units</div>
+        <div class="stat-value {{ 'status-win' if rec_bets.units >= 0 else 'status-loss' }}">{{ '+' if rec_bets.units > 0 }}{{ rec_bets.units }}u</div>
+        <div class="stat-sub">flat 1u stakes</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">ROI</div>
+        <div class="stat-value {{ 'status-win' if rec_bets.roi >= 0 else 'status-loss' }}">{{ '+' if rec_bets.roi > 0 }}{{ rec_bets.roi }}%</div>
+        <div class="stat-sub">avg edge {{ '+' if rec_bets.avg_edge > 0 }}{{ rec_bets.avg_edge }}%</div>
+    </div>
+</div>
+
+{% if rec_bets.cum | length >= 2 %}
+{% set cmin = ([0] + rec_bets.cum) | min %}
+{% set cmax = ([0] + rec_bets.cum) | max %}
+{% set span = (cmax - cmin) if cmax > cmin else 1 %}
+{% set cnt = rec_bets.cum | length %}
+<div class="card" style="margin-bottom:14px;padding:12px 14px;">
+    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Cumulative units</div>
+    <svg viewBox="0 0 300 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block;">
+        <line x1="0" x2="300" y1="{{ 76 - ((0 - cmin) / span * 72) }}" y2="{{ 76 - ((0 - cmin) / span * 72) }}" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+        <polyline fill="none" stroke="{{ 'var(--win)' if rec_bets.units >= 0 else 'var(--loss)' }}" stroke-width="2" vector-effect="non-scaling-stroke"
+                  points="{% for v in rec_bets.cum %}{{ (loop.index0 / (cnt - 1) * 300) | round(1) }},{{ (76 - ((v - cmin) / span * 72)) | round(1) }} {% endfor %}"/>
+    </svg>
+</div>
+{% endif %}
+
+<details class="score-details">
+  <summary>
+    <span class="sd-title">By Month</span>
+    <span class="sd-teaser">{{ rec_bets.by_month | length }} month{{ 's' if rec_bets.by_month | length != 1 }}</span>
+  </summary>
+  <div class="score-details-body">
+  <div class="calib-scroll">
+  <table class="calib-table" style="width:100%;">
+    <thead><tr><th>Month</th><th>Picks</th><th>Record</th><th>Win%</th><th>Units</th><th>ROI%</th></tr></thead>
+    <tbody>
+    {% for m in rec_bets.by_month %}
+    <tr>
+      <td style="font-weight:700;">{{ m.month }}</td>
+      <td>{{ m.n }}</td>
+      <td>{{ m.record }}</td>
+      <td><span class="{{ 'calib-err-ok' if m.win_rate >= 55 else ('calib-err-pos' if m.win_rate >= 50 else 'calib-err-neg') }}">{{ m.win_rate }}%</span></td>
+      <td><span class="{{ 'calib-err-ok' if m.units > 0 else 'calib-err-neg' }}">{{ '+' if m.units > 0 }}{{ m.units }}u</span></td>
+      <td><span class="{{ 'calib-err-ok' if m.roi > 0 else 'calib-err-neg' }}">{{ '+' if m.roi > 0 }}{{ m.roi }}%</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  </div>
+</details>
+
+<details class="score-details" open>
+  <summary>
+    <span class="sd-title">Recent Picks</span>
+    <span class="sd-teaser">last {{ rec_bets.recent | length }}</span>
+  </summary>
+  <div class="score-details-body">
+  <div class="calib-scroll">
+  <table class="calib-table" style="width:100%;">
+    <thead><tr><th>Date</th><th>Pick</th><th>Odds</th><th>Edge</th><th>Result</th><th>Units</th></tr></thead>
+    <tbody>
+    {% for r in rec_bets.recent %}
+    <tr>
+      <td style="color:var(--text-muted);">{{ r.date[5:] }}</td>
+      <td style="font-weight:700;">{{ r.pick }} <span style="font-weight:400;color:var(--text-muted);">vs {{ r.opp }}</span></td>
+      <td>{{ '+' if r.amer > 0 }}{{ r.amer }}</td>
+      <td>{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
+      <td><span class="{{ 'calib-err-ok' if r.won else 'calib-err-neg' }}">{{ 'W' if r.won else 'L' }}</span></td>
+      <td><span class="{{ 'calib-err-ok' if r.profit > 0 else 'calib-err-neg' }}">{{ '+' if r.profit > 0 }}{{ r.profit }}u</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="section-note">Replayed from the odds and model probability stored at prediction time, so it reflects what the ★ would have said then. MLB uses the consensus-calibrated probability but not the rank-history blend, so live stars can differ slightly.</p>
+  </div>
+</details>
+{% endif %}
+
 {% if resolved >= 1 %}
 
 <!-- ══ ZONE 1: Model Accuracy ══ -->

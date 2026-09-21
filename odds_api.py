@@ -209,6 +209,34 @@ def get_key_usage():
 _FREEZE_AFTER_START = {'americanfootball_nfl'}
 
 
+# Odds API keys for preseason markets. Only queried while active (see
+# _active_sport_keys), so an out-of-season key never costs a request.
+_PRESEASON_KEYS = {
+    'icehockey_nhl':        'icehockey_nhl_preseason',
+    'basketball_nba':       'basketball_nba_preseason',
+    'americanfootball_nfl': 'americanfootball_nfl_preseason',
+}
+_active_keys_cache = {'ts': 0.0, 'keys': set()}
+
+
+def _active_sport_keys(api_keys):
+    """Set of currently in-season Odds API sport keys. The /sports endpoint is
+    free (doesn't consume quota); cached for an hour."""
+    now = time.time()
+    if now - _active_keys_cache['ts'] < 3600:
+        return _active_keys_cache['keys']
+    for api_key in api_keys:
+        try:
+            r = requests.get(f"{BASE}/", params={'apiKey': api_key}, timeout=10)
+            if r.status_code == 200:
+                keys = {x.get('key') for x in r.json() if x.get('active')}
+                _active_keys_cache.update(ts=now, keys=keys)
+                return keys
+        except Exception:
+            continue
+    return _active_keys_cache['keys']
+
+
 def get_odds_map(sport):
     """
     Returns {normalized_home_team: game_odds_dict} for today's games (FanDuel only).
@@ -255,46 +283,59 @@ def get_odds_map(sport):
             cached = fc.get(cache_key, {}).get('data', {})
         return cached
 
-    # 4. Live fetch — try each key until one succeeds
+    # 4. Live fetch — try each key until one succeeds. Preseason games are
+    # priced under a separate Odds API sport key (e.g. icehockey_nhl_preseason),
+    # so those are pulled too whenever that key is currently active.
     active_keys = [k for k in keys if k not in _exhausted_keys] or keys
-    r = None
-    used_key = None
-    for api_key in active_keys:
-        try:
-            r = requests.get(
-                f"{BASE}/{sport_key}/odds/",
-                params={
-                    'apiKey':       api_key,
-                    'bookmakers':   'fanduel',
-                    'markets':      'h2h,totals',
-                    'oddsFormat':   'american',
-                    'dateFormat':   'iso',
-                },
-                timeout=10,
-            )
-            if r.status_code == 401:
-                print(f'[odds] key ...{api_key[-6:]} exhausted/invalid — trying next', flush=True)
-                _exhausted_keys.add(api_key)
-                continue
-            remaining = r.headers.get('x-requests-remaining')
-            if remaining is not None:
-                print(f'[odds] key ...{api_key[-6:]}: {remaining} requests remaining', flush=True)
-                if int(remaining) == 0:
+    fetch_keys = [sport_key]
+    pre_key = _PRESEASON_KEYS.get(sport_key)
+    if pre_key and pre_key in _active_sport_keys(active_keys):
+        fetch_keys.append(pre_key)
+
+    events = []
+    got_main = False
+    for fk in fetch_keys:
+        r = None
+        used_key = None
+        for api_key in active_keys:
+            try:
+                r = requests.get(
+                    f"{BASE}/{fk}/odds/",
+                    params={
+                        'apiKey':       api_key,
+                        'bookmakers':   'fanduel',
+                        'markets':      'h2h,totals',
+                        'oddsFormat':   'american',
+                        'dateFormat':   'iso',
+                    },
+                    timeout=10,
+                )
+                if r.status_code == 401:
+                    print(f'[odds] key ...{api_key[-6:]} exhausted/invalid — trying next', flush=True)
                     _exhausted_keys.add(api_key)
-            r.raise_for_status()
-            used_key = api_key
-            break
-        except requests.HTTPError:
+                    continue
+                remaining = r.headers.get('x-requests-remaining')
+                if remaining is not None:
+                    print(f'[odds] key ...{api_key[-6:]}: {remaining} requests remaining', flush=True)
+                    if int(remaining) == 0:
+                        _exhausted_keys.add(api_key)
+                r.raise_for_status()
+                used_key = api_key
+                break
+            except requests.HTTPError:
+                continue
+            except Exception:
+                break
+        if r is None or used_key is None:
             continue
+        try:
+            events.extend(r.json())
+            if fk == sport_key:
+                got_main = True
         except Exception:
-            break
+            continue
 
-    if r is None or used_key is None:
-        return _cache.get(cache_key, ({}, 0))[0]
-
-    try:
-        events = r.json()
-    except Exception:
+    if not got_main and not events:
         return _cache.get(cache_key, ({}, 0))[0]
 
     result = {}

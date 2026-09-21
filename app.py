@@ -2642,6 +2642,94 @@ _SPORT_META = {
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
 
+def _recommended_bets_history(resolved, sport):
+  """How the ★ recommendations have held up. Replays the star rule
+  (_edge_star.html) over resolved games using the odds and model probability
+  stored at prediction time: the market favorite is recommended when the model
+  gives it a >=4pt edge over the vig-free price, Kelly is positive and the
+  payout is at least 0.25 to 1. MLB probabilities get the same consensus
+  calibration the live star uses (the rank-history blend isn't stored, so it
+  isn't replayed). Flat 1u stakes at the stored American price."""
+  rows = []
+  for p in resolved:
+    if p.home_prob is None or not p.home_odds or not p.away_odds:
+      continue
+    vf_h, vf_a = _vig_free_implied(p.home_odds, p.away_odds)
+    if vf_h is None:
+      continue
+    fav_home = vf_h >= 0.5
+    prob = p.home_prob if fav_home else (p.away_prob if p.away_prob is not None else 1.0 - p.home_prob)
+    if sport == 'MLB':
+      raw_fav = p.home_prob if p.home_prob >= 0.5 else 1.0 - p.home_prob
+      adj = _consensus_adjusted_prob(raw_fav, p.factors_json, p.home_prob >= 0.5)
+      # adjustment is defined for the model's pick side; mirror it onto the favorite
+      prob = adj if (p.home_prob >= 0.5) == fav_home else 1.0 - adj
+    amer = p.home_odds if fav_home else p.away_odds
+    b = (amer / 100.0) if amer > 0 else (-100.0 / amer)
+    mkt = vf_h if fav_home else vf_a
+    edge = (prob - mkt) * 100
+    kelly = (b * prob - (1 - prob)) / b
+    if not (kelly > 0 and edge >= 4 and b >= 0.25):
+      continue
+    won = bool(p.home_won) == fav_home
+    rows.append({
+        'date': p.game_date,
+        'pick': p.home_team if fav_home else p.away_team,
+        'opp': p.away_team if fav_home else p.home_team,
+        'amer': amer,
+        'edge': round(edge, 1),
+        'won': won,
+        'profit': round(b if won else -1.0, 3),
+    })
+  if not rows:
+    return None
+  rows.sort(key=lambda r: r['date'])
+  n = len(rows)
+  wins = sum(1 for r in rows if r['won'])
+  units = sum(r['profit'] for r in rows)
+  # Baseline: how the same market favorites did when NOT recommended.
+  base_n = base_w = 0
+  rec_keys = {(r['date'], r['pick']) for r in rows}
+  for p in resolved:
+    if not p.home_odds or not p.away_odds:
+      continue
+    vf_h, _ = _vig_free_implied(p.home_odds, p.away_odds)
+    if vf_h is None:
+      continue
+    fav_home = vf_h >= 0.5
+    team = p.home_team if fav_home else p.away_team
+    if (p.game_date, team) in rec_keys:
+      continue
+    base_n += 1
+    base_w += 1 if bool(p.home_won) == fav_home else 0
+
+  cum, running = [], 0.0
+  for r in rows:
+    running += r['profit']
+    cum.append(round(running, 2))
+  months = {}
+  for r in rows:
+    m = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'n': 0, 'w': 0, 'units': 0.0})
+    m['n'] += 1
+    m['w'] += 1 if r['won'] else 0
+    m['units'] += r['profit']
+  by_month = []
+  for m in sorted(months.values(), key=lambda x: x['month'], reverse=True):
+    by_month.append({'month': m['month'], 'n': m['n'], 'record': f"{m['w']}-{m['n'] - m['w']}",
+                     'win_rate': round(100 * m['w'] / m['n'], 1),
+                     'units': round(m['units'], 2), 'roi': round(100 * m['units'] / m['n'], 1)})
+  return {
+      'n': n, 'wins': wins, 'losses': n - wins,
+      'win_rate': round(100 * wins / n, 1),
+      'units': round(units, 2), 'roi': round(100 * units / n, 1),
+      'avg_edge': round(sum(r['edge'] for r in rows) / n, 1),
+      'baseline_n': base_n,
+      'baseline_wr': round(100 * base_w / base_n, 1) if base_n else None,
+      'cum': cum, 'by_month': by_month,
+      'recent': list(reversed(rows[-15:])),
+  }
+
+
 @app.route('/model')
 def model_performance():
   from collections import defaultdict as _dd
@@ -3385,7 +3473,10 @@ def model_performance():
     except ValueError:
       grp['date_label'] = grp['date']
 
+  rec_bets = _recommended_bets_history(resolved, sport)
+
   resp = make_response(render_template('model_performance.html',
+      rec_bets=rec_bets,
       preds=preds[:40],
       total=len(preds),
       resolved=n,

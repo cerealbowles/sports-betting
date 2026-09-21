@@ -1,7 +1,6 @@
 {# Shared recommendations list for every sport except MLB (which has its own
    Trust Score table). Expects `recommended` (from _edge_recommendations) and
    `rec_title` ("Today's Recommendations" / "Weekly Recommendations"). #}
-{% if recommended %}
 <details class="card rec-details" style="margin-bottom:14px;">
   <summary class="rec-summary">
     <div class="section-header" style="margin-bottom:0;">
@@ -9,6 +8,9 @@
       <span class="small">sorted by model edge · positive-Kelly picks only, top 15</span>
     </div>
   </summary>
+  {% if not recommended %}
+  <p style="color:var(--text-muted);font-size:0.8rem;margin:10px 0 0;">No positive-edge picks on the board right now — every upcoming game is priced at or above the model's fair value.</p>
+  {% else %}
   <table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:10px;">
     <thead>
       <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
@@ -44,5 +46,15 @@
     {% endfor %}
     </tbody>
   </table>
+  {% endif %}
 </details>
-{% endif %}
+<script>
+/* Desktop: keep the list expanded (the toggle is only for mobile). Done in JS
+   because browsers don't render a closed <details>'s contents even when CSS
+   forces them to display. */
+(function () {
+  if (window.matchMedia('(min-width: 901px)').matches) {
+    document.querySelectorAll('.rec-details').forEach(function (d) { d.open = true; });
+  }
+})();
+</script>
