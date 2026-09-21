@@ -110,7 +110,7 @@
 {% endblock %}
 
 {% block content %}
-{% from "_edge_star.html" import edge_star %}
+{% from "_edge_star.html" import edge_star, edge_pick %}
 <div class="schedule-body">
 
 
@@ -659,8 +659,8 @@
             <div class="bet-type-row">
                 <span class="bet-type-label">Moneyline</span>
                 <div class="bet-type-chips">
-                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbr }}</a>
-                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbr }}</a>
+                    <a href="{{ bet_away_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbr }}">{{ '★ ' if edge_pick(game) | trim == game.away.abbr }}{{ game.away.abbr }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbr }}">{{ '★ ' if edge_pick(game) | trim == game.home.abbr }}{{ game.home.abbr }}</a>
                 </div>
             </div>
             {% if game.odds and game.odds.total_line %}

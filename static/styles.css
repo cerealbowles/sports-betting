@@ -1508,6 +1508,8 @@ body.embed-mode .container { padding-bottom: 0; }
   font-size: 0.85rem; font-weight: 700;
 }
 .bet-slip-confirm.show { display: block; }
+.btn-bet-team.is-rec { border-color: #eab308; color: #eab308; }
+.btn-bet-team.is-rec:hover { color: #fff; }
 .btn-bet-team.selected { background: var(--orange); color: #fff; border-color: var(--orange); }
 
 .weather-strip {

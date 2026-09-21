@@ -2,7 +2,7 @@
 {% block title %}NBA Today — Spooky Sports{% endblock %}
 
 {% block content %}
-{% from "_edge_star.html" import edge_star %}
+{% from "_edge_star.html" import edge_star, edge_pick %}
 <div class="schedule-body">
 
 
@@ -236,8 +236,8 @@
             <div class="bet-type-row">
                 <span class="bet-type-label">Moneyline</span>
                 <div class="bet-type-chips">
-                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
-                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbrev }}</a>
+                    <a href="{{ bet_away_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.away.abbrev }}{{ game.away.abbrev }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.home.abbrev }}{{ game.home.abbrev }}</a>
                 </div>
             </div>
             {% if game.odds and game.odds.total_line %}

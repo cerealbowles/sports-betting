@@ -3,7 +3,7 @@
    markup so the "completed games" section at the bottom of the week can
    reuse the exact same card (wrapped in .condensed-game for the compact
    styling) without duplicating ~200 lines of markup. #}
-{% from "_edge_star.html" import edge_star %}
+{% from "_edge_star.html" import edge_star, edge_pick %}
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
 {% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
 {% set spread_url %}{{ url_for('new_bet') }}?name={{ (game.odds_line or 'Spread') | urlencode }}&sport=CFB&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Spread&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
@@ -288,7 +288,7 @@
                 <span class="bet-type-label">Moneyline</span>
                 <div class="bet-type-chips">
                     {% if game.odds %}
-                    <button type="button" class="btn-bet-team"
+                    <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbrev }}"
                             data-team="{{ game.away.abbrev }}" data-opp="{{ game.home.abbrev }}"
                             data-logo="{{ game.away.logo_url }}" data-market="Moneyline"
                             data-odds="{{ game.odds.away_best }}" data-odds-display="{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}"
@@ -297,8 +297,8 @@
                             data-eventstartutc="{{ game.game_time_utc }}"
                             data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
                             data-game-key="{{ game.game_key }}"
-                            onclick="openBetSlip(this)">{{ game.away.abbrev }}</button>
-                    <button type="button" class="btn-bet-team"
+                            onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.away.abbrev }}{{ game.away.abbrev }}</button>
+                    <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbrev }}"
                             data-team="{{ game.home.abbrev }}" data-opp="{{ game.away.abbrev }}"
                             data-logo="{{ game.home.logo_url }}" data-market="Moneyline"
                             data-odds="{{ game.odds.home_best }}" data-odds-display="{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}"
@@ -307,10 +307,10 @@
                             data-eventstartutc="{{ game.game_time_utc }}"
                             data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
                             data-game-key="{{ game.game_key }}"
-                            onclick="openBetSlip(this)">{{ game.home.abbrev }}</button>
+                            onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.home.abbrev }}{{ game.home.abbrev }}</button>
                     {% else %}
-                    <a href="{{ bet_away_url }}" class="btn-bet-team">{{ game.away.abbrev }}</a>
-                    <a href="{{ bet_home_url }}" class="btn-bet-team">{{ game.home.abbrev }}</a>
+                    <a href="{{ bet_away_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.away.abbrev }}{{ game.away.abbrev }}</a>
+                    <a href="{{ bet_home_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbrev }}">{{ '★ ' if edge_pick(game) | trim == game.home.abbrev }}{{ game.home.abbrev }}</a>
                     {% endif %}
                 </div>
             </div>

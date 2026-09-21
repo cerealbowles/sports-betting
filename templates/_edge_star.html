@@ -4,19 +4,29 @@
    Mirrors the edge/Kelly/payout-floor logic in _quick_edge_row.html; kept
    in its own macro so the header (rendered before the bobber include) and
    the bobber can both use it without duplicating the math inline. #}
+{# edge_pick(game) -> abbrev of the recommended team ('' when there is no
+   recommendation). Single source of truth for the star, its label, and the
+   highlighted moneyline button in the details sheet. #}
+{% macro edge_pick(game) -%}
+{%- if game.model and game.status not in ('Final', 'Live') and game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none -%}
+{%- set es_home_pct = game.odds.home_implied * 100 -%}
+{%- set es_favors_home = es_home_pct >= 50 -%}
+{%- set es_team = (game.home.abbrev or game.home.abbr) if es_favors_home else (game.away.abbrev or game.away.abbr) -%}
+{%- set es_team_pct = es_home_pct if es_favors_home else (100 - es_home_pct) -%}
+{%- set es_amer = (game.odds.home_best if es_favors_home else game.odds.away_best) | float -%}
+{%- if es_amer > 0 -%}{%- set es_b = es_amer / 100.0 -%}{%- elif es_amer < 0 -%}{%- set es_b = -100.0 / es_amer -%}{%- else -%}{%- set es_b = 0.0 -%}{%- endif -%}
+{%- set es_model_fav_prob = game.model.home_prob if es_favors_home else game.model.away_prob -%}
+{%- set es_kelly = (es_b * es_model_fav_prob - (1 - es_model_fav_prob)) / es_b if es_b > 0 else -1 -%}
+{%- set es_edge = ((es_model_fav_prob * 100) - es_team_pct) | round(1) -%}
+{%- if es_kelly > 0 and es_edge >= 4 and es_b >= 0.25 -%}{{ es_team }}{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
 {% macro edge_star(game) %}
-{% if game.model and game.status not in ('Final', 'Live') and game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
-{% set es_home_pct = game.odds.home_implied * 100 %}
-{% set es_favors_home = es_home_pct >= 50 %}
-{% set es_team = (game.home.abbrev or game.home.abbr) if es_favors_home else (game.away.abbrev or game.away.abbr) %}
-{% set es_team_pct = es_home_pct if es_favors_home else (100 - es_home_pct) %}
-{% set es_amer = (game.odds.home_best if es_favors_home else game.odds.away_best) | float %}
-{% if es_amer > 0 %}{% set es_b = es_amer / 100.0 %}{% elif es_amer < 0 %}{% set es_b = -100.0 / es_amer %}{% else %}{% set es_b = 0.0 %}{% endif %}
-{% set es_model_fav_prob = game.model.home_prob if es_favors_home else game.model.away_prob %}
-{% set es_kelly = (es_b * es_model_fav_prob - (1 - es_model_fav_prob)) / es_b if es_b > 0 else -1 %}
-{% set es_edge = ((es_model_fav_prob * 100) - es_team_pct) | round(1) %}
-{% if es_kelly > 0 and es_edge >= 4 and es_b >= 0.25 %}
-<span class="edge-star" title="Recommended bet: {{ es_team }} · edge {{ '+' if es_edge > 0 }}{{ es_edge }}%">★</span>
-{% endif %}
+{% set es_pick = edge_pick(game) | trim %}
+{% if es_pick %}
+{% set es_favors_home = es_pick == (game.home.abbrev or game.home.abbr) %}
+{% set es_edge = (((game.model.home_prob if es_favors_home else game.model.away_prob) * 100) - ((game.odds.home_implied if es_favors_home else game.odds.away_implied) * 100)) | round(1) %}
+<span class="edge-star" title="Recommended bet: {{ es_pick }} · edge {{ '+' if es_edge > 0 }}{{ es_edge }}%">★ {{ es_pick }}</span>
 {% endif %}
 {% endmacro %}
