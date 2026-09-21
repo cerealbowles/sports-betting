@@ -32,6 +32,9 @@
 </div>
 
 {% else %}
+
+{% set rec_title = "Weekly Recommendations" %}{% include "_sport_recommendations.html" %}
+
 {% set _fav_total = namespace(n=0) %}
 {% for day in week_ctx.days %}{% set _fav_total.n = _fav_total.n + (day.games | selectattr('is_favorite') | list | length) %}{% endfor %}
 {% if _fav_total.n %}

@@ -311,7 +311,7 @@
 <!-- ══ ZONE 2: Scoring & Market Signal ══ -->
 <div class="zone-divider">
     <h3>Scoring &amp; Market Signal</h3>
-    <span class="zone-sub">how the unified score reads odds, line movement &amp; edge</span>
+    <span class="zone-sub">how the trust score reads odds, line movement &amp; edge</span>
     <span class="zone-line"></span>
 </div>
 {% endif %}
@@ -459,22 +459,16 @@
 <details class="score-details">
   <summary>
     <span class="sd-title">Rank Comparison</span>
-    <span class="sd-sub">Trust Score · Sharp Score · Experimental · Unified</span>
+    <span class="sd-sub">Trust Score · Sharp Score · Experimental</span>
     <span class="sd-teaser">n={{ rank_comparison_n }} games</span>
   </summary>
   <div class="score-details-body">
-  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 10px;">Retroactive Trust Score · Sharp Score · Experimental · Unified · n={{ rank_comparison_n }} games (Exp: n={{ rank_comparison_n_exp }})</p>
+  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 10px;">Retroactive Trust Score · Sharp Score · Experimental · n={{ rank_comparison_n }} games (Exp: n={{ rank_comparison_n_exp }})</p>
   <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
     All ranks computed retroactively from stored game data — not from stale <code>daily_rank</code>.<br>
     <strong style="color:var(--text);">Trust Score</strong> 50% Consensus · 25% Edge · 15% Fav/Dog · 10% Calib &nbsp;|&nbsp;
     <strong style="color:var(--text);">Sharp Score</strong> 30% Edge · 30% Consensus · 20% Calib · 20% Line Move &nbsp;|&nbsp;
-    <strong style="color:var(--text);">Experimental</strong> 40% Edge · 30% Line Move · 20% Consensus · 10% Calib — line move = opening→close (CLV as fallback)<br>
-    <strong style="color:var(--text);">Unified</strong> (main table) e/f/m grid-searched to maximize <em>win rate</em> of the top-3 picks/day, blended toward priors as n grows; movement fixed at 10% — currently
-    {{ (unified_weights.e * 100) | round(0) }}% Edge · {{ (unified_weights.f * 100) | round(0) }}% Fav/Dog ·
-    {{ (unified_weights.m * 100) | round(0) }}% Line Move · {{ (unified_weights.mv * 100) | round(0) }}% Movement Profile (n={{ unified_weights.n }})<br>
-    <strong style="color:var(--text);">Pick of the Day</strong> separate e/k/m track grid-searched to maximize <em>ROI</em> of the #1 pick/day only (plus a strong-bet floor: prob ≥55%, calib bucket ≥0.45) — currently
-    {{ (pick_of_day_weights.e * 100) | round(0) }}% Edge · {{ (pick_of_day_weights.k * 100) | round(0) }}% Calib ·
-    {{ (pick_of_day_weights.m * 100) | round(0) }}% Line Move · {{ (pick_of_day_weights.mv * 100) | round(0) }}% Movement Profile (n={{ pick_of_day_weights.n }})
+    <strong style="color:var(--text);">Experimental</strong> 40% Edge · 30% Line Move · 20% Consensus · 10% Calib — line move = opening→close (CLV as fallback)
   </p>
   <div class="calib-scroll">
   <table class="calib-table" style="width:100%;">
@@ -484,7 +478,6 @@
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--orange);">Trust Score</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--green, #4ade80);">Sharp Score</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--blue);">Experimental</th>
-        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--purple, #a78bfa);">Unified</th>
       </tr>
       <tr>
         <th style="padding:3px 8px;text-align:right;">n</th>
@@ -496,9 +489,6 @@
         <th style="padding:3px 8px;text-align:right;">n</th>
         <th style="padding:3px 8px;text-align:right;">Win%</th>
         <th style="padding:3px 8px;text-align:right;border-right:1px solid var(--border);">ROI%</th>
-        <th style="padding:3px 8px;text-align:right;">n</th>
-        <th style="padding:3px 8px;text-align:right;">Win%</th>
-        <th style="padding:3px 8px;text-align:right;">ROI%</th>
       </tr>
     </thead>
     <tbody>
@@ -529,14 +519,6 @@
       <td style="padding:7px 8px;text-align:right;font-size:0.78rem;border-right:1px solid var(--border);">
         {% if row.exp.roi is not none %}<span class="{{ 'calib-err-ok' if row.exp.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.exp.roi > 0 }}{{ row.exp.roi }}%</span>{% else %}—{% endif %}
       </td>
-      {# Unified #}
-      <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.unified.n or '—' }}</td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-        {% if row.unified.wr is not none %}<span class="{{ 'calib-err-ok' if row.unified.wr >= 55 else ('calib-err-pos' if row.unified.wr >= 50 else 'calib-err-neg') }}">{{ row.unified.wr }}%</span>{% else %}—{% endif %}
-      </td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-        {% if row.unified.roi is not none %}<span class="{{ 'calib-err-ok' if row.unified.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.unified.roi > 0 }}{{ row.unified.roi }}%</span>{% else %}—{% endif %}
-      </td>
     </tr>
     {% endfor %}
     </tbody>
@@ -558,7 +540,7 @@
   <div class="score-details-body">
   <div class="section-header" style="margin-bottom:12px;">
     <h2 style="display:none;">Movement Profile</h2>
-    <span class="small">n={{ movement_n_total }} classified games · monitoring sample size before this feeds the Unified Score</span>
+    <span class="small">n={{ movement_n_total }} classified games · monitoring sample size before this feeds the Trust Score</span>
   </div>
   <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
     Pre-game moneyline movement on the model-pick side, classified from <code>odds_snapshot</code> history (capture started 2026-06-23; purging disabled).
@@ -603,7 +585,7 @@
     </tbody>
   </table>
   </div>
-  <p class="section-note">Weight column is the live, credibility-blended value each profile contributes if/when wired into the Unified Score — sits at 0.5 (neutral) until n≥5 with stored ROI.</p>
+  <p class="section-note">Weight column is the live, credibility-blended value each profile contributes if/when wired into the Trust Score — sits at 0.5 (neutral) until n≥5 with stored ROI.</p>
   </div>
 </details>
 {% endif %}
@@ -670,59 +652,6 @@
   </table>
   </div>
 
-  <!-- Firing table ranked by Unified Score instead of Trust Score -->
-  {% if firing_stats_unified %}
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:10px;border-top:1px solid var(--border);padding-top:14px;">
-    Same Breakdown — Ranked by Unified Score
-  </div>
-  <div class="calib-scroll" style="margin-bottom:18px;">
-  <table class="calib-table" style="width:100%;">
-    <thead>
-      <tr>
-        <th>Selection</th>
-        <th>Games</th>
-        <th>Win%</th>
-        <th>Lift Win</th>
-        <th>Avg Edge</th>
-        <th>ROI%</th>
-        <th>Lift ROI</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for r in firing_stats_unified %}
-    {% set is_all = r.n_pick is none %}
-    <tr {% if is_all %}style="border-top:1px solid var(--border);"{% endif %}>
-      <td style="font-weight:700;font-size:0.82rem;{% if is_all %}color:var(--text-muted);{% endif %}">{{ r.label }}</td>
-      <td {% if is_all %}style="color:var(--text-muted);font-size:0.78rem;"{% endif %}>{{ r.count }}</td>
-      <td>
-        <span class="{{ 'calib-err-ok' if r.win_rate >= 55 else ('calib-err-pos' if r.win_rate >= 50 else 'calib-err-neg') }}">{{ r.win_rate }}%</span>
-      </td>
-      <td>
-        {% if r.lift_wr is not none %}
-        <span class="lift-badge {{ 'lift-pos' if r.lift_wr > 0 else ('lift-neg' if r.lift_wr < 0 else 'lift-zero') }}">{{ '+' if r.lift_wr > 0 }}{{ r.lift_wr }}pp</span>
-        {% else %}<span style="color:var(--text-muted);font-size:0.72rem;">baseline</span>{% endif %}
-      </td>
-      <td>
-        {% if r.avg_edge is not none %}
-        <span class="{{ 'calib-err-ok' if r.avg_edge > 5 else ('calib-err-pos' if r.avg_edge > 0 else 'calib-err-neg') }}">{{ '+' if r.avg_edge > 0 }}{{ r.avg_edge }}%</span>
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if r.avg_roi is not none %}
-        <span class="{{ 'calib-err-ok' if r.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if r.avg_roi > 0 }}{{ r.avg_roi }}%</span>
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if r.lift_roi is not none %}
-        <span class="lift-badge {{ 'lift-pos' if r.lift_roi > 0 else ('lift-neg' if r.lift_roi < 0 else 'lift-zero') }}">{{ '+' if r.lift_roi > 0 }}{{ r.lift_roi }}pp</span>
-        {% else %}<span style="color:var(--text-muted);font-size:0.72rem;">baseline</span>{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
 
   <!-- ROI by Trust Score bucket: top-3 recommended vs all -->
   {% if firing_bucket_stats %}

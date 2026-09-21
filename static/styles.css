@@ -1636,6 +1636,8 @@ body.embed-mode .container { padding-bottom: 0; }
 .game-venue { color: var(--text-muted); }
 .game-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .edge-star { font-size: 0.85rem; color: #eab308; line-height: 1; cursor: default; }
+.edge-star { display: inline-flex; align-items: center; gap: 4px; }
+.edge-pick { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.4px; color: var(--text); }
 .status-live {
     font-size: 0.68rem; font-weight: 700; color: var(--win);
     letter-spacing: 0.8px; text-transform: uppercase;
@@ -2483,4 +2485,19 @@ body.embed-mode .container { padding-bottom: 0; }
     letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px;
     background: var(--orange-dim); color: var(--orange);
     vertical-align: middle;
+}
+
+/* ── Recommendations list (shared by every non-MLB sport page) ── */
+.rec-col-hide { }
+.rank-badge { font-size: 0.68rem; font-weight: 700; color: var(--orange); margin-right: 3px; }
+.rec-summary { cursor: pointer; list-style: none; }
+.rec-summary::-webkit-details-marker { display: none; }
+.rec-summary::before { content: "▸ "; color: var(--text-muted); font-size: 0.75rem; }
+.rec-details[open] .rec-summary::before { content: "▾ "; }
+@media (max-width: 600px) { .rec-col-hide { display: none; } }
+@media (min-width: 901px) {
+    /* Only collapses behind a dropdown on mobile — on desktop the list stays
+       open and the summary toggle is hidden. */
+    .rec-summary { display: none; cursor: default; }
+    .rec-details:not([open]) > *:not(.rec-summary) { display: block !important; }
 }

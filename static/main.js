@@ -247,7 +247,7 @@ fetch('/api/empirical_info', {
     currentEmpirical = data.empirical;
     if (data.source === 'unified_rank') {
         el.textContent =
-            'Unified Score Rank ' + data.bucket_label + ' win rate: ' + (Number(data.empirical) * 100).toFixed(1) + '%'
+            'Trust Score Rank ' + data.bucket_label + ' win rate: ' + (Number(data.empirical) * 100).toFixed(1) + '%'
             + '  (n=' + data.matching_count + ' ' + (sport || 'bets') + ')';
     } else {
         el.textContent =

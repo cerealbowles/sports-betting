@@ -793,240 +793,9 @@ def _sharp_score(td, line_move_val=0.5):
     return round(raw * 100)
 
 
-# ── Unified score: single data-fit weight vector over the same components ────
-# Trust/Sharp/Experimental are all linear blends of the same {c, e, k, market}
-# components with hand-set splits. Unified replaces the splits with weights
-# grid-searched against resolved games, blended toward the prior as empirical
-# n grows — same credibility-blend pattern as _recompute_trust_weights.
-#
-# Two parallel tracks, same component family, different objectives AND
-# (as of 2026-07-07) different component sets:
-#   _UNIFIED_WEIGHTS      — grid-searches (e, f, m): edge, fav/dog, line move.
-#                            Optimized for WIN RATE of the top-3 picks/day.
-#                            Powers the main recommendation table (all ranks).
-#                            A broad, "good across several bets" ranking.
-#   _PICK_OF_DAY_WEIGHTS  — grid-searches (e, k, m): edge, calibration, line move.
-#                            Optimized for ROI of the #1 pick/day only.
-#                            Powers the single featured Pick of the Day slot.
-#                            Tuned to find the one standout, not a portfolio.
-# Calibration ('k') was replaced with fav/dog ('f') in the unified track after
-# validation on 493 resolved MLB games: chronological train/test splits at
-# 50/60/70/80% train each showed e/f/m beating e/k/m out-of-sample on every
-# split (avg win rate 60.3% vs 57.3%, avg ROI +12.4% vs +5.0%), and a 4-variable
-# search adding 'k' back alongside 'f' underperformed the 3-variable e/f/m
-# blend (57.7%/+6.8%) — calibration doesn't pull weight even in combination.
-# Pick-of-day keeps 'k' — untested with this swap, deliberately not merged
-# since the two tracks solve different problems on purpose.
-#
-# Consensus ('c') was dropped after validation across multiple train/test
-# splits showed it consistently overfits in-sample and hurts held-out ROI
-# (e.g. 50/50 split: 4.0% test ROI with it vs 15.0% without). Movement
-# profile ('mv') replaces it at a fixed 10% — not grid-searched, since only
-# ~9% of games have a real (non-default-neutral) classification right now,
-# too thin to trust a fitted weight. 10% mirrors the existing market-signal
-# ('m') weight class since both track the same family of signal (CLV/line
-# movement); the remaining 90% is grid-searched over each track's key set.
-_MOVEMENT_FIXED_WEIGHT = 0.10
-_PRIOR_UNIFIED = {'e': 0.45, 'f': 0.45, 'm': 0.00}
-_UNIFIED_WEIGHTS = dict(_PRIOR_UNIFIED, mv=_MOVEMENT_FIXED_WEIGHT, n=0, computed_at=None)
-_UNIFIED_LOCK = threading.Lock()
-
-_PRIOR_PICK_OF_DAY = {'e': 0.45, 'k': 0.45, 'm': 0.00}
-_PICK_OF_DAY_WEIGHTS = dict(_PRIOR_PICK_OF_DAY, mv=_MOVEMENT_FIXED_WEIGHT, n=0, computed_at=None)
-_PICK_OF_DAY_LOCK = threading.Lock()
-
-
-def _build_unified_rows(sport='MLB'):
-    """Shared row-building for both weight-fit tracks — same component inputs,
-    just fed into two different objective functions below."""
-    with app.app_context():
-        resolved = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.home_won.isnot(None),
-            GamePrediction.home_odds.isnot(None),
-            GamePrediction.away_odds.isnot(None),
-            GamePrediction.pick_roi.isnot(None),
-        ).all()
-
-    rows = []
-    for g in resolved:
-        td = _trust_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, detail=True)
-        if not td:
-            continue
-        lm = _line_move_pct(g.home_prob, g.closing_home_odds or g.home_odds,
-                             g.closing_away_odds or g.away_odds,
-                             g.opening_home_odds, g.opening_away_odds)
-        signal_pct = lm if lm is not None else g.pick_clv
-        m = max(0.0, min(1.0, 0.5 + signal_pct / 10.0)) if signal_pct is not None else 0.5
-        mv = _movement_value(g.movement_profile)
-        fav_home = (g.home_prob or 0.5) >= 0.5
-        won = fav_home == bool(g.home_won)
-        rows.append({'date': g.game_date, 'roi': g.pick_roi, 'won': won,
-                     'e': td.get('e') or 0, 'k': td.get('k') or 0, 'f': td.get('f') or 0,
-                     'm': m, 'mv': mv})
-    return rows
-
-
-# Key sets for the two tracks — deliberately different (see module comment
-# above). Validated 2026-07-07 on 493 resolved MLB games via chronological
-# train/test splits (50/60/70/80% train, held-out eval each time): swapping
-# calibration ('k') for fav/dog ('f') in the win-rate objective raised average
-# held-out top-3 win rate 57.3%→60.3% and ROI +5.0%→+12.4%, consistently across
-# every split point tested — not a one-split fluke. A 4-variable grid search
-# adding 'k' back alongside 'f' underperformed the 3-variable e/f/m blend
-# (57.7%/+6.8%), confirming calibration isn't pulling weight even in
-# combination. Pick-of-day (ROI-for-#1 objective) keeps 'k' — untested with
-# this swap, and the two tracks solve different problems on purpose.
-_UNIFIED_KEYS = ('e', 'f', 'm')
-_PICK_OF_DAY_KEYS = ('e', 'k', 'm')
-
-
-_CV_TEST_FRACS = (0.5, 0.6, 0.7, 0.8)  # chronological train fractions for held-out cut points
-
-
-_GRID_MAX_WEIGHT = 0.55  # no single component may exceed this share — see docstring
-
-
-def _grid_search_weights(rows, objective_fn, keys, test_fracs=_CV_TEST_FRACS,
-                          max_weight=_GRID_MAX_WEIGHT):
-    """Grid search over 3 components (from `keys`) summing to
-    1 - _MOVEMENT_FIXED_WEIGHT, choosing the candidate with the best AVERAGE
-    held-out objective across several chronological train/test cut points —
-    not the raw full-sample argmax.
-
-    Why the CV averaging: top3-win-rate (and top1-ROI) are noisy,
-    discontinuous functions of ~3 picks/day. A plain full-sample argmax has
-    no defense against overfitting that noise, and the alpha credibility
-    blend below only guards against small-n noise (it's 1.0 — full trust,
-    zero shrinkage — for any n ≥ 50). Observed live: going from 493→533
-    resolved MLB games flipped the raw argmax from a balanced ~40/20/30 e/f/m
-    split to a degenerate 0/0/90 one that underperformed the fixed-weight
-    Sharp Score. Scoring each candidate by its average performance on several
-    held-out windows (rather than the single window it was fit on) directly
-    penalizes weight vectors that only work in-sample.
-
-    Why max_weight too: CV averaging alone wasn't sufficient — at n=709
-    (2026-07-30) the unified track still degenerated to e=0.15/f=0.70/m=0.05,
-    concentrating the whole score on the single blunt Fav/Dog signal. Rerunning
-    the same search capped at 0.55 landed on a much more diversified
-    e=0.25/f=0.35/m=0.30 with held-out win rate 60.2% vs 61.0% uncapped — a
-    <1pp difference, well within noise, for a materially more stable and
-    interpretable weight vector. Since the CV mechanism only measures held-out
-    fit and has no preference for diversification, and near-tied candidates are
-    common with this few grid points, an explicit cap is needed to actually rule
-    out the degenerate solutions rather than hope CV disfavors them.
-    """
-    from itertools import product as _iproduct
-    dates = sorted(set(r['date'] for r in rows))
-    cut_points = []
-    for frac in test_fracs:
-        split_idx = int(len(dates) * frac)
-        train_dates = set(dates[:split_idx])
-        test_rows = [r for r in rows if r['date'] not in train_dates]
-        if test_rows:
-            cut_points.append(test_rows)
-    if not cut_points:
-        cut_points = [rows]  # too few distinct days to split — fall back to in-sample
-
-    remaining = round(1 - _MOVEMENT_FIXED_WEIGHT, 2)
-    step = 0.05
-    grid = [round(i * step, 2) for i in range(0, int(remaining / step) + 1)]
-    best_w, best_val = None, -999
-    for w1, w2 in _iproduct(grid, grid):
-        w3 = round(remaining - w1 - w2, 2)
-        if w3 < 0 or w3 > remaining:
-            continue
-        if max(w1, w2, w3, _MOVEMENT_FIXED_WEIGHT) > max_weight:
-            continue
-        weights = (w1, w2, w3)
-        scores = [objective_fn(test_rows, weights, keys) for test_rows in cut_points]
-        scores = [s for s in scores if s > -999]
-        if not scores:
-            continue
-        val = sum(scores) / len(scores)
-        if val > best_val:
-            best_val, best_w = val, weights
-    return best_w, best_val
-
-
-def _ranked_day_groups(rows, weights, keys, top_n):
-    from itertools import groupby as _igroupby
-    w1, w2, w3 = weights
-    k1, k2, k3 = keys
-    rows_sorted = sorted(rows, key=lambda r: r['date'])
-    out = []
-    for _, grp in _igroupby(rows_sorted, key=lambda r: r['date']):
-        day = sorted(grp, key=lambda r: -(
-            w1 * r[k1] + w2 * r[k2] + w3 * r[k3] + _MOVEMENT_FIXED_WEIGHT * r['mv']))[:top_n]
-        out.extend(day)
-    return out
-
-
-def _objective_top3_winrate(rows, weights, keys):
-    day_picks = _ranked_day_groups(rows, weights, keys, 3)
-    if not day_picks:
-        return -999
-    return sum(1 for r in day_picks if r['won']) / len(day_picks)
-
-
-def _objective_top1_roi(rows, weights, keys):
-    day_picks = _ranked_day_groups(rows, weights, keys, 1)
-    if not day_picks:
-        return -999
-    return sum(r['roi'] for r in day_picks) / len(day_picks)
-
-
-def _recompute_unified_weights(sport='MLB'):
-    """Grid-search (e, f, m) weights maximizing WIN RATE of the top-3 picks/day,
-    blended toward _PRIOR_UNIFIED by credibility alpha = min(n/50, 1.0). Powers
-    the main recommendation table. Called at startup and after each nightly
-    resolve, alongside _recompute_trust_weights."""
-    global _UNIFIED_WEIGHTS
-
-    rows = _build_unified_rows(sport)
-    n = len(rows)
-    if n < 10:
-        return  # too few resolved games for any empirical signal
-
-    best_w, best_val = _grid_search_weights(rows, _objective_top3_winrate, _UNIFIED_KEYS)
-
-    alpha = min(n / 50.0, 1.0)
-    fitted = dict(zip(_UNIFIED_KEYS, best_w))
-    blended = {k: round(alpha * fitted[k] + (1 - alpha) * _PRIOR_UNIFIED[k], 4) for k in _PRIOR_UNIFIED}
-
-    with _UNIFIED_LOCK:
-        _UNIFIED_WEIGHTS = dict(blended, mv=_MOVEMENT_FIXED_WEIGHT, n=n,
-                                 computed_at=datetime.now(timezone.utc).isoformat())
-
-    print(f'[unified-weights] recomputed from {n} {sport} games: {blended} '
-          f'(mv fixed at {_MOVEMENT_FIXED_WEIGHT}, objective=top3 win rate)', flush=True)
-
-
-def _recompute_pick_of_day_weights(sport='MLB'):
-    """Grid-search (e, k, m) weights maximizing ROI of the #1 pick/day only,
-    blended toward _PRIOR_PICK_OF_DAY by credibility alpha = min(n/50, 1.0).
-    Powers the featured Pick of the Day slot — deliberately a different
-    objective than the main table's win-rate track (see module comment above)."""
-    global _PICK_OF_DAY_WEIGHTS
-
-    rows = _build_unified_rows(sport)
-    n = len(rows)
-    if n < 10:
-        return
-
-    best_w, best_val = _grid_search_weights(rows, _objective_top1_roi, _PICK_OF_DAY_KEYS)
-
-    alpha = min(n / 50.0, 1.0)
-    fitted = dict(zip(_PICK_OF_DAY_KEYS, best_w))
-    blended = {k: round(alpha * fitted[k] + (1 - alpha) * _PRIOR_PICK_OF_DAY[k], 4) for k in _PRIOR_PICK_OF_DAY}
-
-    with _PICK_OF_DAY_LOCK:
-        _PICK_OF_DAY_WEIGHTS = dict(blended, mv=_MOVEMENT_FIXED_WEIGHT, n=n,
-                                     computed_at=datetime.now(timezone.utc).isoformat())
-
-    print(f'[pick-of-day-weights] recomputed from {n} {sport} games: {blended} '
-          f'(mv fixed at {_MOVEMENT_FIXED_WEIGHT}, objective=top1 ROI)', flush=True)
-
+# ── Recommendation ranking ─────────────────────────────────────────────────────
+# Everything ranks by the Trust Score (_trust_score). The old data-fit 'Unified'
+# and 'Pick of the Day' composite scores were retired in its favour.
 
 def _odds_multiplier(pick_odds):
     """Post-score adjustment surfacing underdog value the weighted formula
@@ -1062,55 +831,13 @@ def _odds_multiplier(pick_odds):
 
 
 def _unified_score(td, market_val=0.5, movement_val=0.5, pick_odds=None):
-    """0-100 composite score using the win-rate-optimized (e, f, m) weights
-    plus a fixed 10% movement-profile weight, then an odds-bucket multiplier
-    (see _odds_multiplier) to surface underdog value the weighted sum can't
-    see. Powers the main recommendation table (all ranks)."""
+    """The score every recommendation ranking sorts by. This is the Trust Score
+    (td['score']) — the old separate 'Trust Score' composite was retired in
+    favour of it. The extra args are ignored; kept so existing call sites
+    (rank stats, alerts, daily picks) needn't change."""
     if not td:
         return 0
-    with _UNIFIED_LOCK:
-        w = dict(_UNIFIED_WEIGHTS)
-    raw = (w['mv'] * movement_val +
-           w['e'] * (td.get('e') or 0) +
-           w['f'] * (td.get('f') or 0) +
-           w['m'] * market_val)
-    return round(raw * 100 * _odds_multiplier(pick_odds))
-
-
-# Strong-bet floor for Pick of the Day — without this, the ROI-optimized track
-# (e=65% weight on raw edge, plus the underdog multiplier) can surface a thin,
-# barely-above-coinflip edge on a big payout as the "best" ROI score, even
-# though that's a worse real-world bet than a more confident pick with smaller
-# theoretical ROI. Two checks, both must pass:
-#   pick_prob >= 0.55  — meaningfully favored, not just nominally above 50%
-#   calib component (td['k']) >= 0.45 — bucket isn't a known danger zone
-#                                        (e.g. the 56-58% trap), independent
-#                                        of the ROI-track's own k weight
-_POD_MIN_PROB = 0.55
-_POD_MIN_CALIB = 0.45
-
-
-def _is_strong_bet(pick_prob, td):
-    if pick_prob is None or pick_prob < _POD_MIN_PROB:
-        return False
-    if not td or (td.get('k') or 0) < _POD_MIN_CALIB:
-        return False
-    return True
-
-
-def _pick_of_day_score(td, market_val=0.5, movement_val=0.5, pick_odds=None):
-    """Same formula as _unified_score, using the ROI-for-#1-pick-optimized
-    weight track instead. Only meaningful for candidates that already passed
-    _is_strong_bet — this function doesn't apply that floor itself."""
-    if not td:
-        return 0
-    with _PICK_OF_DAY_LOCK:
-        w = dict(_PICK_OF_DAY_WEIGHTS)
-    raw = (w['mv'] * movement_val +
-           w['e'] * (td.get('e') or 0) +
-           w['k'] * (td.get('k') or 0) +
-           w['m'] * market_val)
-    return round(raw * 100 * _odds_multiplier(pick_odds))
+    return td.get('score', 0) or 0
 
 
 _UNIFIED_RANK_BUCKETS = [('#1', 1, 1), ('#2-3', 2, 3), ('#4-6', 4, 6), ('#7+', 7, 999)]
@@ -1126,7 +853,7 @@ def _unified_rank_bucket(rank):
 
 
 def _recompute_unified_rank_stats(sport='MLB'):
-    """Retroactive win-rate per Unified-Score daily-rank bucket (#1, #2-3, #4-6, #7+),
+    """Retroactive win-rate per Trust-Score daily-rank bucket (#1, #2-3, #4-6, #7+),
     from resolved games with odds. Same ranking logic as the Rank Comparison table
     in model_performance(), cached here so /api/empirical_info can look it up cheaply.
     """
@@ -2315,7 +2042,7 @@ def empirical_info():
   ALPHA = 0.6
   TAU_DAYS = 30.0
 
-  # If this bet is tied to today's Unified Score rank, use that rank-bucket's
+  # If this bet is tied to today's Trust Score rank, use that rank-bucket's
   # retroactive win rate (model-derived) instead of the bettor's own closed-bet
   # history — same #1/#2-3/#4-6/#7+ buckets as the Rank Comparison table.
   if unf_rank:
@@ -2374,67 +2101,6 @@ def empirical_info():
       "matching_count": matching_count,
       "source": "personal_history",
   })
-
-@app.route('/api/place-top3', methods=['POST'])
-def place_top3():
-  data     = request.get_json(silent=True) or {}
-  bets     = data.get('bets', [])
-  if not bets or len(bets) > 5:
-    return jsonify({'error': 'Invalid bets list'}), 400
-  unsettled = _unsettled_finished_bets()
-  if unsettled:
-    names = ', '.join(b.name for b, _info in unsettled)
-    return jsonify({
-      'error': f'Close out finished bet(s) before placing new ones: {names}',
-      'unsettled': [b.id for b, _info in unsettled],
-    }), 409
-  settings = Setting.query.first()
-  if not settings:
-    return jsonify({'error': 'No settings'}), 400
-  placed = []
-  try:
-    for bd in bets:
-      odds_dec = float(bd.get('odds', 0))
-      stake    = float(bd.get('stake', 0))
-      if odds_dec <= 0 or stake <= 0:
-        continue
-      prob      = float(bd.get('prob', 0.5))
-      name      = str(bd.get('name', 'Bet'))[:100]
-      sport     = str(bd.get('sport', 'MLB'))
-      bet_type  = str(bd.get('bet_type', 'Moneyline'))
-      side      = str(bd.get('side', ''))
-      home_name = str(bd.get('home_name', ''))
-      away_name = str(bd.get('away_name', ''))
-      utc_raw   = str(bd.get('game_time_utc', ''))
-      eventstart = None
-      if utc_raw:
-        try:
-          eventstart = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
-          if not eventstart.tzinfo:
-            eventstart = eventstart.replace(tzinfo=timezone.utc)
-        except Exception:
-          pass
-      game_key = ''
-      if home_name and away_name:
-        from odds_api import _normalize
-        h_norm = _normalize(home_name)
-        a_norm = _normalize(away_name)
-        if eventstart:
-          utc_dt = eventstart if getattr(eventstart, 'tzinfo', None) else eventstart.replace(tzinfo=timezone.utc)
-          game_key = f"{h_norm}_{a_norm}_{utc_dt.strftime('%Y-%m-%dT%H')}"
-        else:
-          game_key = f"{h_norm}_{a_norm}"
-      b = OpenBet(name=name, odds=odds_dec, prob=prob, stake=stake,
-                  sport=sport, bet_type=bet_type, eventstart=eventstart,
-                  game_key=game_key, bet_side=side)
-      db.session.add(b)
-      settings.bankroll = round(settings.bankroll - stake, 2)
-      placed.append({'name': name, 'stake': stake})
-    db.session.commit()
-    return jsonify({'ok': True, 'placed': placed, 'count': len(placed)})
-  except Exception as e:
-    db.session.rollback()
-    return jsonify({'error': str(e)}), 500
 
 @app.route('/add_open', methods=['POST'])
 def add_open():
@@ -2806,7 +2472,7 @@ def mlb_schedule():
       trust = ts_detail.get('score', 0)
 
       # Movement profile — computed live so it reflects partial-day snapshot
-      # history as it accumulates; feeds into the Unified Score at a fixed 10%.
+      # history as it accumulates; feeds into the Trust Score at a fixed 10%.
       game_start = None
       _utc_raw = game.get('game_time_utc', '')
       if _utc_raw:
@@ -2819,7 +2485,6 @@ def mlb_schedule():
       movement_val = _movement_value(movement_profile)
 
       unified = _unified_score(ts_detail, line_move_val, movement_val, amer_odds)
-      pod_score = _pick_of_day_score(ts_detail, line_move_val, movement_val, amer_odds)
 
       # Both probable starters must be officially announced. Until then, the
       # model is filling SP-dependent factors (SIERA, K%, BB%, Barrel%, Whiff%)
@@ -2829,8 +2494,6 @@ def mlb_schedule():
       # still shown, just sorted below every confirmed-SP game regardless of
       # score, and never eligible for the higher-bar Pick of the Day slot.
       sp_confirmed = bool(home_obj.get('pitcher')) and bool(away_obj.get('pitcher'))
-
-      pod_eligible = status == 'Preview' and sp_confirmed and _is_strong_bet(adj_prob, ts_detail)
 
       outcome = None
       if status == 'Final':
@@ -2861,8 +2524,6 @@ def mlb_schedule():
         'ts_detail':     ts_detail,
         'ev_pct':        ev_pct,
         'unified_score': unified,
-        'pod_score':     pod_score,
-        'pod_eligible':  pod_eligible,
         'sp_confirmed':  sp_confirmed,
         'line_move_pct': line_move_pct,
         'movement_profile': movement_profile,
@@ -2875,19 +2536,11 @@ def mlb_schedule():
       })
 
   # Unconfirmed-SP games sort below every confirmed-SP game regardless of
-  # score (see sp_confirmed comment above) — Unified Score order still applies
+  # score (see sp_confirmed comment above) — Trust Score order still applies
   # within each group.
-  all_candidates.sort(key=lambda x: (not x['sp_confirmed'], -x['unified_score']))
+  all_candidates.sort(key=lambda x: (not x['sp_confirmed'], -x['trust_score']))
   for i, b in enumerate(all_candidates):
     b['rank'] = i + 1
-
-  # Pick of the Day: highest ROI-optimized score among today's Preview games
-  # that also clear the strong-bet floor (_is_strong_bet) — a separate
-  # objective from the main table's win-rate-optimized ranking above, so this
-  # is not just "whoever's #1 in the table." None if nothing qualifies; an
-  # empty slot is the correct outcome on a night with no strong, high-ROI pick.
-  _pod_candidates = [b for b in all_candidates if b['pod_eligible']]
-  pick_of_day = max(_pod_candidates, key=lambda b: b['pod_score']) if _pod_candidates else None
 
   # Persist ranks: pre-game ranks update on every load (shift as games start);
   # Live games get their rank-at-start captured once and never overwritten.
@@ -2932,6 +2585,13 @@ def mlb_schedule():
           adj = b['adj_prob'] / 100.0
           game['model']['adj_home_prob'] = round(adj if fav_home else 1.0 - adj, 4)
           game['model']['adj_away_prob'] = round(adj if not fav_home else 1.0 - adj, 4)
+          # Final probability = what the New Bet form ends up with (60% adjusted
+          # model / 40% rank-bucket win rate, see /api/empirical_info). The ★
+          # recommendation reads this so it can't say "bet" when Kelly says skip.
+          _bkt = _UNIFIED_RANK_STATS.get('MLB', {}).get(_unified_rank_bucket(b['rank']) or '')
+          final = round(0.6 * adj + 0.4 * (_bkt['wr'] / 100.0), 4) if _bkt else adj
+          game['model']['final_home_prob'] = round(final if fav_home else 1.0 - final, 4)
+          game['model']['final_away_prob'] = round(final if not fav_home else 1.0 - final, 4)
       else:
         game['rec'] = None
 
@@ -2961,7 +2621,7 @@ def mlb_schedule():
   odds_next_fetch = _oa.get_next_fetch_time()
 
   resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
-                         bankroll=bankroll, kelly_cap=kelly_cap, pick_of_day=pick_of_day,
+                         bankroll=bankroll, kelly_cap=kelly_cap,
                          open_bets=mlb_bets,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
@@ -3435,7 +3095,6 @@ def model_performance():
   _retro_ts_map  = {}   # {id: retro_ts_rank}
   _exp_rank_map  = {}   # {id: experimental_rank}
   _sharp_rank_map = {}  # {id: sharp_score_rank}
-  _unified_rank_map = {}  # {id: unified_score_rank}
 
   for _dt, _grp in _igroupby(
       sorted(_ranked, key=lambda x: x.game_date), key=lambda x: x.game_date
@@ -3481,29 +3140,10 @@ def model_performance():
     for _r, (_gid, _) in enumerate(_exp_scored, 1):
       _exp_rank_map[_gid] = _r
 
-    # Unified rank: fitted (e, f, m) weights + fixed 10% movement — see _recompute_unified_weights
-    _un_scored = []
-    for _g in _day:
-      _td = next((t for gid, _, t in _ts_scored if gid == _g.id), {})
-      lm = _line_move_pct(_g.home_prob, _g.closing_home_odds or _g.home_odds,
-                          _g.closing_away_odds or _g.away_odds,
-                          _g.opening_home_odds, _g.opening_away_odds)
-      lm_fallback = _g.pick_clv if lm is None else lm
-      lm_val = max(0.0, min(1.0, 0.5 + lm_fallback / 10.0)) if lm_fallback is not None else 0.5
-      mv_val = _movement_value(_g.movement_profile)
-      _fav_home = (_g.home_prob or 0.5) >= 0.5
-      _pick_odds = _g.home_odds if _fav_home else _g.away_odds
-      un = _unified_score(_td, lm_val, mv_val, _pick_odds)
-      _un_scored.append((_g.id, un))
-    _un_scored.sort(key=lambda x: -x[1])
-    for _r, (_gid, _) in enumerate(_un_scored, 1):
-      _unified_rank_map[_gid] = _r
-
   # Games eligible for each system
   _ts_eligible  = _ranked                                   # all with odds
   _sh_eligible  = _ranked                                   # all with odds
   _exp_eligible = [g for g in _ranked if _exp_rank_map.get(g.id)]  # need signal
-  _un_eligible  = _ranked                                   # all with odds
 
   _RANK_BUCKETS_DEF = [('#1', 1, 1), ('#2-3', 2, 3), ('#4-6', 4, 6), ('#7+', 7, 999)]
 
@@ -3528,16 +3168,13 @@ def model_performance():
   rank_cmp_ts      = _rank_bucket_stats(_ts_eligible,  lambda g: _retro_ts_map.get(g.id))
   rank_cmp_sharp   = _rank_bucket_stats(_sh_eligible,  lambda g: _sharp_rank_map.get(g.id))
   rank_cmp_exp     = _rank_bucket_stats(_exp_eligible, lambda g: _exp_rank_map.get(g.id))
-  rank_cmp_unified = _rank_bucket_stats(_un_eligible,  lambda g: _unified_rank_map.get(g.id))
-  rank_comparison = [{'label': b['label'], 'ts': b, 'sharp': s, 'exp': e, 'unified': u}
-                     for b, s, e, u in zip(rank_cmp_ts, rank_cmp_sharp, rank_cmp_exp, rank_cmp_unified)]
+  rank_comparison = [{'label': b['label'], 'ts': b, 'sharp': s, 'exp': e}
+                     for b, s, e in zip(rank_cmp_ts, rank_cmp_sharp, rank_cmp_exp)]
   rank_comparison_n    = len(_ts_eligible)
   rank_comparison_n_exp = len(_exp_eligible)
-  unified_weights = dict(_UNIFIED_WEIGHTS)
-  pick_of_day_weights = dict(_PICK_OF_DAY_WEIGHTS)
 
   # ── Movement Profile breakdown — monitoring sample size before this feeds
-  # into the Unified Score (currently 0.5 neutral until each bucket hits MIN_N) ─
+  # into the Trust Score (currently 0.5 neutral until each bucket hits MIN_N) ─
   _mv_games = [p for p in resolved if p.movement_profile]
   movement_stats = []
   for label in _MOVEMENT_PROFILES:
@@ -3604,7 +3241,7 @@ def model_performance():
       _frank += 1
     g['rec_rank'] = _frank
 
-  # Separate rank within each day by Unified Score (highest = rank 1)
+  # Separate rank within each day by Trust Score (highest = rank 1)
   from itertools import groupby as _fire_groupby
   for _dt, _grp in _fire_groupby(
       sorted(_fire_games, key=lambda x: (x['date'], -x['unf'])), key=lambda x: x['date']
@@ -3644,19 +3281,7 @@ def model_performance():
     _all_row['lift_roi'] = None; _all_row['lift_wr'] = None; _all_row['lift_eff'] = None
     firing_stats.append(_all_row)
 
-  # Same Top-N breakdown, ranked by Unified Score instead of Trust Score
-  _all_row_unf = _fire_row(_fire_games, 'All picks')
-  firing_stats_unified = []
-  for _n, _lbl in [(1,'Top 1'),(2,'Top 2'),(3,'Top 3'),(5,'Top 5')]:
-    row = _fire_row([g for g in _fire_games if g['unf_rank'] <= _n], _lbl, _n)
-    if row:
-      row['lift_roi'] = round((row['avg_roi'] or 0) - (_all_row_unf['avg_roi'] or 0), 1) if _all_row_unf else None
-      row['lift_wr']  = round(row['win_rate'] - _all_row_unf['win_rate'], 1) if _all_row_unf else None
-      row['lift_eff'] = round(row['profitable'] - _all_row_unf['profitable'], 1) if _all_row_unf else None
-      firing_stats_unified.append(row)
-  if _all_row_unf:
-    _all_row_unf['lift_roi'] = None; _all_row_unf['lift_wr'] = None; _all_row_unf['lift_eff'] = None
-    firing_stats_unified.append(_all_row_unf)
+  # Same Top-N breakdown, ranked by Trust Score instead of Trust Score
 
   # ROI by Trust Score bucket: recommended (top 3) vs all games with odds
   _fts_order = ['70+', '55–70', '42–55', '28–42', '< 28']
@@ -3787,107 +3412,32 @@ def model_performance():
       rank_comparison=rank_comparison,
       rank_comparison_n=rank_comparison_n,
       rank_comparison_n_exp=rank_comparison_n_exp,
-      unified_weights=unified_weights,
-      pick_of_day_weights=pick_of_day_weights,
       movement_stats=movement_stats,
       movement_weights=movement_weights,
       movement_n_total=movement_n_total,
       firing_stats=firing_stats,
-      firing_stats_unified=firing_stats_unified,
       firing_bucket_stats=firing_bucket_stats,
       fire_days=_fire_days,
       fire_total=len(_fire_games),
   ))
   return _set_last_sport_cookie(resp, sport)
 
-@app.route('/nhl')
-def nhl_schedule():
-  schedule = nhl_api.build_schedule_context()
-  _upsert_predictions(schedule, 'NHL')
-  _mark_favorites(schedule, 'NHL')
-  resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL'))
-  return _set_last_sport_cookie(resp, 'NHL')
+def _edge_recommendations(days, sport, limit=15):
+  """Edge-ranked recommendation list for the non-MLB sports (MLB has its own
+  full Trust Score table). `days` is the schedule list of {'games': [...]}.
 
-@app.route('/nba')
-def nba_schedule():
-  schedule = nba_api.build_schedule_context()
-  _upsert_predictions(schedule, 'NBA')
-  _mark_favorites(schedule, 'NBA')
-  resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA'))
-  return _set_last_sport_cookie(resp, 'NBA')
-
-@app.route('/wnba')
-def wnba_schedule():
-  schedule = wnba_api.build_schedule_context()
-  _upsert_predictions(schedule, 'WNBA')
-  _mark_favorites(schedule, 'WNBA')
-  resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA'))
-  return _set_last_sport_cookie(resp, 'WNBA')
-
-@app.route('/nfl')
-def nfl_schedule():
-  week = request.args.get('week', type=int)
-  week_ctx = nfl_api.build_week_schedule_context(week)
-  _upsert_predictions(week_ctx['days'], 'NFL')
-  _mark_favorites(week_ctx['days'], 'NFL')
-  _match_open_bets_to_games(week_ctx['days'], sport='NFL')
-
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
-
-  nfl_bets       = OpenBet.query.filter_by(sport='NFL').order_by(
-      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
-  closing_suggestions = _annotate_open_bets(nfl_bets)
-  _tier_open_bets(nfl_bets)
-  open_stats = _open_bets_summary_stats(nfl_bets)
-
-  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
-  _adj_bankroll = bankroll + _all_open_stats['open_staked']
-  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
-
-  import odds_api as _oa
-  odds_last_fetch = _oa.get_last_fetch_time()
-  odds_next_fetch = _oa.get_next_fetch_time()
-
-  resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
-                         open_bets=nfl_bets,
-                         unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
-                         odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
-                         sync_next='/nfl'))
-  return _set_last_sport_cookie(resp, 'NFL')
-
-@app.route('/cfb')
-def cfb_schedule():
+  Ranks Preview games by model edge vs. the vig-free market price and
+  requires a positive Kelly fraction, which naturally pushes lopsided
+  favorite-vs-cupcake games (where the market already prices in near
+  certainty and no real edge is left) to the bottom without an explicit
+  odds cutoff. Each row carries a pre-filled New Bet URL."""
   from urllib.parse import urlencode as _urlencode
-
-  week = request.args.get('week', type=int)
-  week_ctx = cfb_api.build_week_schedule_context(week)
-  _upsert_predictions(week_ctx['days'], 'CFB')
-  _mark_favorites(week_ctx['days'], 'CFB')
-  _match_open_bets_to_games(week_ctx['days'], sport='CFB')
-
-  # Today's Recommendations: a lightweight edge-ranked list, not MLB's full
-  # trust-score/unified-score system — CFB has no season of backtested
-  # GamePrediction history to calibrate that against yet. Ranks by model
-  # edge vs. the vig-free market price and requires a positive Kelly
-  # fraction, which naturally pushes lopsided ranked-vs-cupcake games (where
-  # the market is already priced near-certain and there's no real edge left)
-  # to the bottom instead of needing an explicit odds cutoff. Scoped to the
-  # displayed week (not "today") to match the week-view page below.
-  conferences = set()
   recommended = []
-  for day in week_ctx['days']:
+  for day in (days or []):
     for game in day.get('games', []):
-      home_t, away_t = game.get('home') or {}, game.get('away') or {}
-      if home_t.get('conference'):
-        conferences.add(home_t['conference'])
-      if away_t.get('conference'):
-        conferences.add(away_t['conference'])
-
       if game.get('status') != 'Preview':
         continue
+      home_t, away_t = game.get('home') or {}, game.get('away') or {}
       model, odds = game.get('model'), game.get('odds')
       if not model or not odds:
         continue
@@ -3916,7 +3466,7 @@ def cfb_schedule():
 
       qs = _urlencode({
           'name':          f"{pick_team.get('abbrev', '')} ML",
-          'sport':         'CFB',
+          'sport':         sport,
           'eventstartutc': game.get('game_time_utc', ''),
           'odds':          amer_odds,
           'implied':       mkt_implied,
@@ -3939,7 +3489,93 @@ def cfb_schedule():
       })
 
   recommended.sort(key=lambda r: -r['edge'])
-  recommended = recommended[:15]
+  return recommended[:limit]
+
+
+@app.route('/nhl')
+def nhl_schedule():
+  schedule = nhl_api.build_schedule_context()
+  _upsert_predictions(schedule, 'NHL')
+  _mark_favorites(schedule, 'NHL')
+  recommended = _edge_recommendations(schedule, 'NHL')
+  resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL',
+                         recommended=recommended))
+  return _set_last_sport_cookie(resp, 'NHL')
+
+@app.route('/nba')
+def nba_schedule():
+  schedule = nba_api.build_schedule_context()
+  _upsert_predictions(schedule, 'NBA')
+  _mark_favorites(schedule, 'NBA')
+  recommended = _edge_recommendations(schedule, 'NBA')
+  resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA',
+                         recommended=recommended))
+  return _set_last_sport_cookie(resp, 'NBA')
+
+@app.route('/wnba')
+def wnba_schedule():
+  schedule = wnba_api.build_schedule_context()
+  _upsert_predictions(schedule, 'WNBA')
+  _mark_favorites(schedule, 'WNBA')
+  recommended = _edge_recommendations(schedule, 'WNBA')
+  resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA',
+                         recommended=recommended))
+  return _set_last_sport_cookie(resp, 'WNBA')
+
+@app.route('/nfl')
+def nfl_schedule():
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_schedule_context(week)
+  _upsert_predictions(week_ctx['days'], 'NFL')
+  _mark_favorites(week_ctx['days'], 'NFL')
+  _match_open_bets_to_games(week_ctx['days'], sport='NFL')
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  nfl_bets       = OpenBet.query.filter_by(sport='NFL').order_by(
+      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
+  closing_suggestions = _annotate_open_bets(nfl_bets)
+  _tier_open_bets(nfl_bets)
+  open_stats = _open_bets_summary_stats(nfl_bets)
+
+  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
+  _adj_bankroll = bankroll + _all_open_stats['open_staked']
+  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
+
+  import odds_api as _oa
+  odds_last_fetch = _oa.get_last_fetch_time()
+  odds_next_fetch = _oa.get_next_fetch_time()
+
+  resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
+                         recommended=_edge_recommendations(week_ctx['days'], 'NFL'),
+                         open_bets=nfl_bets,
+                         unit_size=unit_size, closing_suggestions=closing_suggestions,
+                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch,
+                         heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
+                         sync_next='/nfl'))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/cfb')
+def cfb_schedule():
+  from urllib.parse import urlencode as _urlencode
+
+  week = request.args.get('week', type=int)
+  week_ctx = cfb_api.build_week_schedule_context(week)
+  _upsert_predictions(week_ctx['days'], 'CFB')
+  _mark_favorites(week_ctx['days'], 'CFB')
+  _match_open_bets_to_games(week_ctx['days'], sport='CFB')
+
+  # Weekly Recommendations — same edge-ranked list as the other non-MLB sports
+  # (see _edge_recommendations), scoped to the displayed week.
+  conferences = set()
+  for day in week_ctx['days']:
+    for game in day.get('games', []):
+      for t in (game.get('home') or {}, game.get('away') or {}):
+        if t.get('conference'):
+          conferences.add(t['conference'])
+  recommended = _edge_recommendations(week_ctx['days'], 'CFB')
 
   settings = Setting.query.first()
   bankroll = settings.bankroll if settings else 0.0
@@ -4023,8 +3659,6 @@ def api_refresh_stats_stream():
                 _upsert_predictions(schedule, 'MLB')
                 _recompute_trust_weights('MLB')
                 _recompute_team_bias('MLB')
-                _recompute_unified_weights('MLB')
-                _recompute_pick_of_day_weights('MLB')
                 _recompute_unified_rank_stats('MLB')
                 _recompute_movement_profiles('MLB')
                 _recompute_movement_weights('MLB')
@@ -4227,8 +3861,6 @@ def api_backfill_stream():
                 _refit_mlb_platt()
                 _recompute_trust_weights('MLB')
                 _recompute_team_bias('MLB')
-                _recompute_unified_weights('MLB')
-                _recompute_pick_of_day_weights('MLB')
                 _recompute_unified_rank_stats('MLB')
                 _recompute_movement_profiles('MLB')
                 _recompute_movement_weights('MLB')
@@ -4522,18 +4154,18 @@ def api_lifeos_games():
 # Keeps all three schedule caches pre-populated so page loads are instant.
 # ── Discord score alerts ───────────────────────────────────────────────────────
 # Trust Score alerting was removed here (Trust Score itself is still computed
-# internally — Unified Score is partly derived from its component values —
+# internally — Trust Score is partly derived from its component values —
 # but it's no longer surfaced, tracked, or alerted on anywhere in this file).
 _PREV_SCORES: dict = {}    # {game_key: {...snapshot...}} from last warmer run
 _PREV_SCORES_LOCK = threading.Lock()
-_SCORE_ALERT_THRESHOLD = 10   # minimum Unified Score delta to fire a movement alert
+_SCORE_ALERT_THRESHOLD = 10   # minimum Trust Score delta to fire a movement alert
 _UNF_HIGH_THRESHOLD    = 60   # unified score "high confidence" crossing alert
 
 
 def _snapshot_reason_bits(prev, curr):
     """
     Build a human-readable list of "what actually changed" between two
-    Unified Score snapshots of the same game, using the concrete underlying
+    Trust Score snapshots of the same game, using the concrete underlying
     values (not the abstracted 0-1 component weights) — so a Discord alert
     can say *why* the score moved, not just that it did.
 
@@ -4545,7 +4177,7 @@ def _snapshot_reason_bits(prev, curr):
       5. Odds payout bucket (crossed a Kelly-multiplier threshold, e.g. -150)
 
     Returns a list of strings, already ordered; empty if nothing meaningfully
-    changed (can happen if Unified Score moved from rounding/threshold noise
+    changed (can happen if Trust Score moved from rounding/threshold noise
     alone, e.g. crossing bucket bounds by <1 point).
     """
     bits = []
@@ -4575,11 +4207,11 @@ def _snapshot_reason_bits(prev, curr):
 
 
 def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
-    """Compare pre-game Unified Score to the previous warmer snapshot.
+    """Compare pre-game Trust Score to the previous warmer snapshot.
     Fires Discord embeds for:
-      • Unified Score movement ±10+ (with a "why" breakdown — see
+      • Trust Score movement ±10+ (with a "why" breakdown — see
         _snapshot_reason_bits)
-      • Unified Score first crossing 60 (high-confidence alert)
+      • Trust Score first crossing 60 (high-confidence alert)
     """
     import requests as _req
     import odds_history
@@ -4611,12 +4243,12 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             h_odds = odds.get('home_best')
             a_odds = odds.get('away_best')
             # Trust Score is computed here purely as an internal input to
-            # Unified Score (which is partly derived from its edge/fav-dog
+            # Trust Score (which is partly derived from its edge/fav-dog
             # component values) — the composite number itself is never
             # stored, compared, or surfaced below.
             td = _trust_score(hp, h_odds, a_odds, fj, detail=True)
 
-            # Compute Unified Score — needs opening → current line move
+            # Compute Trust Score — needs opening → current line move
             line_move_val = 0.5  # neutral default
             lm_pct = None
             open_h = odds.get('opening_home')
@@ -4700,9 +4332,9 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
         why_str = '\n'.join(f"• {b}" for b in a['why']) if a['why'] else ''
 
         if t == 'unf':
-            title = f"{'📈' if up else '📉'} Unified Score Movement · MLB"
+            title = f"{'📈' if up else '📉'} Trust Score Movement · MLB"
             desc  = (f"**{a['game']}** · Pick: **{a['pick']}**\n"
-                     f"Unified Score: {a['prev']} → **{a['curr']}** ({a['delta']:+d}) {'↑' if up else '↓'}")
+                     f"Trust Score: {a['prev']} → **{a['curr']}** ({a['delta']:+d}) {'↑' if up else '↓'}")
             if why_str:
                 desc += f"\n\n**Why:**\n{why_str}"
             color = 0x4ade80 if up else 0xf87171
@@ -4711,7 +4343,7 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             prev_str = f"{a['prev']} → " if a['prev'] is not None else ''
             title = f"🎯 High Confidence Pick · MLB"
             desc  = (f"**{a['game']}** · Pick: **{a['pick']}**\n"
-                     f"Unified Score: {prev_str}**{a['curr']}** (crossed {_UNF_HIGH_THRESHOLD})")
+                     f"Trust Score: {prev_str}**{a['curr']}** (crossed {_UNF_HIGH_THRESHOLD})")
             if why_str:
                 desc += f"\n\n**Why:**\n{why_str}"
             color = 0xfb923c  # orange
@@ -4827,14 +4459,14 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             })
 
     if not candidates:
-        print('[daily-picks] no Preview games with unified scores — message not sent', flush=True)
+        print('[daily-picks] no Preview games with trust scores — message not sent', flush=True)
         return
 
     print(f'[daily-picks] building embed with {len(candidates)} games', flush=True)
     candidates.sort(key=lambda x: -x['unf'])
 
     # Monospace table — one line per game, all columns aligned
-    header = f"{'#':>2}  {'PICK':<4}  {'OPP':<4}  {'ODDS':>5}  {'US':>2}  TIME"
+    header = f"{'#':>2}  {'PICK':<4}  {'OPP':<4}  {'ODDS':>5}  {'TS':>2}  TIME"
     sep    = '─' * len(header)
     rows   = [header, sep]
     for i, c in enumerate(candidates, 1):
@@ -4853,7 +4485,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             'title':       f'⚾ MLB Daily Picks · {today_str}',
             'description': description,
             'color':       0xFB4F14,
-            'footer':      {'text': 'Sorted by Unified Score · noon ET snapshot'},
+            'footer':      {'text': 'Sorted by Trust Score · noon ET snapshot'},
         }]}, timeout=10)
         print(f'[daily-picks] Discord response: {r.status_code}', flush=True)
     except Exception as e:
@@ -5014,8 +4646,6 @@ def _recompute_all_calibration(sport):
     _recompute_trust_weights(sport)
     _recompute_team_bias(sport)
     _recompute_market_edge_shrink(sport)
-    _recompute_unified_weights(sport)
-    _recompute_pick_of_day_weights(sport)
     _recompute_unified_rank_stats(sport)
     _recompute_movement_profiles(sport)
     _recompute_movement_weights(sport)

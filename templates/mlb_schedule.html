@@ -115,46 +115,10 @@
 
 
 {% if best_bets %}
-<span id="top3-bankroll-val" data-bankroll="{{ bankroll }}" data-kelly-cap="{{ kelly_cap }}" style="display:none;">{{ bankroll }}</span>
-
-<!-- ── Pick of the Day ──────────────────────────────────── -->
-<div class="card" style="margin-bottom:14px;{% if pick_of_day %}border:1px solid var(--orange);{% endif %}">
-  <div class="section-header" style="margin-bottom:10px;">
-    <h2>🎯 Pick of the Day</h2>
-    <span class="small">ROI-optimized for a single strong bet · prob ≥ 55% and calibration bucket clear of known danger zones</span>
-  </div>
-  {% if pick_of_day %}
-  {% set pod = pick_of_day %}
-  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-    <div>
-      <div style="font-size:1.1rem;font-weight:800;">
-        {% if pod.pick_abbr == pod.away_abbr %}
-          <span style="color:var(--orange);">{{ pod.away_abbr }}</span> @ {{ pod.home_abbr }}
-        {% else %}
-          {{ pod.away_abbr }} @ <span style="color:var(--orange);">{{ pod.home_abbr }}</span>
-        {% endif %}
-      </div>
-      <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">
-        {{ pod.pick_name }} ML {{ '+' if pod.amer_odds > 0 }}{{ pod.amer_odds }}
-        &nbsp;·&nbsp; Model {{ pod.adj_prob }}% &nbsp;·&nbsp;
-        <span style="color:{{ 'var(--win)' if pod.adj_edge > 0 else 'var(--loss)' }};font-weight:600;">{{ '+' if pod.adj_edge > 0 }}{{ pod.adj_edge }}% edge</span>
-        &nbsp;·&nbsp; EV {{ '+' if pod.ev_pct > 0 }}{{ pod.ev_pct }}%
-      </div>
-    </div>
-    <div style="text-align:right;">
-      <span class="kelly-verdict ts-high" style="font-size:1.3rem;padding:6px 14px;" title="ROI-optimized score">{{ pod.pod_score }}</span>
-      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">POD Score</div>
-    </div>
-  </div>
-  {% else %}
-  <p style="color:var(--text-muted);font-size:0.85rem;margin:0;">No pick clears the strong-bet floor tonight — every Preview game is either below 55% model probability or sitting in a historically weak calibration bucket. Sitting this one out is the right call.</p>
-  {% endif %}
-</div>
-
 <div class="card" style="margin-bottom:14px;">
   <div class="section-header" style="margin-bottom:10px;">
     <h2>Today's Recommendations</h2>
-    <span class="small">sorted by Unified Score · rank recorded at each game's start time · all games shown</span>
+    <span class="small">sorted by Trust Score · rank recorded at each game's start time · all games shown</span>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:12px;">
     <button onclick="startRefresh('stats')"
@@ -165,46 +129,6 @@
             style="font-size:0.75rem;padding:5px 11px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">
       ↻ Refresh Odds
     </button>
-    <button id="bet-top3-btn" onclick="openTop3Modal()"
-            style="font-size:0.75rem;padding:5px 13px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;cursor:pointer;font-weight:700;margin-left:4px;">
-      Bet Top N
-    </button>
-  </div>
-
-  <!-- ── Bet Top 3 Modal ──────────────────────────────────── -->
-  <div id="top3Modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.60);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:320px;max-width:500px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
-        <div>
-          <div id="top3-modal-title" style="font-size:0.95rem;font-weight:700;">Bet Top 3</div>
-          <div id="top3-modal-subtitle" style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">Sequential Kelly · best pick first</div>
-        </div>
-        <button onclick="closeTop3Modal()" style="background:none;border:none;color:var(--text-muted);font-size:1.3rem;cursor:pointer;padding:2px 6px;line-height:1;">×</button>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px;">
-        <select id="bet-n-select" onchange="_recalcTop3()"
-                style="flex:1;font-size:0.78rem;padding:6px 8px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">
-          <option value="1">Top 1</option>
-          <option value="2">Top 2</option>
-          <option value="3" selected>Top 3</option>
-          <option value="4">Top 4</option>
-          <option value="5">Top 5</option>
-        </select>
-      </div>
-      <div id="top3-bets" style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px;"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid var(--border);margin-bottom:16px;">
-        <div style="font-size:0.75rem;color:var(--text-muted);">
-          Total staked: <strong id="top3-total" style="color:var(--text);">$0.00</strong>
-          &nbsp;·&nbsp; Remaining: <strong id="top3-remaining" style="color:var(--text);">—</strong>
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button id="top3-place-btn" onclick="placeTop3()"
-                style="font-size:0.82rem;padding:8px 18px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;cursor:pointer;font-weight:700;">
-          Place All 3 Bets
-        </button>
-      </div>
-    </div>
   </div>
 
   <!-- Refresh progress modal -->
@@ -234,20 +158,20 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Mkt</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
-        <th class="rec-sort-th" data-sort-key="unf" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Unified Score">US<span class="rec-sort-arrow"></span></th>
+        <th class="rec-sort-th" data-sort-key="ts" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Trust Score">TS<span class="rec-sort-arrow"></span></th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Zone</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">EV%</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Move</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);" title="Movement profile — fixed 10% weight in Unified Score & Pick of Day Score (per-profile value fitted from resolved outcomes)">MV Prof</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);" title="Movement profile">MV Prof</th>
       </tr>
     </thead>
     <tbody>
     {% for b in best_bets %}
     {% set ts = b.trust_score %}
     {% set td = b.ts_detail if b.ts_detail else {} %}
-    {% set unf = b.unified_score %}
+    {% set unf = ts %}
     {% set unf_cls = 'ts-high' if unf >= 55 else ('ts-mid' if unf >= 42 else ('ts-low' if unf >= 28 else 'ts-skip')) %}
-    <tr data-game="{{ b.away_abbr }}@{{ b.home_abbr }}" data-ts="{{ ts }}" data-unf="{{ unf }}"
+    <tr data-game="{{ b.away_abbr }}@{{ b.home_abbr }}" data-ts="{{ ts }}"
         data-amer-odds="{{ b.amer_odds }}"
         data-prob="{{ (b.adj_prob / 100) | round(4) }}"
         data-pick-name="{{ b.pick_abbr }} ML"
@@ -282,7 +206,7 @@
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if b.amer_odds > 0 }}{{ b.amer_odds }}</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ b.mkt_implied }}%</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if b.adj_edge > 0 else 'var(--loss)' }};">{{ '+' if b.adj_edge > 0 }}{{ b.adj_edge }}%</td>
-      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ unf_cls }}" data-ts-detail='{{ b.ts_detail | tojson if b.ts_detail else "" }}' style="min-width:28px;cursor:default;" title="Unified Score (hover for factor breakdown)">{{ unf }}</span></td>
+      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ unf_cls }}" data-ts-detail='{{ b.ts_detail | tojson if b.ts_detail else "" }}' style="min-width:28px;cursor:default;" title="Trust Score (hover for factor breakdown)">{{ unf }}</span></td>
       {# TS component columns — color-coded by component value (0–1 scale) #}
       {% set ev = td.e or 0 %}
       <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.70rem;color:{{ 'var(--win)' if ev >= 0.65 else ('var(--text)' if ev >= 0.45 else ('var(--orange)' if ev >= 0.30 else 'var(--loss)')) }};">{{ td.el or '—' }}</td>
@@ -689,7 +613,7 @@
 {% block scripts %}
 {% include "_open_bets_scripts.html" with context %}
 <script>
-/* ── Click-to-sort by TS / US ─────────────────────────────── */
+/* ── Click-to-sort by TS ─────────────────────────────── */
 (function() {
     var table = document.getElementById('rec-table');
     if (!table) return;
@@ -697,7 +621,7 @@
     var ths   = table.querySelectorAll('.rec-sort-th');
     if (!tbody || !ths.length) return;
 
-    var sortKey = 'unf', sortDir = -1;  // default: Unified Score descending (matches server order)
+    var sortKey = 'ts', sortDir = -1;  // default: Trust Score descending (matches server order)
 
     function applySort() {
         var rows = Array.from(tbody.querySelectorAll('tr[data-game]'));
@@ -1028,218 +952,5 @@ document.addEventListener('keydown', function(e) {
     if (_tt && _tt.style.display !== 'none' && _hoverEl) _positionTooltip(_hoverEl);
   }, true);
 })();
-
-/* ── Bet Top 3 Modal ──────────────────────────────────────── */
-var _top3Bets = [];
-var _top3Bankroll = 0;
-
-function openTop3Modal() {
-  var bkEl = document.getElementById('top3-bankroll-val');
-  _top3Bankroll = bkEl ? (parseFloat(bkEl.dataset.bankroll) || 0) : 0;
-
-  document.getElementById('top3Modal').style.display = 'flex';
-  _recalcTop3();
-}
-
-function _recalcTop3() {
-  var n = parseInt(document.getElementById('bet-n-select').value) || 3;
-
-  var rows = Array.from(document.querySelectorAll('#rec-table tbody tr[data-game]'));
-  // Include Preview games, and any Live game whose scheduled start is still in the future
-  // (catches API warmup false-positives that slipped through the server-side fix)
-  var now = Date.now();
-  //
-  // Positive-edge filter applies ONLY when N=1. Backtested on resolved games
-  // (2026-06-29 analysis): Top 1 ROI goes 9.4% -> 36.1% when restricted to
-  // positive-edge picks. But Top 2/3/5 got WORSE filtered (roughly half the
-  // unfiltered ROI) — excluding negative-edge games backfills those slots with
-  // lower-Unified-Score alternatives that have performed worse historically.
-  // Conclusion: for N=2+, Unified Score's calibration (45%) and line-move (25%)
-  // components are already capturing real signal the raw edge number misses —
-  // trust the ranking as-is. Don't generalize this filter to N=2+ without
-  // re-running that backtest; the red border still flags negative edge for
-  // visual context, it's just not a hard exclusion past N=1.
-  var filterPositiveEdge = (n === 1);
-  var candidates = rows.filter(function(r) {
-    if (!r.dataset.amerOdds || !r.dataset.prob) return false;
-    // Both starting pitchers must be announced — excluded for every N, not just
-    // N=1, since SP-dependent factors are running on team-average fallbacks
-    // until then (see sp_confirmed comment in app.py).
-    if (r.dataset.spConfirmed === '0') return false;
-    if (filterPositiveEdge && (parseFloat(r.dataset.edge) || 0) <= 0) return false;
-    if (r.dataset.status === 'Preview') return true;
-    if (r.dataset.status === 'Live') {
-      var startMs = r.dataset.utc ? new Date(r.dataset.utc).getTime() : 0;
-      return startMs > now;
-    }
-    return false;
-  });
-  if (!candidates.length) {
-    alert(filterPositiveEdge ? 'No positive-edge games available to bet.' : 'No upcoming games with both starting pitchers announced.');
-    closeTop3Modal();
-    return;
-  }
-
-  // Sort by Unified Score descending — best pick first. Slice position also
-  // doubles as the day rank used by the Kelly rank booster below.
-  candidates.sort(function(a, b) {
-    return (parseFloat(b.dataset.unf) || 0) - (parseFloat(a.dataset.unf) || 0);
-  });
-
-  var top = candidates.slice(0, n);
-  var btnCount = top.length;
-  document.getElementById('top3-place-btn').textContent = 'Place ' + (btnCount === 1 ? '1 Bet' : 'All ' + btnCount + ' Bets');
-  document.getElementById('top3-modal-title').textContent = 'Bet Top ' + btnCount;
-  document.getElementById('top3-modal-subtitle').textContent = 'Sequential Kelly · ranked by Unified Score · best pick first';
-
-  _top3Bets = top.map(function(row, idx) {
-    return {
-      amerOdds:    parseFloat(row.dataset.amerOdds),
-      prob:        parseFloat(row.dataset.prob),
-      pickName:    row.dataset.pickName || row.dataset.game,
-      side:        row.dataset.side,
-      homeName:    row.dataset.homeName,
-      awayName:    row.dataset.awayName,
-      utc:         row.dataset.utc,
-      edge:        row.dataset.edge,
-      unf:         parseInt(row.dataset.unf) || 0,
-      unfRank:     idx + 1,
-      scoreLabel:  'US',
-      scoreValue:  parseInt(row.dataset.unf) || 0,
-      game:        row.dataset.game,
-    };
-  });
-
-  _renderTop3();
-}
-
-// Kelly rank booster — top Unified Score pick of the day wins at a notably
-// higher rate than the rest of the slate, so it gets a bigger slice of the
-// Kelly cap; #2-3 a smaller bump; #4+ unboosted (1x = settings Kelly %).
-function _rankBooster(unfRank) {
-  if (unfRank === 1) return 1.5;
-  if (unfRank <= 3)  return 1.25;
-  return 1.0;
-}
-
-function _renderTop3() {
-  var capEl = document.getElementById('top3-bankroll-val');
-  var PERCENT_CAP = capEl ? (parseFloat(capEl.dataset.kellyCap) || 0.05) : 0.05;
-
-  var container = document.getElementById('top3-bets');
-  container.innerHTML = '';
-  var runningBankroll = _top3Bankroll;
-  var totalStaked = 0;
-
-  _top3Bets.forEach(function(bet, idx) {
-    var boost = _rankBooster(bet.unfRank);
-    var boostedCap = PERCENT_CAP * boost;
-    var decOdds = americanToDecimal(bet.amerOdds);
-    var kelly = decOdds ? computeKelly(runningBankroll, boostedCap, decOdds, bet.prob) : {amount: 0.10};
-    var stake = kelly.amount;
-
-    // Store computed stake back on the bet so placeTop3() can read it
-    bet._stake = stake;
-    bet._bankrollBefore = runningBankroll;
-
-    var rankLabel = ['①','②','③','④','⑤'][idx] || ('#' + (idx+1));
-    var edgeStr = bet.edge ? ((parseFloat(bet.edge) > 0 ? '+' : '') + bet.edge + '% edge') : '';
-    var amerStr = (bet.amerOdds > 0 ? '+' : '') + bet.amerOdds;
-    var boostStr = boost > 1 ? ('<span style="font-size:0.66rem;color:var(--orange);margin-left:8px;font-weight:700;">' + boost + 'x Kelly · US #' + bet.unfRank + '</span>') : '';
-
-    var row = document.createElement('div');
-    row.style.cssText = 'background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;';
-    row.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">' +
-        '<div>' +
-          '<span style="font-size:1.0rem;font-weight:800;margin-right:7px;">' + rankLabel + '</span>' +
-          '<span style="font-size:0.85rem;font-weight:700;">' + bet.pickName + '</span>' +
-          '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:8px;">' + amerStr + '</span>' +
-          (edgeStr ? '<span style="font-size:0.70rem;color:var(--win);margin-left:8px;font-weight:600;">' + edgeStr + '</span>' : '') +
-          boostStr +
-        '</div>' +
-        '<span style="font-size:0.68rem;color:var(--text-muted);">' + bet.scoreLabel + '&nbsp;' + bet.scoreValue + '</span>' +
-      '</div>' +
-      '<div style="display:flex;align-items:center;gap:10px;">' +
-        '<div style="font-size:0.70rem;color:var(--text-muted);min-width:120px;">Bankroll&nbsp;<strong style="color:var(--text);">$' + runningBankroll.toFixed(2) + '</strong></div>' +
-        '<div style="display:flex;align-items:center;gap:6px;flex:1;">' +
-          '<span style="font-size:0.70rem;color:var(--text-muted);white-space:nowrap;">Kelly stake</span>' +
-          '<input type="number" class="top3-stake-input" data-idx="' + idx + '" step="0.01" min="0.01" value="' + stake.toFixed(2) + '"' +
-            ' style="width:90px;padding:5px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.82rem;font-weight:700;">' +
-        '</div>' +
-      '</div>';
-    container.appendChild(row);
-
-    runningBankroll = Math.max(0, runningBankroll - stake);
-    totalStaked += stake;
-  });
-
-  document.getElementById('top3-total').textContent = '$' + totalStaked.toFixed(2);
-  document.getElementById('top3-remaining').textContent = '$' + runningBankroll.toFixed(2);
-
-  // Re-render totals when stakes are edited
-  container.querySelectorAll('.top3-stake-input').forEach(function(inp) {
-    inp.addEventListener('input', _updateTop3Totals);
-  });
-}
-
-function _updateTop3Totals() {
-  var inputs = document.querySelectorAll('.top3-stake-input');
-  var total = 0;
-  inputs.forEach(function(inp) {
-    total += parseFloat(inp.value) || 0;
-  });
-  document.getElementById('top3-total').textContent = '$' + total.toFixed(2);
-  var rem = Math.max(0, _top3Bankroll - total);
-  document.getElementById('top3-remaining').textContent = '$' + rem.toFixed(2);
-}
-
-function closeTop3Modal() {
-  document.getElementById('top3Modal').style.display = 'none';
-}
-
-function placeTop3() {
-  var inputs = document.querySelectorAll('.top3-stake-input');
-  var betsPayload = _top3Bets.map(function(bet, idx) {
-    var stake = parseFloat(inputs[idx] ? inputs[idx].value : bet._stake) || bet._stake;
-    return {
-      name:         bet.pickName,
-      odds:         americanToDecimal(bet.amerOdds),
-      prob:         bet.prob,
-      stake:        Math.round(stake * 100) / 100,
-      sport:        'MLB',
-      bet_type:     'Moneyline',
-      side:         bet.side,
-      home_name:    bet.homeName,
-      away_name:    bet.awayName,
-      game_time_utc: bet.utc,
-    };
-  });
-
-  var placeBtn  = document.getElementById('top3-place-btn');
-  placeBtn.disabled = true;
-  placeBtn.textContent = 'Placing…';
-
-  fetch('/api/place-top3', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({bets: betsPayload}),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.ok) {
-      closeTop3Modal();
-      window.location.reload();
-    } else {
-      alert('Error: ' + (data.error || 'Unknown error'));
-      placeBtn.disabled = false;
-      placeBtn.textContent = 'Place All ' + _top3Bets.length + ' Bets';
-    }
-  })
-  .catch(function() {
-    alert('Network error — bets not placed.');
-    placeBtn.disabled = false;
-  });
-}
 </script>
 {% endblock %}

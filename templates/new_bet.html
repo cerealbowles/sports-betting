@@ -176,7 +176,7 @@
             }
         }
 
-        // Blend in the Unified Score rank-bucket win rate, overriding the raw
+        // Blend in the Trust Score rank-bucket win rate, overriding the raw
         // model prob above with model+rank-history blend (server computes this).
         if (window.currentUnfRank && typeof updateEmpiricalInfo === 'function') {
             updateEmpiricalInfo(true);

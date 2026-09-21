@@ -49,6 +49,9 @@
 </div>
 {% else %}
 
+{% set rec_title = "Today's Recommendations" %}{% include "_sport_recommendations.html" %}
+
+
 {% for day in schedule %}
 <div class="day-header">
     <h2>{{ day.date_display }}</h2>

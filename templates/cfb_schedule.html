@@ -53,23 +53,6 @@
 @media (max-width: 600px) {
     .rec-col-hide { display: none; }
 }
-.cfb-rec-summary {
-    cursor: pointer;
-    list-style: none;
-}
-.cfb-rec-summary::-webkit-details-marker { display: none; }
-.cfb-rec-summary::before {
-    content: "▸ ";
-    color: var(--text-muted);
-    font-size: 0.75rem;
-}
-.cfb-rec-details[open] .cfb-rec-summary::before { content: "▾ "; }
-@media (min-width: 901px) {
-    /* Recommendations only collapse behind a dropdown on mobile — on
-       desktop the list stays open and the summary toggle is hidden. */
-    .cfb-rec-summary { display: none; cursor: default; }
-    .cfb-rec-details:not([open]) > *:not(.cfb-rec-summary) { display: block !important; }
-}
 </style>
 {% endblock %}
 
@@ -106,51 +89,7 @@
 
 {% else %}
 
-{% if recommended %}
-<details class="card cfb-rec-details" style="margin-bottom:14px;">
-  <summary class="cfb-rec-summary">
-    <div class="section-header" style="margin-bottom:0;">
-      <h2>This Week's Recommendations</h2>
-      <span class="small">sorted by model edge · positive-Kelly picks only, top 15</span>
-    </div>
-  </summary>
-  <table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:10px;">
-    <thead>
-      <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
-        <th style="padding:5px 8px;text-align:left;">#</th>
-        <th style="padding:5px 8px;text-align:left;">Pick</th>
-        <th style="padding:5px 8px;text-align:left;">Matchup</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
-        <th style="padding:5px 8px;text-align:center;">Verdict</th>
-        <th style="padding:5px 8px;"></th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for r in recommended %}
-    {% set g = r.game %}
-    <tr data-cfb-filterable="1" data-top25="{{ '1' if g.is_top25 else '0' }}"
-        data-conf-home="{{ g.home.conference }}" data-conf-away="{{ g.away.conference }}"
-        style="border-bottom:1px solid var(--border);">
-      <td style="padding:6px 8px;color:var(--text-muted);">{{ loop.index }}</td>
-      <td style="padding:6px 8px;font-weight:800;color:var(--orange);">
-        {% if r.pick_rank %}<span class="rank-badge">#{{ r.pick_rank }}</span>{% endif %}{{ r.pick_abbr }}
-      </td>
-      <td style="padding:6px 8px;">{{ g.away.abbrev }} @ {{ g.home.abbrev }}
-        {% if g.game_time_utc %}<span class="game-time" data-utc="{{ g.game_time_utc }}" style="font-size:0.7rem;color:var(--text-muted);margin-left:6px;">—</span>{% endif %}
-      </td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
-      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
-      <td style="padding:6px 8px;text-align:right;"><a href="{{ r.bet_url }}" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;">Bet</a></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</details>
-{% endif %}
+{% set rec_title = "Weekly Recommendations" %}{% include "_sport_recommendations.html" %}
 
 {% if conferences %}
 <div class="cfb-filter-bar">
