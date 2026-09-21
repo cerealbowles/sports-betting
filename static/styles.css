@@ -1908,6 +1908,15 @@ body.embed-mode .container { padding-bottom: 0; }
   flex-direction: column;
 }
 
+/* Card flip: turn edge-on, swap front summary <-> manage panel, turn back. */
+.bet-card { transition: transform 0.17s ease-in; transform: perspective(900px) rotateY(0); }
+.bet-card.bc-flipping { transform: perspective(900px) rotateY(90deg); }
+.bc-flip { cursor: pointer; }
+.bc-flip:active { opacity: 0.85; }
+.bc-front-body[hidden], .bc-details[hidden] { display: none; }
+.bc-details { padding: 12px 14px 14px; }
+.bc-flip-back { width: 100%; margin-top: 8px; }
+
 .bc-name-line {
   display: flex;
   align-items: center;

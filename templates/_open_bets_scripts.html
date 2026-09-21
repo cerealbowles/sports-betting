@@ -33,9 +33,35 @@ function bdmShow(el, view) {
     if (!d) return;
     d.querySelectorAll('.bdm-view').forEach(function (v) { v.hidden = v.getAttribute('data-view') !== view; });
     if (view === 'close') bdmInitClose(d);
-    var sb = d.closest('.sheet-body');
-    if (sb) sb.scrollTop = 0;
 }
+
+// ── Card flip ───────────────────────────────────────────────────────────────
+// Tapping a card turns it edge-on, swaps everything under the matchup/time
+// header between the live summary and the manage panel, then turns it back.
+function bcFlip(el) {
+    var card = el.closest('.bet-card');
+    if (!card || card.classList.contains('bc-flipping')) return;
+    card.classList.add('bc-flipping');
+    setTimeout(function () {
+        var toBack = !card.classList.contains('is-flipped');
+        card.classList.toggle('is-flipped', toBack);
+        var d = card.querySelector('.bc-details');
+        d.hidden = !toBack;
+        card.querySelector('.bc-front-body').hidden = toBack;
+        if (toBack) bdmShow(d.querySelector('.bdm-view'), 'main');
+        card.classList.remove('bc-flipping');
+    }, 170);
+}
+
+document.addEventListener('click', function (e) {
+    var t = e.target.closest('.bc-flip');
+    if (t) bcFlip(t);
+});
+document.addEventListener('keydown', function (e) {
+    if ((e.key !== 'Enter' && e.key !== ' ') || !e.target.classList || !e.target.classList.contains('bc-flip')) return;
+    e.preventDefault();
+    e.target.click();
+});
 
 function bdmInitClose(d) {
     var id  = d.getAttribute('data-id');
@@ -119,10 +145,7 @@ function closeDeleteBetModal() {
     document.getElementById('deleteBetModal').style.display = 'none';
 }
 
-document.addEventListener('gamedetailsopen', function (e) {
-    var d = e.detail && e.detail.el;
-    if (d && d.classList.contains('bc-details')) bdmShow(d.querySelector('.bdm-view'), 'main');
-});
+
 
 // ── Live score polling ────────────────────────────────────────────────────────
 (function () {
@@ -180,8 +203,11 @@ document.addEventListener('gamedetailsopen', function (e) {
           var betSide = el.getAttribute('data-bet-side') || '';
           var isLive  = info.status === 'Live';
           var as = info.away_score, hs = info.home_score;
-          var awayWin = (as !== null && hs !== null && as > hs);
-          var homeWin = (hs !== null && as !== null && hs > as);
+          // Scores can arrive as strings; compare numerically ("84" > "105" as text).
+          var asN = (as !== null && as !== '') ? Number(as) : NaN;
+          var hsN = (hs !== null && hs !== '') ? Number(hs) : NaN;
+          var awayWin = asN > hsN;
+          var homeWin = hsN > asN;
 
           el.className = 'bc-score ' + (isLive ? 'score-live' : 'score-final');
 
