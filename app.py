@@ -3588,6 +3588,7 @@ def nhl_schedule():
   schedule = nhl_api.build_schedule_context()
   _upsert_predictions(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
+  _match_open_bets_to_games(schedule, sport='NHL')
   recommended = _edge_recommendations(schedule, 'NHL')
   resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL',
                          recommended=recommended))
@@ -3598,6 +3599,7 @@ def nba_schedule():
   schedule = nba_api.build_schedule_context()
   _upsert_predictions(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
+  _match_open_bets_to_games(schedule, sport='NBA')
   recommended = _edge_recommendations(schedule, 'NBA')
   resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA',
                          recommended=recommended))
@@ -3608,6 +3610,7 @@ def wnba_schedule():
   schedule = wnba_api.build_schedule_context()
   _upsert_predictions(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
+  _match_open_bets_to_games(schedule, sport='WNBA')
   recommended = _edge_recommendations(schedule, 'WNBA')
   resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA',
                          recommended=recommended))
