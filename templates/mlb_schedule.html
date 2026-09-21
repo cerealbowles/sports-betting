@@ -287,23 +287,11 @@
                 <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
             {% endif %}
             <div class="game-header-right">
+                {% for bet in game.open_bets or [] %}<span class="open-bet-pill" title="Open bet: {{ bet.name }}">{{ bet.name | bet_pill_label }} · ${{ '%.2f' % bet.stake }} → ${{ '%.2f' % (bet | bet_return) }}</span>{% endfor %}
                 {{ edge_star(game) }}
                 {% if game.series_info %}<span class="series-badge">{{ game.series_info }}</span>{% endif %}
             </div>
         </div>
-
-        <!-- ── Open bet indicator ── -->
-        {% if game.open_bets %}
-        <div class="open-bet-strip">
-            {% for bet in game.open_bets %}
-            <span class="obi-badge">
-                📋 <strong>{{ bet.name }}</strong>
-                · ${{ '%.2f' % bet.stake }} at risk
-                · return ${{ '%.2f' % (bet.stake * bet.odds) }}
-            </span>
-            {% endfor %}
-        </div>
-        {% endif %}
 
         <!-- ── Scoreboard ── -->
         <div class="scoreboard">
@@ -534,43 +522,46 @@
         {% set ns = namespace(max_abs=0.01) %}
         {% for label, contrib in displayed %}{% if contrib | abs > ns.max_abs %}{% set ns.max_abs = contrib | abs %}{% endif %}{% endfor %}
         {% set pick_is_away = game.model.away_prob >= game.model.home_prob %}
-        <div class="factors-panel">
-            <div class="factors-header">
-                <span class="fd-side-label fd-side-left">{{ game.away.abbr }}</span>
-                <span class="factors-title">Model Factors</span>
-                <span class="fd-side-label fd-side-right">{{ game.home.abbr }}</span>
-            </div>
-            <div class="factor-diverge-list">
-                {% for label, contrib in displayed %}
-                {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
-                {% set favors_home = contrib > 0 %}
-                {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
-                {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
-                {% set tone = 'pos' if agree else 'neg' %}
-                {# MLB factor labels are generated with a leading team abbreviation
-                   (e.g. "CIN SP+BP SIERA") since the raw contribution is signed
-                   per-team — but the bobber already shows both team abbrevs in the
-                   header above, so strip that redundant prefix here. #}
-                {% set clean_label = label %}
-                {% if clean_label.startswith(game.home.abbr + ' ') %}{% set clean_label = clean_label[(game.home.abbr | length) + 1:] %}
-                {% elif clean_label.startswith(game.away.abbr + ' ') %}{% set clean_label = clean_label[(game.away.abbr | length) + 1:] %}
-                {% endif %}
-                <div class="factor-diverge-row">
-                    <div class="fd-track-wrap">
-                        <div class="fd-track">
-                            <div class="fd-center-line"></div>
-                            <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
-                            <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
-                            <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
-                        </div>
-                        <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
-                            <span class="fd-label-name">{{ clean_label }}</span>
+        <details class="factors-collapsible"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
+            <summary class="factors-collapsible-summary">Model Factors</summary>
+            <div class="factors-panel">
+                <div class="factors-header">
+                    <span class="fd-side-label fd-side-left">{{ game.away.abbr }}</span>
+                    <span class="factors-title">Model Factors</span>
+                    <span class="fd-side-label fd-side-right">{{ game.home.abbr }}</span>
+                </div>
+                <div class="factor-diverge-list">
+                    {% for label, contrib in displayed %}
+                    {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
+                    {% set favors_home = contrib > 0 %}
+                    {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
+                    {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
+                    {% set tone = 'pos' if agree else 'neg' %}
+                    {# MLB factor labels are generated with a leading team abbreviation
+                       (e.g. "CIN SP+BP SIERA") since the raw contribution is signed
+                       per-team — but the bobber already shows both team abbrevs in the
+                       header above, so strip that redundant prefix here. #}
+                    {% set clean_label = label %}
+                    {% if clean_label.startswith(game.home.abbr + ' ') %}{% set clean_label = clean_label[(game.home.abbr | length) + 1:] %}
+                    {% elif clean_label.startswith(game.away.abbr + ' ') %}{% set clean_label = clean_label[(game.away.abbr | length) + 1:] %}
+                    {% endif %}
+                    <div class="factor-diverge-row">
+                        <div class="fd-track-wrap">
+                            <div class="fd-track">
+                                <div class="fd-center-line"></div>
+                                <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
+                                <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
+                                <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
+                            </div>
+                            <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
+                                <span class="fd-label-name">{{ clean_label }}</span>
+                            </div>
                         </div>
                     </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
-        </div>
+        </details>
         {% endif %}
         {% endif %}
 
@@ -583,8 +574,31 @@
             <div class="bet-type-row">
                 <span class="bet-type-label">Moneyline</span>
                 <div class="bet-type-chips">
+                    {% if game.odds %}
+                    <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbr }}"
+                            data-team="{{ game.away.abbr }}" data-opp="{{ game.home.abbr }}"
+                            data-logo="{{ game.away.logo_url }}" data-market="Moneyline"
+                            data-odds="{{ game.odds.away_best }}" data-odds-display="{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}"
+                            data-model-prob="{{ (game.model.adj_away_prob if game.model.adj_away_prob else game.model.away_prob) if game.model else '' }}" data-implied-prob="{{ game.odds.away_implied }}"
+                            data-sport="MLB" data-bet-type="Moneyline" data-bet-side="away"
+                            data-eventstartutc="{{ game.game_time_utc }}"
+                            data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                            data-game-key="{{ game.game_key }}"
+                            onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.away.abbr }}{{ game.away.abbr }}</button>
+                    <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbr }}"
+                            data-team="{{ game.home.abbr }}" data-opp="{{ game.away.abbr }}"
+                            data-logo="{{ game.home.logo_url }}" data-market="Moneyline"
+                            data-odds="{{ game.odds.home_best }}" data-odds-display="{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}"
+                            data-model-prob="{{ (game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob) if game.model else '' }}" data-implied-prob="{{ game.odds.home_implied }}"
+                            data-sport="MLB" data-bet-type="Moneyline" data-bet-side="home"
+                            data-eventstartutc="{{ game.game_time_utc }}"
+                            data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                            data-game-key="{{ game.game_key }}"
+                            onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.home.abbr }}{{ game.home.abbr }}</button>
+                    {% else %}
                     <a href="{{ bet_away_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbr }}">{{ '★ ' if edge_pick(game) | trim == game.away.abbr }}{{ game.away.abbr }}</a>
                     <a href="{{ bet_home_url }}" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbr }}">{{ '★ ' if edge_pick(game) | trim == game.home.abbr }}{{ game.home.abbr }}</a>
+                    {% endif %}
                 </div>
             </div>
             {% if game.odds and game.odds.total_line %}
@@ -597,6 +611,44 @@
             </div>
             {% endif %}
         </div>
+
+        <!-- ── Inline Moneyline bet slip — opened by the buttons above
+             instead of navigating to /new-bet (see openBetSlip in main.js) -->
+        {% if game.odds %}
+        <div class="bet-slip">
+            <div class="bet-slip-header">
+                <div class="bet-slip-pick">
+                    <img class="bet-slip-logo" src="" alt="">
+                    <div>
+                        <div class="bet-slip-pick-name">—</div>
+                        <div class="bet-slip-pick-sub">—</div>
+                    </div>
+                </div>
+                <button type="button" class="bet-slip-cancel" onclick="closeBetSlip(this)">Cancel</button>
+            </div>
+            <div class="bet-slip-stats">
+                <div class="bss-item"><span class="bss-label">Model</span><span class="bss-val bss-model">—</span></div>
+                <div class="bss-item"><span class="bss-label">Implied</span><span class="bss-val bss-implied">—</span></div>
+                <div class="bss-item"><span class="bss-label">Edge</span><span class="bss-val bss-edge">—</span></div>
+                <div class="bss-item"><span class="bss-label">Odds</span><span class="bss-val bss-odds">—</span></div>
+            </div>
+            <div class="bet-slip-error"></div>
+            <div class="stake-row">
+                <div class="stake-input-wrap"><input type="number" inputmode="decimal" step="0.01" value="0.00"></div>
+                <div class="stake-quick-btns">
+                    <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,'rec')">Rec.</button>
+                    <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,25)">$25</button>
+                    <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,50)">$50</button>
+                </div>
+            </div>
+            <div class="stake-meta">
+                <span>Recommended: <b class="bet-slip-recommended">$0.00</b></span>
+                <span>To win: <b class="bet-slip-to-win">$0.00</b></span>
+            </div>
+            <button type="button" class="btn-place-bet" onclick="placeBet(this)">Bet</button>
+            <div class="bet-slip-confirm"></div>
+        </div>
+        {% endif %}
         {% endif %}
 
     </div><!-- /.game-card-details -->
