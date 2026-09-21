@@ -43,7 +43,10 @@ from datetime import datetime, timezone
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-from cfb_bootstrap import fetch_season_games, build_recent_form, build_rest_days_map
+from cfb_bootstrap import (
+    fetch_season_games, build_recent_form, build_recent_form_score,
+    build_rest_days_map, _opponent_weight,
+)
 import cfb_model
 
 DEFAULT_SEASONS = [2024, 2025, 2026]
@@ -59,13 +62,18 @@ def build_pointintime_stats(season_games):
     season. The accumulators update AFTER each game's snapshot is captured,
     so a team's own game-in-progress is never included in its own stats.
 
+    PPG/PPG-allowed are weighted by the *opponent's* conference tier and rank
+    at the time each game was played (see cfb_bootstrap._opponent_weight) —
+    mirrors cfb_api.py's live _compute_team_season_stats so backfilled
+    predictions match what the live site would have shown.
+
     Returns {(team_name, game_date): {wins, losses, split_w, split_l, ppg,
     ppg_allowed}}. Assumes at most one game per team per date.
     """
     sorted_games = sorted(season_games, key=lambda g: g['game_date'])
     wl    = defaultdict(lambda: [0, 0])                                    # team -> [w, l]
     split = defaultdict(lambda: {'home': [0, 0], 'away': [0, 0]})          # team -> {'home'/'away': [w, l]}
-    pts   = defaultdict(lambda: {'for': 0, 'against': 0, 'g': 0})          # team -> scoring totals
+    pts   = defaultdict(lambda: {'for': 0.0, 'against': 0.0, 'w': 0.0})    # team -> weighted scoring totals
     snap  = {}
 
     for g in sorted_games:
@@ -79,8 +87,8 @@ def build_pointintime_stats(season_games):
                 'losses':       l,
                 'split_w':      sp[0],
                 'split_l':      sp[1],
-                'ppg':          round(p['for'] / p['g'], 2) if p['g'] else None,
-                'ppg_allowed':  round(p['against'] / p['g'], 2) if p['g'] else None,
+                'ppg':          round(p['for'] / p['w'], 2) if p['w'] else None,
+                'ppg_allowed':  round(p['against'] / p['w'], 2) if p['w'] else None,
             }
 
         # Now fold this game's actual result into the accumulators, so the
@@ -90,13 +98,15 @@ def build_pointintime_stats(season_games):
         wl[a][1 if h_won else 0] += 1
         split[h]['home'][0 if h_won else 1] += 1
         split[a]['away'][1 if h_won else 0] += 1
-        pts[h]['for'] += g['home_score']; pts[h]['against'] += g['away_score']; pts[h]['g'] += 1
-        pts[a]['for'] += g['away_score']; pts[a]['against'] += g['home_score']; pts[a]['g'] += 1
+        hw = _opponent_weight(g.get('away_conf'), g.get('away_rank') if g.get('away_rank', 99) <= 25 else None)
+        aw = _opponent_weight(g.get('home_conf'), g.get('home_rank') if g.get('home_rank', 99) <= 25 else None)
+        pts[h]['for'] += g['home_score'] * hw; pts[h]['against'] += g['away_score'] * hw; pts[h]['w'] += hw
+        pts[a]['for'] += g['away_score'] * aw; pts[a]['against'] += g['home_score'] * aw; pts[a]['w'] += aw
 
     return snap
 
 
-def build_team_dict(snapshot, form, rest_days, rank):
+def build_team_dict(snapshot, form, form_score, rest_days, rank):
     """snapshot is one (team, game_date) entry from build_pointintime_stats,
     or {} if this is that team's first game of the season."""
     return {
@@ -107,6 +117,7 @@ def build_team_dict(snapshot, form, rest_days, rank):
         'ppg':         snapshot.get('ppg'),
         'ppg_allowed': snapshot.get('ppg_allowed'),
         'form':        form,
+        'form_score':  form_score,
         'rest_days':   rest_days,
         'rank':        rank,
     }
@@ -144,12 +155,14 @@ def run(dry_run=False, seasons=None):
             home = build_team_dict(
                 pit_snap.get((h, gd), {}),
                 build_recent_form(games, h, gd),
+                build_recent_form_score(games, h, gd),
                 rest_map[h].get(gd),
                 g['home_rank'],
             )
             away = build_team_dict(
                 pit_snap.get((a, gd), {}),
                 build_recent_form(games, a, gd),
+                build_recent_form_score(games, a, gd),
                 rest_map[a].get(gd),
                 g['away_rank'],
             )
