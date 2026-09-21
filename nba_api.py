@@ -411,6 +411,7 @@ def _build_game(event, team_stats, game_log, nba_odds_map):
         market_home_prob = game_odds.get('home_implied') if game_odds else None
         model = nba_model.predict(home, away, game_time_utc=event.get('date', ''),
                                    market_home_prob=market_home_prob)
+        model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
     except Exception:
         model = None
 
