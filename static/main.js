@@ -423,7 +423,10 @@ var subEl = slip.querySelector('.bet-slip-pick-sub');
 if (subEl) subEl.textContent = d.oddsDisplay + ' vs ' + d.opp;
 
 var modelProb   = parseFloat(d.modelProb);
-var impliedProb = parseFloat(d.impliedProb);
+// Break-even for the price actually offered (vig included), so the edge shown
+// here agrees with the Kelly stake — d.impliedProb is the vig-free market prob.
+var slipDec     = americanToDecimal(d.odds);
+var impliedProb = slipDec ? 1 / slipDec : parseFloat(d.impliedProb);
 setText(slip, '.bss-model',   isFinite(modelProb)   ? (modelProb * 100).toFixed(1) + '%' : '—');
 setText(slip, '.bss-implied', isFinite(impliedProb) ? (impliedProb * 100).toFixed(1) + '%' : '—');
 var edgeEl = slip.querySelector('.bss-edge');
