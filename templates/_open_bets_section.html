@@ -71,21 +71,50 @@
 {% for b in open_bets %}
     <div class="bet-card game-card" data-sport="{{ b.sport or '' }}" id="gc-bet-{{ b.id }}">
       <div class="bc-head bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
-
-        <!-- Matchup: team logos + vs. (populated by JS) — first row, no name/sport/tier header -->
-        <div class="bc-matchup bc-matchup-lg" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
-
-        <!-- Time + CLV -->
-        <div class="bc-meta">
-            {% if b.eventstart %}<span class="bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
-            {% if b.live_clv is not none %}
-            {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
-            <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
-            {% endif %}
+        <!-- Header bar — same look as the schedule cards: time (or Live/Final) left, CLV / live win% right -->
+        <div class="game-header">
+            <span class="bc-status" data-bet-id="{{ b.id }}"></span>
+            {% if b.eventstart %}<span class="game-time bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
+            <div class="game-header-right">
+                {% if b.live_clv is not none %}
+                {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
+                <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
+                {% endif %}
+                <span class="bc-live-hdr" data-bet-id="{{ b.id }}"></span>
+            </div>
         </div>
+
+        <!-- Scoreboard: logos + abbrs, score in the middle (populated by JS) -->
+        <div class="scoreboard bc-scoreboard" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
       </div><!-- /.bc-head -->
 
       <div class="bc-front-body bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
+
+        <!-- Model line: same bobber track as the schedule cards, pinned to the model's home win prob -->
+        {% if b.bet_side in ('home', 'away') and b.prob is not none %}
+        {% set mh = (b.prob * 100) if b.bet_side == 'home' else (100 - b.prob * 100) %}
+        {% set mfill_left = 50 if mh >= 50 else mh %}
+        {% set mfill_w = (mh - 50) | abs %}
+        {% set mtag = [[mh, 12] | max, 88] | min %}
+        <div class="eb-wrap bc-model-line">
+            <div class="eb-scale-labels">
+                <span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span>
+                <span>50%</span>
+                <span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span>
+            </div>
+            <div class="eb-track">
+                <div class="eb-fill" style="left:{{ mfill_left }}%; width:{{ mfill_w }}%; background:var(--blue);"></div>
+                <div class="eb-center-tick"></div>
+                <div class="eb-marker eb-market" style="left:{{ mh }}%; background:var(--blue);">✓</div>
+            </div>
+            <div class="eb-tags">
+                <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ mtag }}%;">
+                    <span class="eb-tag-label">Model</span>
+                    <span class="eb-tag-val"><span class="bc-pick-abbr" data-bet-id="{{ b.id }}">{{ b.bet_side | capitalize }}</span> {{ (b.prob * 100) | round(1) }}%{% if b.book_implied is not none %} <span class="eb-tag-pct">(book {{ b.book_implied }}%)</span>{% endif %}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Analytics row -->
         {% if b.book_implied is not none %}
@@ -120,9 +149,6 @@
             </div>
         </div>
         {% endif %}
-
-        <!-- Live score (populated by JS) -->
-        <div class="bc-score" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
 
         <!-- Financials (units) -->
         <div class="bc-financials">

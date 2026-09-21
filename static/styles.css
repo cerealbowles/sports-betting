@@ -1912,6 +1912,12 @@ body.embed-mode .container { padding-bottom: 0; }
 .bet-card { transition: transform 0.17s ease-in; transform: perspective(900px) rotateY(0); }
 .bet-card.bc-flipping { transform: perspective(900px) rotateY(90deg); }
 .bc-flip { cursor: pointer; }
+.bc-scoreboard { grid-template-columns: 1fr auto 1fr; }
+.bc-scoreboard:empty { min-height: 96px; }
+.bc-scoreboard .sb-score { font-size: 1.9rem; }
+.sb-name.is-bet { color: var(--blue); }
+.bc-live-hdr:empty, .bc-status:empty { display: none; }
+.bc-model-line { margin-top: 0; }
 .bc-flip:active { opacity: 0.85; }
 .bc-front-body[hidden], .bc-details[hidden] { display: none; }
 .bc-details { padding: 12px 14px 14px; }

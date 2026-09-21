@@ -185,23 +185,11 @@ function closeDeleteBetModal() {
         Object.keys(data).forEach(function (betId) {
           var info = data[betId];
 
-          // Matchup row on the card face — team logos + vs., shown pre-game too.
-          var mEl = document.querySelector('.bc-matchup[data-bet-id="' + betId + '"]');
-          if (mEl) {
-            var mSide = mEl.getAttribute('data-bet-side') || '';
-            var awayLogo = info.away_logo ? '<img src="' + info.away_logo + '" alt="' + info.away_abbr + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
-            var homeLogo = info.home_logo ? '<img src="' + info.home_logo + '" alt="' + info.home_abbr + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
-            mEl.innerHTML = '<div class="bc-matchup-team' + (mSide === 'away' ? ' is-bet' : '') + '">' + awayLogo + '<span>' + info.away_abbr + '</span></div>'
-              + '<span class="bc-matchup-vs">vs</span>'
-              + '<div class="bc-matchup-team' + (mSide === 'home' ? ' is-bet' : '') + '">' + homeLogo + '<span>' + info.home_abbr + '</span></div>';
-          }
-
-          if (info.status === 'Preview') return; // no live score box until kickoff
-
-          var el = document.querySelector('.bc-score[data-bet-id="' + betId + '"]');
-          if (!el) return;
-          var betSide = el.getAttribute('data-bet-side') || '';
+          var sb = document.querySelector('.bc-scoreboard[data-bet-id="' + betId + '"]');
+          if (!sb) return;
+          var betSide = sb.getAttribute('data-bet-side') || '';
           var isLive  = info.status === 'Live';
+          var isFinal = info.status === 'Final';
           var as = info.away_score, hs = info.home_score;
           // Scores can arrive as strings; compare numerically ("84" > "105" as text).
           var asN = (as !== null && as !== '') ? Number(as) : NaN;
@@ -209,30 +197,47 @@ function closeDeleteBetModal() {
           var awayWin = asN > hsN;
           var homeWin = hsN > asN;
 
-          el.className = 'bc-score ' + (isLive ? 'score-live' : 'score-final');
+          function team(side, abbr, logo) {
+            var img = logo ? '<img class="team-logo" src="' + logo + '" alt="' + abbr + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
+            var name = '<div class="sb-team-info"><div class="sb-name' + (betSide === side ? ' is-bet' : '') + '">' + abbr + '</div></div>';
+            return '<div class="sb-team sb-' + side + '">' + (side === 'away' ? img + name : name + img) + '</div>';
+          }
+          var center;
+          if (isLive || isFinal) {
+            center = '<div class="sb-score">'
+              + '<span class="sb-score-away' + (awayWin ? ' sb-score-win' : '') + '">' + (as !== null ? as : '–') + '</span>'
+              + '<span class="sb-score-sep">–</span>'
+              + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (hs !== null ? hs : '–') + '</span></div>'
+              + (isLive && info.bases ? renderDiamond(info.bases) : '');
+          } else {
+            center = '<div class="sb-vs">vs</div>';
+          }
+          sb.innerHTML = team('away', info.away_abbr, info.away_logo)
+            + '<div class="sb-center">' + center + '</div>'
+            + team('home', info.home_abbr, info.home_logo);
 
-          var statusHtml = '<div class="bc-score-status' + (isLive ? ' is-live' : '') + '">';
-          if (isLive) statusHtml += '<span class="live-dot"></span>';
-          statusHtml += (info.period || (isLive ? 'Live' : 'Final'));
-          if (info.live_implied != null) {
+          // Model-line scale labels + pick abbr
+          document.querySelectorAll('.bc-away-abbr[data-bet-id="' + betId + '"]').forEach(function (n) { n.textContent = info.away_abbr; });
+          document.querySelectorAll('.bc-home-abbr[data-bet-id="' + betId + '"]').forEach(function (n) { n.textContent = info.home_abbr; });
+          document.querySelectorAll('.bc-pick-abbr[data-bet-id="' + betId + '"]').forEach(function (n) {
+            if (betSide) n.textContent = betSide === 'home' ? info.home_abbr : info.away_abbr;
+          });
+
+          // Header: swap the start time for Live / Final status
+          var st = document.querySelector('.bc-status[data-bet-id="' + betId + '"]');
+          if (st && (isLive || isFinal)) {
+            st.innerHTML = isLive
+              ? '<span class="status-live">● ' + (info.period || 'Live') + '</span>'
+              : '<span class="status-final">Final</span>';
+            var tm = st.parentElement.querySelector('.bc-time');
+            if (tm) tm.hidden = true;
+          }
+          var hdr = document.querySelector('.bc-live-hdr[data-bet-id="' + betId + '"]');
+          if (hdr && info.live_implied != null) {
             var imp = info.live_implied;
             var impCls = imp >= 60 ? 'limp-good' : (imp <= 40 ? 'limp-bad' : 'limp-neutral');
-            statusHtml += '<span class="bc-live-implied ' + impCls + '">' + imp.toFixed(1) + '% win</span>';
+            hdr.innerHTML = '<span class="bc-live-implied ' + impCls + '">' + imp.toFixed(1) + '% win</span>';
           }
-          statusHtml += '</div>';
-
-          var awayAbbr = '<span class="bc-team-abbr' + (betSide === 'away' ? ' is-bet' : '') + '">' + info.away_abbr + '</span>';
-          var awayNum  = '<span class="bc-team-num' + (awayWin ? ' winning' : '') + '">' + (as !== null ? as : '–') + '</span>';
-          var homeAbbr = '<span class="bc-team-abbr' + (betSide === 'home' ? ' is-bet' : '') + '">' + info.home_abbr + '</span>';
-          var homeNum  = '<span class="bc-team-num' + (homeWin ? ' winning' : '') + '">' + (hs !== null ? hs : '–') + '</span>';
-
-          var scoreRow = '<div class="bc-score-row">'
-            + '<div class="bc-team-block">' + awayAbbr + awayNum + '</div>'
-            + '<span class="bc-score-div">·</span>'
-            + '<div class="bc-team-block">' + homeAbbr + homeNum + '</div>'
-            + '</div>';
-
-          el.innerHTML = statusHtml + scoreRow + (isLive && info.bases ? renderDiamond(info.bases) : '');
         });
       })
       .catch(function () {});
