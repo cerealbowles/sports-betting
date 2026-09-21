@@ -41,7 +41,7 @@
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
       <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
-      <td style="padding:6px 8px;text-align:right;"><a href="{{ r.bet_url }}" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;">Bet</a></td>
+      <td style="padding:6px 8px;text-align:right;"><button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}')">Bet</button></td>
     </tr>
     {% endfor %}
     </tbody>
