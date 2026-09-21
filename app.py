@@ -3521,8 +3521,7 @@ def _edge_recommendations(days, sport, limit=15):
   requires a positive Kelly fraction, which naturally pushes lopsided
   favorite-vs-cupcake games (where the market already prices in near
   certainty and no real edge is left) to the bottom without an explicit
-  odds cutoff. Each row carries a pre-filled New Bet URL."""
-  from urllib.parse import urlencode as _urlencode
+  odds cutoff."""
   recommended = []
   for day in (days or []):
     for game in day.get('games', []):
@@ -3555,17 +3554,6 @@ def _edge_recommendations(days, sport, limit=15):
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
       else:             k_label, k_cls = 'Lean',   'edge-neutral'
 
-      qs = _urlencode({
-          'name':          f"{pick_team.get('abbrev', '')} ML",
-          'sport':         sport,
-          'eventstartutc': game.get('game_time_utc', ''),
-          'odds':          amer_odds,
-          'implied':       mkt_implied,
-          'model_prob':    pick_prob,
-          'home_name':     home_t.get('name', ''),
-          'away_name':     away_t.get('name', ''),
-          'bet_side':      pick_side,
-      })
       recommended.append({
           'game':         game,
           'pick_side':    pick_side,
@@ -3576,7 +3564,6 @@ def _edge_recommendations(days, sport, limit=15):
           'ev_pct':       ev_pct,
           'k_label':      k_label,
           'k_cls':        k_cls,
-          'bet_url':      f"{url_for('new_bet')}?{qs}",
       })
 
   recommended.sort(key=lambda r: -r['edge'])

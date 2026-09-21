@@ -101,6 +101,18 @@ function closeGameDetailsOutside(e) {
 if (e.target === e.currentTarget) closeGameDetails();
 }
 
+/* "Bet" links on the recommendations table used to jump straight to
+   /new-bet — now they open the same game-card details sheet a tap on the
+   card would, pre-selecting the recommended side's Moneyline chip so the
+   inline bet slip pops open exactly as if the user had picked it there. */
+function openRecommendedBet(gameKey, betSide) {
+openGameDetails(gameKey);
+var details = document.getElementById('gd-' + gameKey);
+if (!details) return;
+var btn = details.querySelector('.btn-bet-team[data-bet-side="' + betSide + '"]');
+if (btn && btn.tagName === 'BUTTON') btn.click();
+}
+
 document.addEventListener('click', function (e) {
 var summary = e.target.closest('.game-card-summary');
 if (!summary) return;
