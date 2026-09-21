@@ -190,6 +190,8 @@ def _get_season_game_log(season):
                 a_name  = away_c.get('team', {}).get('displayName', '')
                 if not h_name or not a_name:
                     continue
+                h_rank = _parse_rank(home_c)
+                a_rank = _parse_rank(away_c)
                 games.append({
                     'game_date':  event.get('date', '')[:10],
                     'home_name':  h_name,
@@ -197,6 +199,13 @@ def _get_season_game_log(season):
                     'home_score': h_score,
                     'away_score': a_score,
                     'home_won':   h_score > a_score,
+                    # Opponent context at the time this game was played — used
+                    # to discount PPG/PPG-allowed for cupcake/G5 non-conference
+                    # wins vs. a P4 or ranked opponent (see _opponent_weight).
+                    'home_conf':  _conference_name(home_c.get('team', {}).get('conferenceId')),
+                    'away_conf':  _conference_name(away_c.get('team', {}).get('conferenceId')),
+                    'home_rank':  h_rank if h_rank <= 25 else None,
+                    'away_rank':  a_rank if a_rank <= 25 else None,
                 })
                 found_completed = True
             except Exception:
@@ -289,27 +298,60 @@ def _apply_prior_season_blend(team, prior_stats):
         )
 
 
+# Power-4 opponents count more toward PPG/PPG-allowed; Group of 5 counts less;
+# FCS ("buy game") opponents barely count at all. Ranked opponents (regardless
+# of conference) get an extra bump — beating/scoring on a ranked team is more
+# informative than the same score against an unranked team in the same league.
+# This targets the "48 ppg but it was against three cupcakes" distortion that
+# shows up in the first 1-4 weeks of every CFB season.
+_POWER_CONFS = {'ACC', 'Big 12', 'Big Ten', 'Pac-12', 'SEC'}
+_G5_CONFS    = {'American', 'C-USA', 'MAC', 'Mountain West', 'Sun Belt'}
+
+
+def _opponent_weight(conference, rank):
+    if conference in _POWER_CONFS:
+        weight = 1.15
+    elif conference in _G5_CONFS:
+        weight = 0.75
+    elif conference == 'FCS':
+        weight = 0.3
+    else:  # Independent (Notre Dame, UMass, UConn, Army...) — mixed schedules
+        weight = 1.0
+    if rank is not None:
+        weight *= 1.35
+    return weight
+
+
 def _compute_team_season_stats(games):
-    """Compute {team_name: {ppg, ppg_allowed}} from season game scores."""
-    pts = defaultdict(lambda: {'for': 0, 'against': 0, 'g': 0})
+    """Compute {team_name: {ppg, ppg_allowed}} from season game scores,
+    weighting each game by the opponent's tier (see _opponent_weight) so a
+    stat line padded against weak non-conference opponents doesn't look the
+    same as one built against real competition."""
+    pts = defaultdict(lambda: {'for': 0.0, 'against': 0.0, 'w': 0.0, 'g': 0})
     for g in games:
-        pts[g['home_name']]['for']     += g['home_score']
-        pts[g['home_name']]['against'] += g['away_score']
+        hw = _opponent_weight(g.get('away_conf'), g.get('away_rank'))
+        aw = _opponent_weight(g.get('home_conf'), g.get('home_rank'))
+        pts[g['home_name']]['for']     += g['home_score'] * hw
+        pts[g['home_name']]['against'] += g['away_score'] * hw
+        pts[g['home_name']]['w']       += hw
         pts[g['home_name']]['g']       += 1
-        pts[g['away_name']]['for']     += g['away_score']
-        pts[g['away_name']]['against'] += g['home_score']
+        pts[g['away_name']]['for']     += g['away_score'] * aw
+        pts[g['away_name']]['against'] += g['home_score'] * aw
+        pts[g['away_name']]['w']       += aw
         pts[g['away_name']]['g']       += 1
     return {
         t: {
-            'ppg':         round(v['for']     / v['g'], 1),
-            'ppg_allowed': round(v['against'] / v['g'], 1),
+            'ppg':         round(v['for']     / v['w'], 1),
+            'ppg_allowed': round(v['against'] / v['w'], 1),
         }
-        for t, v in pts.items() if v['g'] > 0
+        for t, v in pts.items() if v['w'] > 0
     }
 
 
 def _team_recent_form(games, team_name, n=3):
-    """Last n W/L results for team_name from game_log, newest first."""
+    """Last n W/L results for team_name from game_log, newest first.
+    Display-only — see _team_recent_form_score for the opponent-weighted
+    version the model actually uses."""
     tg = []
     for g in games:
         if g['home_name'] == team_name:
@@ -318,6 +360,28 @@ def _team_recent_form(games, team_name, n=3):
             tg.append((g['game_date'], 'W' if not g['home_won'] else 'L'))
     tg.sort(key=lambda x: x[0], reverse=True)
     return [r for _, r in tg[:n]]
+
+
+def _team_recent_form_score(games, team_name, n=3):
+    """Opponent-weighted win rate over the last n games (same tier weights as
+    _compute_team_season_stats) — a 3-0 start padded with FCS/G5 cupcakes
+    scores lower than a 2-1 start that includes a ranked win. Returns None
+    if the team hasn't played yet."""
+    tg = []
+    for g in games:
+        if g['home_name'] == team_name:
+            won, opp_conf, opp_rank = g['home_won'], g.get('away_conf'), g.get('away_rank')
+        elif g['away_name'] == team_name:
+            won, opp_conf, opp_rank = not g['home_won'], g.get('home_conf'), g.get('home_rank')
+        else:
+            continue
+        tg.append((g['game_date'], won, _opponent_weight(opp_conf, opp_rank)))
+    tg.sort(key=lambda x: x[0], reverse=True)
+    recent = tg[:n]
+    total_w = sum(w for _, _, w in recent)
+    if not recent or total_w == 0:
+        return None
+    return sum(w for _, won, w in recent if won) / total_w
 
 
 def _team_rest_days(games, team_name, game_date):
@@ -638,6 +702,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
             'split_label': split_label,
             'side':        side,
             'form':        [],
+            'form_score':  None,
             'score':       competitor.get('score'),
             'ppg':         None,
             'ppg_allowed': None,
@@ -684,6 +749,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
         team['ppg']         = ts.get('ppg')
         team['ppg_allowed'] = ts.get('ppg_allowed')
         team['form']        = _team_recent_form(game_log, name)
+        team['form_score']  = _team_recent_form_score(game_log, name)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
         if prior_stats:
             _apply_prior_season_blend(team, prior_stats)

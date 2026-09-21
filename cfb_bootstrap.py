@@ -71,6 +71,36 @@ def _rank(competitor):
         return 99
 
 
+# Mirrors cfb_api.py's _CFB_CONFERENCES / _conference_name / _opponent_weight
+# exactly — kept in sync by hand since this script avoids importing cfb_api
+# (which pulls in odds_api and its API-key requirements) just for this.
+_CFB_CONFERENCES = {
+    '151': 'American', '1': 'ACC', '4': 'Big 12', '5': 'Big Ten',
+    '12': 'C-USA', '18': 'Independent', '15': 'MAC', '17': 'Mountain West',
+    '9': 'Pac-12', '8': 'SEC', '37': 'Sun Belt',
+}
+_POWER_CONFS = {'ACC', 'Big 12', 'Big Ten', 'Pac-12', 'SEC'}
+_G5_CONFS    = {'American', 'C-USA', 'MAC', 'Mountain West', 'Sun Belt'}
+
+
+def _conference_name(conference_id):
+    return _CFB_CONFERENCES.get(str(conference_id), 'FCS')
+
+
+def _opponent_weight(conference, rank):
+    if conference in _POWER_CONFS:
+        weight = 1.15
+    elif conference in _G5_CONFS:
+        weight = 0.75
+    elif conference == 'FCS':
+        weight = 0.3
+    else:
+        weight = 1.0
+    if rank is not None and rank <= 25:
+        weight *= 1.35
+    return weight
+
+
 # ── Season data fetchers ───────────────────────────────────────────────────────
 
 def fetch_season_games(season):
@@ -125,6 +155,8 @@ def fetch_season_games(season):
                     'away_split_w': a_sw, 'away_split_l': a_sl,
                     'home_rank':   _rank(home_c),
                     'away_rank':   _rank(away_c),
+                    'home_conf':   _conference_name(home_c.get('team', {}).get('conferenceId')),
+                    'away_conf':   _conference_name(away_c.get('team', {}).get('conferenceId')),
                 })
                 week_games += 1
             except Exception:
@@ -138,22 +170,28 @@ def fetch_season_games(season):
 # ── Stat builders ──────────────────────────────────────────────────────────────
 
 def build_team_season_stats(games):
-    """Compute season-aggregate PPG and PPG-allowed for each team."""
-    pts = defaultdict(lambda: {'for': 0, 'against': 0, 'g': 0})
+    """Compute season-aggregate PPG and PPG-allowed for each team, weighted
+    by opponent tier — mirrors cfb_api.py's _compute_team_season_stats."""
+    pts = defaultdict(lambda: {'for': 0.0, 'against': 0.0, 'w': 0.0, 'g': 0})
     for g in games:
-        pts[g['home_name']]['for']     += g['home_score']
-        pts[g['home_name']]['against'] += g['away_score']
+        hw = _opponent_weight(g.get('away_conf'), g.get('away_rank') if g.get('away_rank', 99) <= 25 else None)
+        aw = _opponent_weight(g.get('home_conf'), g.get('home_rank') if g.get('home_rank', 99) <= 25 else None)
+        pts[g['home_name']]['for']     += g['home_score'] * hw
+        pts[g['home_name']]['against'] += g['away_score'] * hw
+        pts[g['home_name']]['w']       += hw
         pts[g['home_name']]['g']       += 1
-        pts[g['away_name']]['for']     += g['away_score']
-        pts[g['away_name']]['against'] += g['home_score']
+        pts[g['away_name']]['for']     += g['away_score'] * aw
+        pts[g['away_name']]['against'] += g['home_score'] * aw
+        pts[g['away_name']]['w']       += aw
         pts[g['away_name']]['g']       += 1
-    return {t: {'ppg':         round(v['for']     / v['g'], 2),
-                'ppg_allowed': round(v['against']  / v['g'], 2)}
-            for t, v in pts.items() if v['g'] > 0}
+    return {t: {'ppg':         round(v['for']     / v['w'], 2),
+                'ppg_allowed': round(v['against']  / v['w'], 2)}
+            for t, v in pts.items() if v['w'] > 0}
 
 
 def build_recent_form(games, team_name, before_date, n=3):
-    """Last n W/L results for team_name before before_date (newest first)."""
+    """Last n W/L results for team_name before before_date (newest first).
+    Display-shape only — build_recent_form_score is what feeds the model."""
     tg = []
     for g in games:
         if g['game_date'] >= before_date:
@@ -164,6 +202,31 @@ def build_recent_form(games, team_name, before_date, n=3):
             tg.append((g['game_date'], 'W' if not g['home_won'] else 'L'))
     tg.sort(key=lambda x: x[0], reverse=True)
     return [r for _, r in tg[:n]]
+
+
+def build_recent_form_score(games, team_name, before_date, n=3):
+    """Opponent-weighted win rate over the last n games before before_date —
+    mirrors cfb_api.py's _team_recent_form_score."""
+    tg = []
+    for g in games:
+        if g['game_date'] >= before_date:
+            continue
+        if g['home_name'] == team_name:
+            won = g['home_won']
+            opp_conf, opp_rank = g.get('away_conf'), g.get('away_rank')
+        elif g['away_name'] == team_name:
+            won = not g['home_won']
+            opp_conf, opp_rank = g.get('home_conf'), g.get('home_rank')
+        else:
+            continue
+        opp_rank = opp_rank if opp_rank is not None and opp_rank <= 25 else None
+        tg.append((g['game_date'], won, _opponent_weight(opp_conf, opp_rank)))
+    tg.sort(key=lambda x: x[0], reverse=True)
+    recent = tg[:n]
+    total_w = sum(w for _, _, w in recent)
+    if not recent or total_w == 0:
+        return None
+    return sum(w for _, won, w in recent if won) / total_w
 
 
 def build_rest_days_map(games):
@@ -210,6 +273,7 @@ def build_season_rows(season, all_games, import_model):
             'ppg':         h_ts.get('ppg'),
             'ppg_allowed': h_ts.get('ppg_allowed'),
             'form':        build_recent_form(season_games, h, g['game_date']),
+            'form_score':  build_recent_form_score(season_games, h, g['game_date']),
             'rest_days':   rest_map[h].get(g['game_date']),
             'rank':        g['home_rank'],
         }
@@ -221,6 +285,7 @@ def build_season_rows(season, all_games, import_model):
             'ppg':         a_ts.get('ppg'),
             'ppg_allowed': a_ts.get('ppg_allowed'),
             'form':        build_recent_form(season_games, a, g['game_date']),
+            'form_score':  build_recent_form_score(season_games, a, g['game_date']),
             'rest_days':   rest_map[a].get(g['game_date']),
             'rank':        g['away_rank'],
         }

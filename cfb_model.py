@@ -94,13 +94,18 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     # this season — otherwise every team defaults to an identical 0-0 (50%)
     # record in week 1, and this factor (and #4-6 below) contribute exactly
     # 0 for every early-season game. Same reasoning as nfl_model.py.
+    # Weight bumped 1.6→2.0 (2026-09-21 bootstrap on 2024+2025, 1,760 games):
+    # refit coefficient +2.137 was the strongest under-weighted signal in the
+    # model. Applied conservatively (not the full suggested 2.1x) since
+    # Win pct/Home-road record/Recent form are correlated and the raw
+    # in-sample coefficients on that trio are noisy — see cfb_refit_results.json.
     h_wp = home.get('blend_win_pct')
     if h_wp is None:
         h_wp = _pct(home.get('wins', 0), home.get('losses', 0))
     a_wp = away.get('blend_win_pct')
     if a_wp is None:
         a_wp = _pct(away.get('wins', 0), away.get('losses', 0))
-    _add('Win percentage', (h_wp - a_wp) * 1.6)
+    _add('Win percentage', (h_wp - a_wp) * 2.0)
 
     # ── 4. Home / road split record ───────────────────────────────────────────
     h_split = home.get('blend_split_pct')
@@ -117,19 +122,29 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     _add('Points per game', (h_ppg - a_ppg) * 0.045)
 
     # ── 6. Defensive efficiency — points allowed per game ────────────────────
+    # Weight bumped 0.045→0.056 (2026-09-21 bootstrap, see note above) —
+    # refit coefficient +1.412 flagged this as under-weighted relative to
+    # offensive PPG, applied conservatively rather than the full multiplier.
     h_ppga = _safe_float(home.get('blend_ppg_allowed', home.get('ppg_allowed')), LEAGUE_PPG)
     a_ppga = _safe_float(away.get('blend_ppg_allowed', away.get('ppg_allowed')), LEAGUE_PPG)
-    _add('Points allowed/G', (a_ppga - h_ppga) * 0.045)
+    _add('Points allowed/G', (a_ppga - h_ppga) * 0.056)
 
-    # ── 7. Recent form — last 3 games ─────────────────────────────────────────
+    # ── 7. Recent form — last 3 games, weighted by opponent quality so a
+    # start padded with FCS/G5 cupcakes doesn't score the same as one that
+    # includes a real (P4/ranked) opponent. Falls back to a flat W/L rate
+    # if form_score isn't available (e.g. older cached data).
     h_form = home.get('form', [])
     a_form = away.get('form', [])
     # Needs a full 3-game sample for BOTH teams — a 1-0 or 2-0 start is 100%
     # form off a coin-flip-sized sample and swings this factor to its max
     # contribution off noise. Skip rather than let single early games spike it.
     if len(h_form) >= 3 and len(a_form) >= 3:
-        h_f = h_form.count('W') / len(h_form)
-        a_f = a_form.count('W') / len(a_form)
+        h_f = home.get('form_score')
+        if h_f is None:
+            h_f = h_form.count('W') / len(h_form)
+        a_f = away.get('form_score')
+        if a_f is None:
+            a_f = a_form.count('W') / len(a_form)
         _add('Recent form (L3)', (h_f - a_f) * 0.45)
 
     # ── 8. Rest advantage ─────────────────────────────────────────────────────
