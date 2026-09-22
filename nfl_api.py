@@ -275,10 +275,12 @@ def _apply_prior_season_blend(team, prior_stats):
         )
 
 
-def _team_recent_form(games, team_name, n=3):
-    """Last n W/L results for team_name from game_log, newest first."""
+def _team_recent_form(games, team_name, game_date, n=3):
+    """Last n W/L results for team_name entering game_date, newest first."""
     tg = []
     for g in games:
+        if g['game_date'] >= game_date:
+            continue
         if g['home_name'] == team_name:
             tg.append((g['game_date'], 'W' if g['home_won'] else 'L'))
         elif g['away_name'] == team_name:
@@ -682,7 +684,7 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         ts   = team_stats.get(name, {})
         team['ppg']         = ts.get('ppg')
         team['ppg_allowed'] = ts.get('ppg_allowed')
-        team['form']        = _team_recent_form(game_log, name)
+        team['form']        = _team_recent_form(game_log, name, game_date_et)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
         if prior_stats:
             _apply_prior_season_blend(team, prior_stats)
