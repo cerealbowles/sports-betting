@@ -1916,6 +1916,12 @@ def service_worker():
   resp.headers['Content-Type'] = 'application/javascript'
   return resp
 
+@app.route('/dashboard-mockup')
+def dashboard_mockup():
+  """Static design mockup — desktop layout sketch, not wired to live data.
+  Remove once the real redesign lands or is rejected."""
+  return render_template('_dashboard_mockup.html')
+
 @app.route('/settings')
 def settings_page():
   s = Setting.query.first() or Setting()

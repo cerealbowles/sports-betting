@@ -1,0 +1,247 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard mockup — desktop</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+<style>
+/* ── Mockup-only layout — not wired into the real app, just a visual sketch ── */
+body { margin: 0; }
+.mock-shell {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 320px;
+  min-height: 100vh;
+}
+
+/* Left rail: replaces topbar + site-nav on desktop. Icon-only at rest,
+   expands to show labels on hover so it stays slim without hiding meaning. */
+.rail {
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: visible;
+  z-index: 20;
+  transition: width 0.15s ease;
+  width: 64px;
+}
+.rail:hover { width: 190px; align-items: stretch; }
+.rail-logo { font-size: 1.3rem; text-align: center; margin-bottom: 10px; }
+.rail-section { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.rail-divider { height: 1px; background: var(--border); margin: 10px 12px; }
+.rail-spacer { flex: 1; }
+.rail-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0; margin: 0 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); text-decoration: none; font-size: 0.8rem; font-weight: 600;
+  white-space: nowrap; overflow: hidden;
+}
+.rail:hover .rail-item { padding: 9px 12px; margin: 0 8px; }
+.rail-item .ic { font-size: 1.15rem; min-width: 40px; text-align: center; flex-shrink: 0; }
+.rail:hover .rail-item .ic { min-width: 20px; text-align: left; }
+.rail-item .lbl { opacity: 0; width: 0; transition: opacity 0.1s ease; }
+.rail:hover .rail-item .lbl { opacity: 1; width: auto; }
+.rail-item:hover { background: var(--bg-card-2); color: var(--text); }
+.rail-item.active { background: var(--orange-dim); color: var(--orange); }
+.rail-item.active .ic { filter: none; }
+.rail-badge {
+  background: var(--orange); color: #fff; font-size: 0.62rem; font-weight: 800;
+  border-radius: 999px; padding: 1px 5px; margin-left: auto; opacity: 0;
+}
+.rail:hover .rail-badge { opacity: 1; }
+
+/* Center: the actual per-sport game feed */
+.mock-main {
+  padding: 18px 20px;
+  max-width: 900px;
+}
+.mock-main-header {
+  display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px;
+}
+.mock-main-header h1 { font-size: 1.15rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+.mini-rec-strip {
+  display: flex; gap: 8px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 14px;
+}
+.mini-rec {
+  flex: 0 0 auto; background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--win); border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: 0.72rem; white-space: nowrap;
+}
+.mini-rec b { color: var(--orange); }
+.mini-rec .rec-edge { color: var(--win); font-weight: 700; margin-left: 6px; }
+
+.mock-game-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; margin-bottom: 10px;
+}
+.mgc-top { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px; }
+.mgc-teams { display: flex; justify-content: space-between; align-items: center; }
+.mgc-team { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.95rem; }
+.mgc-team .edge-star { color: var(--orange); font-size: 0.75rem; }
+.mgc-mid { color: var(--text-muted); font-size: 0.8rem; }
+.mgc-odds { text-align: right; font-size: 0.78rem; }
+.mgc-odds .price { font-weight: 700; }
+.mgc-bobber-track { height: 4px; background: var(--bg-card-2); border-radius: 4px; margin-top: 10px; position: relative; }
+.mgc-bobber-dot { position: absolute; top: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--orange); }
+
+/* Right rail: open bets + condensed model stats, always visible */
+.side-panel {
+  border-left: 1px solid var(--border);
+  padding: 18px 16px;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.side-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.side-card h3 {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted);
+  margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center;
+}
+.side-bet { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.side-bet:last-child { border-bottom: none; }
+.side-bet-name { font-weight: 600; }
+.side-bet-meta { color: var(--text-muted); font-size: 0.68rem; }
+.side-bet-stake { color: var(--win); font-weight: 700; font-size: 0.75rem; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-box { background: var(--bg-card-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.stat-box .v { font-size: 1.05rem; font-weight: 800; }
+.stat-box .l { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; }
+.stat-box .v.win { color: var(--win); }
+.stat-box .v.loss { color: var(--loss); }
+
+.mock-label {
+  position: fixed; bottom: 10px; right: 14px; font-size: 0.65rem; color: var(--text-muted);
+  background: var(--bg-card); border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px;
+}
+@media (max-width: 1100px) {
+  .mock-shell { grid-template-columns: 64px minmax(0,1fr); }
+  .side-panel { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="mock-shell">
+
+  <!-- LEFT RAIL: replaces topbar + site-nav on desktop -->
+  <div class="rail">
+    <div class="rail-logo">⚡</div>
+    <div class="rail-section">
+      <a class="rail-item active" href="#"><span class="ic">⚾</span><span class="lbl">MLB</span></a>
+      <a class="rail-item" href="#"><span class="ic">🏈</span><span class="lbl">NFL</span></a>
+      <a class="rail-item" href="#"><span class="ic">🎓</span><span class="lbl">CFB</span></a>
+      <a class="rail-item" href="#"><span class="ic">🏀</span><span class="lbl">NBA</span></a>
+      <a class="rail-item" href="#"><span class="ic">🏀</span><span class="lbl">WNBA</span></a>
+      <a class="rail-item" href="#"><span class="ic">🏒</span><span class="lbl">NHL</span></a>
+    </div>
+    <div class="rail-divider"></div>
+    <div class="rail-section">
+      <a class="rail-item" href="#"><span class="ic">💰</span><span class="lbl">Bets</span><span class="rail-badge">3</span></a>
+      <a class="rail-item" href="#"><span class="ic">📈</span><span class="lbl">Model</span></a>
+      <a class="rail-item" href="#"><span class="ic">📜</span><span class="lbl">History</span></a>
+    </div>
+    <div class="rail-spacer"></div>
+    <div class="rail-section">
+      <a class="rail-item" href="#"><span class="ic">⚙️</span><span class="lbl">Settings</span></a>
+    </div>
+  </div>
+
+  <!-- CENTER: per-sport game feed (today's slate for the active sport) -->
+  <div class="mock-main">
+    <div class="mock-main-header">
+      <h1>⚾ MLB — Today</h1>
+      <span style="font-size:0.72rem;color:var(--text-muted);">$1,248 bankroll · Sat Sep 26</span>
+    </div>
+
+    <div class="mini-rec-strip">
+      <div class="mini-rec"><b>PIT</b> ML +142 <span class="rec-edge">+6.2%</span></div>
+      <div class="mini-rec"><b>LAD</b> ML -165 <span class="rec-edge">+5.1%</span></div>
+      <div class="mini-rec"><b>CWS</b> ML +188 <span class="rec-edge">+8.4%</span></div>
+    </div>
+
+    <div class="mock-game-card">
+      <div class="mgc-top"><span>7:05 PM ET · Lambeau-style weather n/a</span><span>Trust 61</span></div>
+      <div class="mgc-teams">
+        <div class="mgc-team"><span class="edge-star">★</span> PIT @ CHC</div>
+        <div class="mgc-odds"><div class="price">PIT +142</div><div style="color:var(--text-muted);">CHC -165</div></div>
+      </div>
+      <div class="mgc-bobber-track"><div class="mgc-bobber-dot" style="left:38%;"></div></div>
+    </div>
+
+    <div class="mock-game-card">
+      <div class="mgc-top"><span>8:10 PM ET</span><span>Trust 48</span></div>
+      <div class="mgc-teams">
+        <div class="mgc-team">SF @ ARI</div>
+        <div class="mgc-odds"><div class="price">SF -110</div><div style="color:var(--text-muted);">ARI -110</div></div>
+      </div>
+      <div class="mgc-bobber-track"><div class="mgc-bobber-dot" style="left:52%;"></div></div>
+    </div>
+
+    <div class="mock-game-card">
+      <div class="mgc-top"><span>9:40 PM ET</span><span>Trust 57</span></div>
+      <div class="mgc-teams">
+        <div class="mgc-team"><span class="edge-star">★</span> LAD @ SD</div>
+        <div class="mgc-odds"><div class="price">LAD -165</div><div style="color:var(--text-muted);">SD +140</div></div>
+      </div>
+      <div class="mgc-bobber-track"><div class="mgc-bobber-dot" style="left:31%;"></div></div>
+    </div>
+
+    <p style="color:var(--text-muted);font-size:0.72rem;margin-top:16px;">
+      Rest of today's slate continues below — same card layout as the current /mlb page, unchanged.
+    </p>
+  </div>
+
+  <!-- RIGHT: persistent open bets + condensed model stats for this sport -->
+  <div class="side-panel">
+    <div class="side-card">
+      <h3>Open MLB Bets <span>3</span></h3>
+      <div class="side-bet">
+        <div><div class="side-bet-name">PIT ML</div><div class="side-bet-meta">+142 · today 7:05pm</div></div>
+        <div class="side-bet-stake">$24.00</div>
+      </div>
+      <div class="side-bet">
+        <div><div class="side-bet-name">Over 8.5</div><div class="side-bet-meta">-110 · today 8:10pm</div></div>
+        <div class="side-bet-stake">$18.50</div>
+      </div>
+      <div class="side-bet">
+        <div><div class="side-bet-name">LAD ML</div><div class="side-bet-meta">-165 · today 9:40pm</div></div>
+        <div class="side-bet-stake">$31.00</div>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h3>MLB Model — Last 30d</h3>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="v win">58.4%</div><div class="l">Win rate</div></div>
+        <div class="stat-box"><div class="v win">+6.2u</div><div class="l">Units</div></div>
+        <div class="stat-box"><div class="v">112</div><div class="l">Bets graded</div></div>
+        <div class="stat-box"><div class="v">+4.1%</div><div class="l">ROI</div></div>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h3>Recommended history</h3>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="v win">62.1%</div><div class="l">★ picks W%</div></div>
+        <div class="stat-box"><div class="v">41</div><div class="l">★ picks n</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<div class="mock-label">MOCKUP — static, not wired to live data</div>
+</body>
+</html>
