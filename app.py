@@ -2333,7 +2333,6 @@ def add_closed():
   db.session.commit()
   return redirect(url_for('history'))
 
-@app.route('/mlb')
 def _mlb_star_pick(game):
   """Python mirror of _edge_star.html's edge_pick macro — kept in sync by hand
   so the top 'Today's Recommendations' table can be filtered to exactly the
@@ -2369,6 +2368,7 @@ def _mlb_star_pick(game):
   return None
 
 
+@app.route('/mlb')
 def mlb_schedule():
   schedule = mlb_api.build_schedule_context()
   from odds_api import _normalize
