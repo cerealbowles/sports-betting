@@ -2334,6 +2334,41 @@ def add_closed():
   return redirect(url_for('history'))
 
 @app.route('/mlb')
+def _mlb_star_pick(game):
+  """Python mirror of _edge_star.html's edge_pick macro — kept in sync by hand
+  so the top 'Today's Recommendations' table can be filtered to exactly the
+  games that render a ★ on their own card below. Returns the picked team's
+  abbrev, or None if this game doesn't earn a star."""
+  model, odds = game.get('model'), game.get('odds')
+  if not model or game.get('status') in ('Final', 'Live') or not odds:
+    return None
+  h_imp, a_imp = odds.get('home_implied'), odds.get('away_implied')
+  if h_imp is None or a_imp is None:
+    return None
+  favors_home = (h_imp * 100) >= 50
+  team_pct = (h_imp * 100) if favors_home else (100 - h_imp * 100)
+  amer = odds.get('home_best') if favors_home else odds.get('away_best')
+  if amer is None:
+    return None
+  amer = float(amer)
+  b = (amer / 100.0) if amer > 0 else (-100.0 / amer if amer < 0 else 0.0)
+  if b <= 0:
+    return None
+  if 'final_home_prob' in model:
+    fav_prob = model.get('final_home_prob') if favors_home else model.get('final_away_prob')
+  else:
+    fav_prob = model.get('home_prob') if favors_home else model.get('away_prob')
+  if fav_prob is None:
+    return None
+  kelly = (b * fav_prob - (1 - fav_prob)) / b
+  edge = round((fav_prob * 100) - team_pct, 1)
+  if kelly > 0 and edge >= 4 and b >= 0.25:
+    home = game.get('home') or {}
+    away = game.get('away') or {}
+    return (home.get('abbrev') or home.get('abbr')) if favors_home else (away.get('abbrev') or away.get('abbr'))
+  return None
+
+
 def mlb_schedule():
   schedule = mlb_api.build_schedule_context()
   from odds_api import _normalize
@@ -2563,10 +2598,8 @@ def mlb_schedule():
   except Exception:
     db.session.rollback()
 
-  best_bets = all_candidates
-
   # Stamp each game with its rec rank, trust score, and adj_prob for bet URLs
-  _rec_idx = {f"{b['away_abbr']}@{b['home_abbr']}": b for b in best_bets}
+  _rec_idx = {f"{b['away_abbr']}@{b['home_abbr']}": b for b in all_candidates}
   for day in (schedule or []):
     for game in day.get('games', []):
       key = f"{game['away']['abbr']}@{game['home']['abbr']}"
@@ -2594,6 +2627,17 @@ def mlb_schedule():
           game['model']['final_away_prob'] = round(final if not fav_home else 1.0 - final, 4)
       else:
         game['rec'] = None
+
+  # "Today's Recommendations" table shows exactly the games that get a ★
+  # on their own card below — computed with _mlb_star_pick, the same
+  # kelly/edge/payout-floor rule as _edge_star.html's edge_pick macro, now
+  # that every game's model.final_*_prob has been stamped above.
+  _star_keys = set()
+  for day in (schedule or []):
+    for game in day.get('games', []):
+      if _mlb_star_pick(game):
+        _star_keys.add(f"{game['away']['abbr']}@{game['home']['abbr']}")
+  best_bets = [b for b in all_candidates if f"{b['away_abbr']}@{b['home_abbr']}" in _star_keys]
 
   settings = Setting.query.first()
   kelly_cap = settings.percent_bankroll if settings else 0.05
@@ -3515,40 +3559,44 @@ def model_performance():
 
 def _edge_recommendations(days, sport, limit=15):
   """Edge-ranked recommendation list for the non-MLB sports (MLB has its own
-  full Trust Score table). `days` is the schedule list of {'games': [...]}.
+  full Trust Score table, filtered the equivalent way by _mlb_star_pick).
+  `days` is the schedule list of {'games': [...]}.
 
-  Ranks Preview games by model edge vs. the vig-free market price and
-  requires a positive Kelly fraction, which naturally pushes lopsided
-  favorite-vs-cupcake games (where the market already prices in near
-  certainty and no real edge is left) to the bottom without an explicit
-  odds cutoff."""
+  Picks and thresholds are a Python mirror of _edge_star.html's edge_pick
+  macro (always the market favorite; kelly > 0, edge >= 4pt, payout b >= 0.25)
+  so this list is exactly the set of games that render a ★ on their own card
+  below — kept in sync by hand with that macro."""
   recommended = []
   for day in (days or []):
     for game in day.get('games', []):
-      if game.get('status') != 'Preview':
+      if game.get('status') in ('Final', 'Live'):
         continue
       home_t, away_t = game.get('home') or {}, game.get('away') or {}
       model, odds = game.get('model'), game.get('odds')
       if not model or not odds:
         continue
-      hp, ap = model.get('home_prob', 0.5), model.get('away_prob', 0.5)
       h_imp, a_imp = odds.get('home_implied'), odds.get('away_implied')
       if h_imp is None or a_imp is None:
         continue
 
-      if (hp - h_imp) >= (ap - a_imp):
-        pick_side, pick_team, pick_prob, mkt_implied, amer_odds = 'home', home_t, hp, h_imp, odds.get('home_best')
+      favors_home = (h_imp * 100) >= 50
+      if favors_home:
+        pick_side, pick_team, mkt_implied, amer_odds = 'home', home_t, h_imp, odds.get('home_best')
+        pick_prob = model.get('home_prob')
       else:
-        pick_side, pick_team, pick_prob, mkt_implied, amer_odds = 'away', away_t, ap, a_imp, odds.get('away_best')
-      if amer_odds is None:
+        pick_side, pick_team, mkt_implied, amer_odds = 'away', away_t, a_imp, odds.get('away_best')
+        pick_prob = model.get('away_prob')
+      if amer_odds is None or pick_prob is None:
         continue
 
       k_b = (amer_odds / 100.0) if amer_odds > 0 else (-100.0 / amer_odds if amer_odds < 0 else 0)
-      k_f = ((k_b * pick_prob - (1 - pick_prob)) / k_b) if k_b > 0 else 0
-      if k_f <= 0:
+      if k_b < 0.25:
+        continue
+      k_f = (k_b * pick_prob - (1 - pick_prob)) / k_b
+      edge = round((pick_prob - mkt_implied) * 100, 1)
+      if k_f <= 0 or edge < 4:
         continue
       ev_pct = round((k_b * pick_prob - (1 - pick_prob)) * 100, 1)
-      edge = round((pick_prob - mkt_implied) * 100, 1)
 
       if k_f >= 0.10:   k_label, k_cls = 'Strong', 'edge-pos'
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
