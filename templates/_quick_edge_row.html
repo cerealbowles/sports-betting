@@ -65,11 +65,6 @@
 {% set qe_fill_color = 'rgb(' ~ qe_fill_r ~ ',' ~ qe_fill_g ~ ',' ~ qe_fill_b ~ ')' %}
 {% set qe_fill_left = 50 if qe_market_favors_home else qe_market_pos %}
 {% set qe_fill_width = (qe_market_pos - 50) if qe_market_favors_home else (50 - qe_market_pos) %}
-{# The "Market" tag is centered on its position via translateX(-50%), so at
-   the extremes (e.g. a 98.8% favorite) its text runs past the card edge.
-   The marker dot stays at the true market_pos on the track; only the tag's
-   horizontal anchor is clamped so its label always stays inside the card. #}
-{% set qe_tag_pos = [[qe_market_pos, 12] | max, 92] | min %}
 
 <div class="eb-wrap">
     <div class="eb-scale-labels">
@@ -85,23 +80,30 @@
         {% endif %}
         <div class="eb-marker eb-market{{ '' if qe_has_market else ' eb-market-modelonly' }}" style="left:{{ qe_market_pos }}%; background:{{ qe_fill_color }};" title="{{ 'Market' if qe_has_market else 'Model' }} {{ qe_market_team }}{{ ' ' ~ qe_amer_display if qe_has_market }} {{ qe_market_team_pct | round(1) }}%">✓</div>
     </div>
-    <div class="eb-tags">
-        <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ qe_tag_pos }}%;">
-            <span class="eb-tag-label">{{ 'Market' if qe_has_market else 'Model' }}</span>
+    {# Legend row under the track — one fixed row (market left, model right)
+       with dots matching the track markers, instead of a tag floating under
+       the market marker (which clipped at the card edge for heavy favorites)
+       plus a separately-centered model line. #}
+    <div class="eb-legend">
+        <span class="eb-legend-item">
+            <span class="eb-dot" style="background:{{ qe_fill_color }};"></span>
+            <span class="eb-legend-label">{{ 'Market' if qe_has_market else 'Model' }}</span>
             {% if qe_has_market %}
-            <span class="eb-tag-val">{{ qe_market_team }} {{ qe_amer_display }} <span class="eb-tag-pct">({{ qe_market_team_pct | round(1) }}%)</span></span>
+            <span class="eb-legend-val">{{ qe_market_team }} {{ qe_amer_display }}</span>
+            <span class="eb-legend-sub">{{ qe_market_team_pct | round(1) }}%</span>
             {% else %}
-            <span class="eb-tag-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
+            <span class="eb-legend-val">{{ qe_market_team }} {{ qe_market_team_pct | round(1) }}%</span>
             {% endif %}
-        </div>
-    </div>
-    {% if qe_has_market %}
-    <div class="eb-model-line">
-        <span class="eb-tag-label">Model</span>
-        <span class="eb-model-val">{{ qe_model_team }} {{ qe_model_team_pct | round(1) }}%</span>
+        </span>
+        {% if qe_has_market %}
         {% set qe_m_vs_mkt = (qe_model_team_pct - (qe_market_home_pct if qe_model_favors_home else (100 - qe_market_home_pct))) | round(1) %}
-        <span class="eb-tag-pct">({{ '+' if qe_m_vs_mkt > 0 }}{{ qe_m_vs_mkt }} vs market)</span>
+        <span class="eb-legend-item eb-legend-model">
+            <span class="eb-dot eb-dot-model"></span>
+            <span class="eb-legend-label">Model</span>
+            <span class="eb-legend-val">{{ qe_model_team }} {{ qe_model_team_pct | round(1) }}%</span>
+            <span class="eb-legend-sub" title="Model vs market, in percentage points">({{ '+' if qe_m_vs_mkt > 0 }}{{ qe_m_vs_mkt }})</span>
+        </span>
+        {% endif %}
     </div>
-    {% endif %}
 </div>
 {% endif %}

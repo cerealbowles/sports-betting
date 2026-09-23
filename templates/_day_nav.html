@@ -10,18 +10,18 @@
 #}
 <div class="week-nav-header">
     {% if day_nav.prev_offset is not none %}
-    <a href="{{ url_for(nav_endpoint, offset=day_nav.prev_offset) }}" class="week-nav-btn">◂ {{ 'Yesterday' if day_nav.prev_offset == -1 else 'Prev' }}</a>
+    <a href="{{ url_for(nav_endpoint, offset=day_nav.prev_offset) }}" class="week-nav-btn" aria-label="Previous day">&lt;</a>
     {% else %}
-    <span class="week-nav-btn week-nav-disabled">◂</span>
+    <span class="week-nav-btn week-nav-disabled">&lt;</span>
     {% endif %}
     <div class="week-nav-title">
         {{ day_nav.date_display }}
         {% if day_nav.is_today %}<span class="week-current-badge">Today</span>{% endif %}
     </div>
     {% if day_nav.next_offset is not none %}
-    <a href="{{ url_for(nav_endpoint, offset=day_nav.next_offset) }}" class="week-nav-btn">{{ 'Tomorrow' if day_nav.next_offset == 1 else 'Next' }} ▸</a>
+    <a href="{{ url_for(nav_endpoint, offset=day_nav.next_offset) }}" class="week-nav-btn" aria-label="Next day">&gt;</a>
     {% else %}
-    <span class="week-nav-btn week-nav-disabled">▸</span>
+    <span class="week-nav-btn week-nav-disabled">&gt;</span>
     {% endif %}
 </div>
 {% if not day_nav.is_today %}
