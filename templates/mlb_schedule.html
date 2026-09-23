@@ -628,8 +628,22 @@
             <div class="bet-type-row">
                 <span class="bet-type-label">Over/Under</span>
                 <div class="bet-type-chips">
-                    <a href="{{ over_url }}" class="btn-bet-team">O {{ game.odds.total_line }}</a>
-                    <a href="{{ under_url }}" class="btn-bet-team">U {{ game.odds.total_line }}</a>
+                    <button type="button" class="btn-bet-team"
+                            data-name="Over {{ game.odds.total_line }}" data-sub="{{ game.away.abbr }} @ {{ game.home.abbr }}"
+                            data-odds="{{ game.odds.over_odds or '' }}" data-odds-display="{{ '+' if game.odds.over_odds and game.odds.over_odds > 0 }}{{ game.odds.over_odds or '' }}"
+                            data-sport="MLB" data-bet-type="Over/Under"
+                            data-eventstartutc="{{ game.game_time_utc }}"
+                            data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                            data-game-key="{{ game.game_key }}"
+                            onclick="openBetSlip(this)">O {{ game.odds.total_line }}</button>
+                    <button type="button" class="btn-bet-team"
+                            data-name="Under {{ game.odds.total_line }}" data-sub="{{ game.away.abbr }} @ {{ game.home.abbr }}"
+                            data-odds="{{ game.odds.under_odds or '' }}" data-odds-display="{{ '+' if game.odds.under_odds and game.odds.under_odds > 0 }}{{ game.odds.under_odds or '' }}"
+                            data-sport="MLB" data-bet-type="Over/Under"
+                            data-eventstartutc="{{ game.game_time_utc }}"
+                            data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                            data-game-key="{{ game.game_key }}"
+                            onclick="openBetSlip(this)">U {{ game.odds.total_line }}</button>
                 </div>
             </div>
             {% endif %}
