@@ -403,7 +403,13 @@ details.querySelectorAll('.btn-bet-team.selected').forEach(function (el) { el.cl
 btnEl.classList.add('selected');
 
 var d = btnEl.dataset;
-slip.dataset.team          = d.team;
+// Team-side bets (Moneyline/Spread) carry data-team + data-bet-type and the
+// full pick name is built as "<team> <betType>" (e.g. "NYY Moneyline").
+// Total bets (Over/Under) have no team, so the button supplies the full
+// name directly via data-name (e.g. "Over 8.5") instead.
+var pickName = d.name || (d.team + ' ' + (d.betType || 'Moneyline'));
+slip.dataset.team          = d.team || '';
+slip.dataset.name          = pickName;
 slip.dataset.odds          = d.odds;
 slip.dataset.modelProb     = d.modelProb;
 slip.dataset.impliedProb   = d.impliedProb;
@@ -416,11 +422,11 @@ slip.dataset.betSide       = d.betSide;
 slip.dataset.gameKey       = d.gameKey;
 
 var logo = slip.querySelector('.bet-slip-logo');
-if (logo) { logo.src = d.logo; logo.alt = d.team; }
+if (logo) { logo.src = d.logo || ''; logo.alt = d.team || ''; logo.style.display = d.logo ? '' : 'none'; }
 var nameEl = slip.querySelector('.bet-slip-pick-name');
-if (nameEl) nameEl.textContent = d.team + ' ' + (d.betType || 'Moneyline');
+if (nameEl) nameEl.textContent = pickName;
 var subEl = slip.querySelector('.bet-slip-pick-sub');
-if (subEl) subEl.textContent = d.oddsDisplay + ' vs ' + d.opp;
+if (subEl) subEl.textContent = d.sub || (d.oddsDisplay + ' vs ' + d.opp);
 
 var modelProb   = parseFloat(d.modelProb);
 // Break-even for the price actually offered (vig included), so the edge shown
@@ -521,7 +527,7 @@ if (!stake || stake <= 0) {
 btnEl.disabled = true;
 var d = slip.dataset;
 var fd = new FormData();
-fd.append('name',          d.team + ' ' + (d.betType || 'Moneyline'));
+fd.append('name',          d.name || (d.team + ' ' + (d.betType || 'Moneyline')));
 fd.append('odds',          d.odds);
 fd.append('prob',          d.modelProb);
 fd.append('stake',         stake.toFixed(2));
@@ -537,7 +543,7 @@ fetch('/add_open', { method: 'POST', body: fd })
     if (r.status === 409) return r.text().then(function () { throw new Error('unsettled'); });
     var confirm = slip.querySelector('.bet-slip-confirm');
     if (confirm) {
-        confirm.textContent = '✓ Bet placed — $' + stake.toFixed(2) + ' on ' + d.team + ' logged to Open Bets';
+        confirm.textContent = '✓ Bet placed — $' + stake.toFixed(2) + ' on ' + d.name + ' logged to Open Bets';
         confirm.classList.add('show');
     }
     setTimeout(function () {
