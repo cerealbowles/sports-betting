@@ -102,6 +102,31 @@ def _fanduel_price(bookmakers, team_name):
     return None
 
 
+def _fanduel_spread(bookmakers, home_team_name, away_team_name):
+    """Return (home_point, home_price, away_price) from FanDuel's spreads market.
+    home_point is the home team's spread (negative = home favored); the two
+    prices are the American odds to lay on each side at that line, needed to
+    vig-remove into a cover probability the same way moneyline does."""
+    norm_home = _normalize(home_team_name)
+    norm_away = _normalize(away_team_name)
+    for bm in bookmakers:
+        if bm.get('key') != 'fanduel':
+            continue
+        for market in bm.get('markets', []):
+            if market.get('key') != 'spreads':
+                continue
+            home_point = home_price = away_price = None
+            for o in market.get('outcomes', []):
+                norm = _normalize(o.get('name', ''))
+                if norm == norm_home:
+                    home_point, home_price = o.get('point'), o.get('price')
+                elif norm == norm_away:
+                    away_price = o.get('price')
+            if home_point is not None:
+                return home_point, home_price, away_price
+    return None, None, None
+
+
 def _fanduel_totals(bookmakers):
     """Return (line, over_odds, under_odds) from FanDuel totals market, or (None, None, None)."""
     for bm in bookmakers:
@@ -250,6 +275,8 @@ def get_odds_map(sport):
         'home_best':    int,
         'away_implied': float,  # vig-free implied prob
         'home_implied': float,
+        'total_line':   float,  # game total (O/U), None if not priced
+        'home_spread':  float,  # home-team spread, negative = home favored, None if not priced
     }
     """
     keys = _get_api_keys()
@@ -304,7 +331,7 @@ def get_odds_map(sport):
                     params={
                         'apiKey':       api_key,
                         'bookmakers':   'fanduel',
-                        'markets':      'h2h,totals',
+                        'markets':      'h2h,totals,spreads',
                         'oddsFormat':   'american',
                         'dateFormat':   'iso',
                     },
@@ -355,6 +382,7 @@ def get_odds_map(sport):
 
         bkm = event.get('bookmakers', [])
         total_line, over_odds, under_odds = _fanduel_totals(bkm)
+        home_spread, home_spread_price, away_spread_price = _fanduel_spread(bkm, home_name, away_name)
 
         ou_str = f' | O/U {total_line}' if total_line is not None else ''
         print(f'[odds] {sport_key}: {away_name} {away_price:+d} @ '
@@ -396,6 +424,9 @@ def get_odds_map(sport):
             'total_line':   total_line,
             'over_odds':    over_odds,
             'under_odds':   under_odds,
+            'home_spread':        home_spread,        # negative = home favored
+            'home_spread_price':  home_spread_price,   # American odds to back home at home_spread
+            'away_spread_price':  away_spread_price,   # American odds to back away at -home_spread
         }
         if sport_key in _FREEZE_AFTER_START:
             # Keep the last pre-game prices on the card once the game is live, so a
@@ -437,6 +468,10 @@ def lookup_game_odds(odds_map, home_name, away_name, game_date=None):
             'total_line':   r.get('total_line'),
             'over_odds':    r.get('over_odds'),
             'under_odds':   r.get('under_odds'),
+            # Spread IS home/away-oriented — flips sign (and prices swap sides) when the side swaps.
+            'home_spread':        (-r['home_spread']) if r.get('home_spread') is not None else None,
+            'home_spread_price':  r.get('away_spread_price'),
+            'away_spread_price':  r.get('home_spread_price'),
         }
 
     if game_date:

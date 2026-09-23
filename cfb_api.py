@@ -6,6 +6,7 @@ from datetime import datetime, timezone, date as _date
 from zoneinfo import ZoneInfo
 import odds_api
 import cfb_model
+import football_total_model
 
 _ET = ZoneInfo('America/New_York')
 
@@ -766,6 +767,14 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
     except Exception:
         model = None
 
+    # Pace-adjusted total (O/U) projection — see football_total_model.py.
+    try:
+        total_model = football_total_model.predict_total(
+            'CFB', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
+            away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
+    except Exception:
+        total_model = None
+
     espn_odds = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
     over_under = espn_odds.get('overUnder')
@@ -784,8 +793,10 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
         'home':          home,
         'odds_line':     odds_line,
         'over_under':    over_under,
+        'sport':         'CFB',
         'odds':          game_odds,
         'model':         model,
+        'total_model':   total_model,
         'weather':       weather,
         'team_stats':    team_stats,
         'bet_name':      f"{a_ab} @ {h_ab}",

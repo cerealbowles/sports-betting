@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import odds_api
 import wnba_model
+import bball_total_model
 
 _ET = ZoneInfo('America/New_York')
 
@@ -414,6 +415,14 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
     except Exception:
         model = None
 
+    # Pace-adjusted total (O/U) projection — see bball_total_model.py.
+    try:
+        total_model = bball_total_model.predict_total(
+            'WNBA', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
+            away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
+    except Exception:
+        total_model = None
+
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
     over_under = espn_odds.get('overUnder')
@@ -430,8 +439,10 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
         'home':          home,
         'odds_line':     odds_line,
         'over_under':    over_under,
+        'sport':         'WNBA',
         'odds':          game_odds,
         'model':         model,
+        'total_model':   total_model,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'linescore':     _parse_linescores(comp) if status != 'Preview' else None,

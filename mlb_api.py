@@ -15,6 +15,7 @@ import weather_api
 import mlb_model
 import statcast_api
 import fangraphs_api
+import mlb_total_model
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 
@@ -836,6 +837,16 @@ def build_schedule_context(target_date=None):
             except Exception:
                 model = None
 
+            # Starter-ERA-adjusted total — see mlb_total_model.py. No new
+            # fetch needed, runs_pg and pitcher.era are already fetched
+            # above for the win-prob model.
+            try:
+                total_model = mlb_total_model.predict_total(
+                    home.get('runs_pg'), (home.get('pitcher') or {}).get('era'),
+                    away.get('runs_pg'), (away.get('pitcher') or {}).get('era'))
+            except Exception:
+                total_model = None
+
             # Linescore only for games that have actually started
             linescore = None
             raw_ls = game.get('linescore', {}) if status in ('Live', 'Final') else {}
@@ -875,6 +886,8 @@ def build_schedule_context(target_date=None):
                 'series_info':   series_info,
                 'linescore':     linescore,
                 'weather':       weather_api.get_game_weather(venue, 'mlb'),
+                'sport':         'MLB',
+                'total_model':   total_model,
                 'odds':          game_odds,
                 'model':         model,
                 'bet_name':      f"{away['abbr']} @ {home['abbr']}",
