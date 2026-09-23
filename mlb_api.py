@@ -487,6 +487,7 @@ def _compute_bullpen_stats(active_rps, il_rps, game_logs_by_id):
 
     return {
         'ip_last_3':        total_ip_3d,
+        'ip_last_14':       round(total_ip_14d, 1),
         'era_last_14':      era_14d,
         'closer_yesterday': closer['pitched_yday'] if closer else False,
         'closer_name':      closer['name'].split()[-1] if closer else None,
@@ -837,13 +838,14 @@ def build_schedule_context(target_date=None):
             except Exception:
                 model = None
 
-            # Starter-ERA-adjusted total — see mlb_total_model.py. No new
-            # fetch needed, runs_pg and pitcher.era are already fetched
-            # above for the win-prob model.
+            # Starter/bullpen-adjusted total — see mlb_total_model.py. The
+            # pitcher and bullpen data were already fetched for the win model.
             try:
                 total_model = mlb_total_model.predict_total(
-                    home.get('runs_pg'), (home.get('pitcher') or {}).get('era'),
-                    away.get('runs_pg'), (away.get('pitcher') or {}).get('era'))
+                    home.get('runs_pg'), home.get('pitcher'),
+                    away.get('runs_pg'), away.get('pitcher'),
+                    home.get('bullpen'), away.get('bullpen'),
+                    home.get('recent_rpg'), away.get('recent_rpg'))
             except Exception:
                 total_model = None
 
