@@ -27,6 +27,11 @@ import nba_model
 import wnba_api
 import wnba_model
 import market_edge_calibration
+import spread_proxy
+import bball_total_model
+import football_total_model
+import hockey_total_model
+import mlb_total_model
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo('America/New_York')
@@ -128,6 +133,10 @@ class GamePrediction(db.Model):
   movement_pct      = db.Column(db.Float)                      # total pre-game move on pick side, percentage points
   wind_mph       = db.Column(db.Float)                        # at game time, null for domes
   wind_dir       = db.Column(db.String(4))
+  spread_open    = db.Column(db.Float)                        # ESPN pickcenter, home-team spread (negative = home favored)
+  spread_close   = db.Column(db.Float)
+  total_open     = db.Column(db.Float)                        # ESPN pickcenter game total (O/U)
+  total_close    = db.Column(db.Float)
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -166,6 +175,10 @@ def ensure_column_exists():
     _add('game_predictions', 'daily_rank',        'INTEGER DEFAULT NULL')
     _add('game_predictions', 'movement_profile',  'TEXT DEFAULT NULL')
     _add('game_predictions', 'movement_pct',      'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_open',       'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_close',      'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_open',        'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_close',       'FLOAT DEFAULT NULL')
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
@@ -1478,6 +1491,47 @@ def _sigmoid_pct_filter(logit):
     factors panel show what its own displayed factors add up to, independent
     of any post-hoc market-shrink applied to the model's headline home_prob."""
     return round(100 / (1 + math.exp(-logit)), 1)
+
+
+app.jinja_env.globals['spread_implied_margin'] = spread_proxy.implied_margin
+app.jinja_env.globals['spread_cover_prob'] = spread_proxy.cover_prob
+app.jinja_env.globals['vig_free_pair'] = _vig_free_implied
+
+_TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
+                             **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}
+
+
+def _total_over_prob(sport, total_projection, market_total_line):
+    """P(actual total > market_total_line) per whichever sport's calibrated
+    total model applies (bball_total_model.py or football_total_model.py —
+    same normal-approximation math either way, just a different fitted
+    sigma per sport), via a normal approximation around the projection.
+    Returns None if this sport has no total model or inputs are missing."""
+    if total_projection is None or market_total_line is None:
+        return None
+    coeffs = _TOTAL_MODEL_CALIBRATION.get(sport)
+    if not coeffs:
+        return None
+    _, _, sigma = coeffs
+    if sigma <= 0:
+        return None
+    z = (total_projection - market_total_line) / sigma
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+
+app.jinja_env.globals['total_over_prob'] = _total_over_prob
+
+
+def _chip_track_pos(pct):
+    """Clamp/zoom a 0-100 percentage into the market-chip track's visible
+    3-97 range, centered on the 30-70 band where real game probabilities
+    live — a 73% favorite should read as clearly right-of-center, not
+    barely nudged off the 50 mark. Plain float, not a Jinja macro (macros
+    return Markup strings, which can't be subtracted for track-gap math)."""
+    return max(3.0, min(97.0, (pct - 30) / 40 * 100))
+
+
+app.jinja_env.globals['chip_track_pos'] = _chip_track_pos
 
 
 @app.template_filter('bet_pill_label')

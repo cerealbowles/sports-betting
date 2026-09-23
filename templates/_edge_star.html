@@ -1,9 +1,11 @@
 {# Shared "recommended bet" star — sits in the header bar next to the
    spread/O-U badge instead of the old bottom-of-card banner, so a
    recommended game doesn't take up extra vertical space.
-   Mirrors the edge/Kelly/payout-floor logic in _quick_edge_row.html; kept
-   in its own macro so the header (rendered before the bobber include) and
-   the bobber can both use it without duplicating the math inline. #}
+   Its recommendation gate (kelly>0, edge>=4pts, price not too short) is
+   intentionally stricter than the ML chip's plain edge>=3pts "differs from
+   market" highlight in _market_chips.html — the star means "bet this," the
+   chip tint just means "worth a look." Kept in its own macro so both call
+   sites share the same underlying pick math without duplicating it. #}
 {# The probability used is the final one the bet form ends up with (game.model.final_*_prob,
    MLB) when available, else the raw model prob.
    edge_pick(game) -> abbrev of the recommended team ('' when there is no

@@ -90,9 +90,7 @@
                     <span class="sb-score-sep">–</span>
                     <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
                 </div>
-                {% else %}
-                <div class="sb-vs">vs</div>
-                {% endif %}
+{% endif %}
             </div>
 
             <!-- Home -->
@@ -106,7 +104,7 @@
 
         </div><!-- /.scoreboard -->
 
-        {% include "_quick_edge_row.html" %}
+        {% include "_market_chips.html" %}
 
     </div><!-- /.game-card-summary -->
 
@@ -126,7 +124,7 @@
                     <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
                 </div>
             </div>
-            <div class="sb-center"><div class="sb-vs">vs</div></div>
+            <div class="sb-center"></div>
             <div class="sb-team sb-home">
                 <div class="sb-team-info">
                     <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
@@ -194,7 +192,7 @@
         {% endif %}
 
         {% if game.model %}
-        {% include "_quick_edge_row.html" %}
+        {% include "_market_chips.html" %}
 
         {% set displayed = game.model.factors | rejectattr(1, 'equalto', 0) | list %}
         {% if displayed %}

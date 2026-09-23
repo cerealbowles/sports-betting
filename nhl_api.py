@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import odds_api
 import injuries_api
 import nhl_model
+import hockey_total_model
 
 _ET = ZoneInfo('America/New_York')
 
@@ -458,6 +459,15 @@ def build_schedule_context(target_date=None):
         except Exception:
             model = None
 
+        # Opponent-adjusted goals total — see hockey_total_model.py. No new
+        # fetch needed, GF/GA-per-game are already computed above for the
+        # win-prob model.
+        try:
+            total_model = hockey_total_model.predict_total(
+                home.get('gf_pg'), home.get('ga_pg'), away.get('gf_pg'), away.get('ga_pg'))
+        except Exception:
+            total_model = None
+
         # Playoff series context
         series_info = None
         ss = game.get('seriesStatus')
@@ -488,7 +498,9 @@ def build_schedule_context(target_date=None):
             # api-web gameType: 1=preseason, 2=regular season, 3=playoffs.
             'is_preseason':  game.get('gameType') == 1,
             'live_clock':    (live_clocks.get(game.get('id')) or _period_label(game.get('periodDescriptor'))) if status == 'Live' else '',
+            'sport':         'NHL',
             'model':         model,
+            'total_model':   total_model,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",

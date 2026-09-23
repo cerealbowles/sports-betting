@@ -1,0 +1,269 @@
+{# Market-vs-model chips — replaces the old single ML "confidence bobber"
+   (_quick_edge_row.html) with three at-a-glance chips (ML / Spread / Total)
+   plus an expandable table+track view, matching game-card-v2.html.
+
+   Deliberately quiet styling: no glow/gradient/"BEST EDGE" tag, small
+   regular-weight numbers, thin grey pips. An edge of MC_HOT points or more
+   gets only a soft green number/border/pip tint — "this one differs from
+   market", not "bet this" (the star in the header already owns that job).
+
+   ML always compares a real model number against the market. Spread's
+   model side is a rough proxy (spread_proxy.py) derived from win
+   probability — weaker than the market's own line in every sport tested,
+   framed quietly rather than as a sharper number. Total now has a real
+   model in all 6 sports, at very different quality levels — pace-adjusted
+   on NBA/WNBA (bball_total_model.py) and NFL/CFB (football_total_model.py,
+   R² 0.09-0.27), opponent-adjusted scoring-environment on MLB (starter
+   ERA vs team offense, mlb_total_model.py, R²=0.05) and NHL (goals-for/
+   against, hockey_total_model.py, R²=0.032) — the latter two are
+   genuinely weaker fits, shipped anyway on request, not because they
+   cleared the same bar the other four did.
+
+   Expects `game` in context, with `game.sport` set by each sport's API
+   module's game-dict builder, and `game.total_model` present whenever
+   that sport's predict_total() found the inputs it needs (pace data for
+   NBA/WNBA/NFL/CFB; team RPG + probable starter ERA for MLB; GF/GA for
+   NHL). #}
+{% if game.model and game.status != 'Final' %}
+{% set mc_home_team = game.home.abbrev or game.home.abbr %}
+{% set mc_away_team = game.away.abbrev or game.away.abbr %}
+{% set mc_model_home_prob = game.model.final_home_prob if game.model.final_home_prob is defined else game.model.home_prob %}
+{% set MC_HOT = 3.0 %}
+
+{# ---------------- Moneyline ---------------- #}
+{% set mc_ml_has = game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
+{% if mc_ml_has %}
+{% set mc_ml_mkt_home = game.odds.home_implied * 100 %}
+{% set mc_ml_mdl_home = mc_model_home_prob * 100 %}
+{% set mc_ml_edge = mc_ml_mdl_home - mc_ml_mkt_home %}
+{% if mc_ml_edge >= 0 %}
+{% set mc_ml_side = mc_home_team %}
+{% set mc_ml_pts = mc_ml_edge %}
+{% set mc_ml_mkt_pct = mc_ml_mkt_home %}
+{% set mc_ml_mdl_pct = mc_ml_mdl_home %}
+{% set mc_ml_amer = game.odds.home_best %}
+{% else %}
+{% set mc_ml_side = mc_away_team %}
+{% set mc_ml_pts = -mc_ml_edge %}
+{% set mc_ml_mkt_pct = 100 - mc_ml_mkt_home %}
+{% set mc_ml_mdl_pct = 100 - mc_ml_mdl_home %}
+{% set mc_ml_amer = game.odds.away_best %}
+{% endif %}
+{% set mc_ml_amer_disp = ('+' ~ mc_ml_amer|round(0)|int) if mc_ml_amer and mc_ml_amer > 0 else (mc_ml_amer|round(0)|int if mc_ml_amer is not none) %}
+{% endif %}
+
+{# ---------------- Spread ---------------- #}
+{% set mc_sp_has = game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none %}
+{% if mc_sp_has %}
+{% set mc_sp_vf = vig_free_pair(game.odds.home_spread_price, game.odds.away_spread_price) %}
+{% set mc_sp_mdl_raw = spread_cover_prob(game.sport, mc_model_home_prob, game.odds.home_spread) %}
+{% set mc_sp_ok = mc_sp_vf[0] is not none and mc_sp_mdl_raw is not none %}
+{% if mc_sp_ok %}
+{% set mc_sp_mkt_home = mc_sp_vf[0] * 100 %}
+{% set mc_sp_mdl_home = mc_sp_mdl_raw * 100 %}
+{% set mc_sp_edge = mc_sp_mdl_home - mc_sp_mkt_home %}
+{% set mc_sp_home_val = game.odds.home_spread %}
+{% set mc_sp_away_val = -game.odds.home_spread %}
+{% set mc_sp_home_label = mc_home_team ~ ' ' ~ ('+' if mc_sp_home_val > 0) ~ mc_sp_home_val %}
+{% set mc_sp_away_label = mc_away_team ~ ' ' ~ ('+' if mc_sp_away_val > 0) ~ mc_sp_away_val %}
+{% if mc_sp_edge >= 0 %}
+{% set mc_sp_side = mc_sp_home_label %}
+{% set mc_sp_pts = mc_sp_edge %}
+{% set mc_sp_mkt_pct = mc_sp_mkt_home %}
+{% set mc_sp_mdl_pct = mc_sp_mdl_home %}
+{% set mc_sp_side_price = game.odds.home_spread_price %}
+{% else %}
+{% set mc_sp_side = mc_sp_away_label %}
+{% set mc_sp_pts = -mc_sp_edge %}
+{% set mc_sp_mkt_pct = 100 - mc_sp_mkt_home %}
+{% set mc_sp_mdl_pct = 100 - mc_sp_mdl_home %}
+{% set mc_sp_side_price = game.odds.away_spread_price %}
+{% endif %}
+{# Bet-page link, mirroring bet_away_url/bet_home_url elsewhere — pre-fills
+   name/odds/prob so it opens ready to stake, same as tapping the ML button.
+   model_prob here is the proxy's cover probability for this exact side,
+   which is the correct Kelly input for a spread bet (not a win probability,
+   a cover probability, but the same math applies). #}
+{% set mc_sp_bet_url %}{{ url_for('new_bet') }}?name={{ mc_sp_side | urlencode }}&sport={{ game.sport }}&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Spread&odds={{ mc_sp_side_price }}&implied={{ (mc_sp_mkt_pct / 100) | round(4) }}&model_prob={{ (mc_sp_mdl_pct / 100) | round(4) }}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
+{% endif %}
+{% endif %}
+
+{# ---------------- Total ----------------
+   NBA/WNBA have a real model now (bball_total_model.py — pace-adjusted
+   O/U, see its docstring for validation numbers). Every other sport still
+   has zero total signal, so this falls back to the same market-only "no
+   model yet" state it always has. #}
+{% set mc_tot_has = game.odds and game.odds.total_line is not none %}
+{% if mc_tot_has %}
+{% set mc_tot_vf = vig_free_pair(game.odds.over_odds, game.odds.under_odds) if (game.odds.over_odds is not none and game.odds.under_odds is not none) else (none, none) %}
+{% set mc_tot_over_pct = mc_tot_vf[0] * 100 if mc_tot_vf[0] is not none else none %}
+{% set mc_tot_model_over_raw = total_over_prob(game.sport, game.total_model.total_projection, game.odds.total_line) if game.total_model else none %}
+{% set mc_tot_ok = mc_tot_over_pct is not none and mc_tot_model_over_raw is not none %}
+
+{% if mc_tot_ok %}
+{% set mc_tot_model_over_pct = mc_tot_model_over_raw * 100 %}
+{% set mc_tot_edge = mc_tot_model_over_pct - mc_tot_over_pct %}
+{% if mc_tot_edge >= 0 %}
+{% set mc_tot_side_over = true %}
+{% set mc_tot_pts = mc_tot_edge %}
+{% set mc_tot_mkt_pct = mc_tot_over_pct %}
+{% set mc_tot_mdl_pct = mc_tot_model_over_pct %}
+{% else %}
+{% set mc_tot_side_over = false %}
+{% set mc_tot_pts = -mc_tot_edge %}
+{% set mc_tot_mkt_pct = 100 - mc_tot_over_pct %}
+{% set mc_tot_mdl_pct = 100 - mc_tot_model_over_pct %}
+{% endif %}
+{% else %}
+{# No model for this sport — tap target just follows whichever side the
+   market itself currently favors, same honesty as the "no model yet" label. #}
+{% set mc_tot_side_over = (mc_tot_over_pct is none) or (mc_tot_over_pct >= 50) %}
+{% endif %}
+
+{% set mc_tot_side_name = ('Over ' if mc_tot_side_over else 'Under ') ~ game.odds.total_line %}
+{% set mc_tot_side_odds = game.odds.over_odds if mc_tot_side_over else game.odds.under_odds %}
+{% set mc_tot_side_implied = (mc_tot_over_pct if mc_tot_side_over else (100 - mc_tot_over_pct)) if mc_tot_over_pct is not none else none %}
+{% set mc_tot_side_model_prob = ((mc_tot_model_over_pct if mc_tot_side_over else (100 - mc_tot_model_over_pct)) / 100) if mc_tot_ok else none %}
+{% set mc_tot_bet_url %}{{ url_for('new_bet') }}?name={{ mc_tot_side_name | urlencode }}&sport={{ game.sport }}&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if mc_tot_side_odds is not none %}&odds={{ mc_tot_side_odds }}{% endif %}{% if mc_tot_side_implied is not none %}&implied={{ (mc_tot_side_implied / 100) | round(4) }}{% endif %}{% if mc_tot_side_model_prob is not none %}&model_prob={{ mc_tot_side_model_prob | round(4) }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
+{% endif %}
+
+<div class="mc-wrap">
+    <div class="mc-chips">
+        {# ML — jumps straight to the inline bet slip with the edge side
+           pre-selected, same as tapping a ★ recommended pick elsewhere. #}
+        <div class="mc-chip{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}"{% if mc_ml_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_ml_side == mc_home_team else 'away' }}')"{% endif %}>
+            <span class="mc-t">ML</span>
+            {% if mc_ml_has %}
+            <span class="mc-big">{{ '+' if mc_ml_pts >= 0 }}{{ mc_ml_pts | round(1) }}</span>
+            <span class="mc-side">{{ mc_ml_side }}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_ml_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-foot"><b class="mc-a">{{ mc_ml_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_ml_mdl_pct | round(1) }}%</b></span>
+            {% else %}
+            <span class="mc-big mc-dash">—</span>
+            <span class="mc-side mc-side-muted">no line</span>
+            {% endif %}
+        </div>
+        {# Spread — no inline slip exists for this bet type (only ML has
+           one), so this opens the full /new-bet page pre-filled, same as
+           the existing Spread link in the details sheet always has. #}
+        <div class="mc-chip{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); window.location.href='{{ mc_sp_bet_url }}'"{% endif %}>
+            <span class="mc-t">SPREAD</span>
+            {% if mc_sp_has and mc_sp_ok %}
+            <span class="mc-big">{{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
+            <span class="mc-side">{{ mc_sp_side }}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_sp_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-foot"><b class="mc-a">{{ mc_sp_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_sp_mdl_pct | round(1) }}%</b></span>
+            {% else %}
+            <span class="mc-big mc-dash">—</span>
+            <span class="mc-side mc-side-muted">no line</span>
+            {% endif %}
+        </div>
+        {# Total — real pace-adjusted model on NBA/WNBA (bball_total_model.py);
+           every other sport stays market-only, tap target following
+           whichever side the market itself currently favors. #}
+        <div class="mc-chip{{ ' mc-hot' if mc_tot_ok and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}"{% if mc_tot_has %} onclick="event.stopPropagation(); window.location.href='{{ mc_tot_bet_url }}'"{% endif %}>
+            <span class="mc-t">TOTAL</span>
+            {% if mc_tot_ok %}
+            <span class="mc-big">{{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
+            <span class="mc-side">{{ 'Over' if mc_tot_side_over else 'Under' }} {{ game.odds.total_line }}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-foot"><b class="mc-a">{{ mc_tot_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_tot_mdl_pct | round(1) }}%</b></span>
+            {% elif mc_tot_has %}
+            <span class="mc-big mc-big-plain">{{ game.odds.total_line }}</span>
+            <span class="mc-side">O/U</span>
+            <span class="mc-foot">{% if mc_tot_over_pct is not none %}O {{ mc_tot_over_pct | round(1) }}%{% endif %}</span>
+            <span class="mc-side mc-side-muted mc-nomodel">no model yet</span>
+            {% else %}
+            <span class="mc-big mc-dash">—</span>
+            <span class="mc-side mc-side-muted">no line</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <details class="mc-fold" onclick="event.stopPropagation()">
+        <summary class="mc-toggle">Market vs model</summary>
+        <div class="mc-table">
+            <div class="mc-head"><span></span><span class="mc-m">Market</span><span class="mc-o">Model</span><span class="mc-e">Edge</span></div>
+
+            {# ML row #}
+            <div class="mc-row">
+                <span class="mc-lbl">ML</span>
+                {% if mc_ml_has %}
+                <div><div class="mc-val mc-mkt">{{ mc_home_team }} {{ mc_ml_amer_disp if mc_ml_side == mc_home_team else (('+' if game.odds.home_best > 0) ~ game.odds.home_best) }}</div><div class="mc-sub">{{ mc_ml_mkt_home | round(1) }}% implied</div></div>
+                <div><div class="mc-val mc-mdl">{{ mc_home_team }} {{ mc_ml_mdl_home | round(1) }}%</div><div class="mc-sub">model</div></div>
+                <span class="mc-edge{{ ' mc-hot' if mc_ml_pts >= MC_HOT }}">{{ mc_ml_side }} {{ '+' if mc_ml_pts >= 0 }}{{ mc_ml_pts | round(1) }}</span>
+                {% else %}
+                <div class="mc-sub" style="grid-column:2/4;">No moneyline posted</div><span></span>
+                {% endif %}
+            </div>
+            {% if mc_ml_has %}
+            <div class="mc-track-wrap">
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    {% set mc_ml_lo = ([chip_track_pos(mc_ml_mkt_home), chip_track_pos(mc_ml_mdl_home)] | min) %}
+                    {% set mc_ml_hi = ([chip_track_pos(mc_ml_mkt_home), chip_track_pos(mc_ml_mdl_home)] | max) %}
+                    <div class="mc-gap{{ ' mc-hot' if mc_ml_pts >= MC_HOT }}" style="left:{{ mc_ml_lo }}%;width:{{ mc_ml_hi - mc_ml_lo }}%"></div>
+                    <div class="mc-dot mc-dot-m" style="left:{{ chip_track_pos(mc_ml_mkt_home) }}%"></div>
+                    <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(mc_ml_mdl_home) }}%"></div>
+                </div>
+                <div class="mc-ends"><span>{{ mc_away_team }}</span><span>{{ mc_home_team }}</span></div>
+            </div>
+            {% endif %}
+
+            {# Spread row #}
+            <div class="mc-row">
+                <span class="mc-lbl">SPREAD</span>
+                {% if mc_sp_has and mc_sp_ok %}
+                <div><div class="mc-val mc-mkt">{{ mc_sp_home_label }}</div><div class="mc-sub">{{ mc_sp_mkt_home | round(1) }}% cover</div></div>
+                <div><div class="mc-val mc-mdl">{{ mc_sp_home_label.split(' ')[0] }} {{ mc_sp_mdl_home | round(1) }}%</div><div class="mc-sub">cover (proxy)</div></div>
+                <span class="mc-edge{{ ' mc-hot' if mc_sp_pts >= MC_HOT }}">{{ mc_sp_side.split(' ')[0] }} {{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
+                {% else %}
+                <div class="mc-sub" style="grid-column:2/4;">No spread posted</div><span></span>
+                {% endif %}
+            </div>
+            {% if mc_sp_has and mc_sp_ok %}
+            <div class="mc-track-wrap">
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    {% set mc_sp_lo = ([chip_track_pos(mc_sp_mkt_home), chip_track_pos(mc_sp_mdl_home)] | min) %}
+                    {% set mc_sp_hi = ([chip_track_pos(mc_sp_mkt_home), chip_track_pos(mc_sp_mdl_home)] | max) %}
+                    <div class="mc-gap{{ ' mc-hot' if mc_sp_pts >= MC_HOT }}" style="left:{{ mc_sp_lo }}%;width:{{ mc_sp_hi - mc_sp_lo }}%"></div>
+                    <div class="mc-dot mc-dot-m" style="left:{{ chip_track_pos(mc_sp_mkt_home) }}%"></div>
+                    <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(mc_sp_mdl_home) }}%"></div>
+                </div>
+                <div class="mc-ends"><span>{{ mc_sp_away_label }}</span><span>{{ mc_sp_home_label }}</span></div>
+            </div>
+            {% endif %}
+
+            {# Total row — real model + edge on NBA/WNBA, market-only elsewhere #}
+            <div class="mc-row">
+                <span class="mc-lbl">TOTAL</span>
+                {% if mc_tot_ok %}
+                <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{{ mc_tot_over_pct | round(1) }}% over</div></div>
+                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection }} proj</div><div class="mc-sub">{% if game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
+                <span class="mc-edge{{ ' mc-hot' if mc_tot_pts >= MC_HOT }}">{{ 'O' if mc_tot_side_over else 'U' }} {{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
+                {% elif mc_tot_has %}
+                <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{% if mc_tot_over_pct is not none %}{{ mc_tot_over_pct | round(1) }}% over{% endif %}</div></div>
+                <div><div class="mc-val mc-dash">—</div><div class="mc-sub">no model yet</div></div>
+                <span></span>
+                {% else %}
+                <div class="mc-sub" style="grid-column:2/4;">No total posted</div><span></span>
+                {% endif %}
+            </div>
+            {% if mc_tot_has %}
+            <div class="mc-track-wrap">
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    {% if mc_tot_over_pct is not none %}
+                    <div class="mc-dot mc-dot-m" style="left:{{ chip_track_pos(mc_tot_over_pct) }}%"></div>
+                    {% endif %}
+                    {% if mc_tot_ok %}
+                    <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(mc_tot_model_over_pct) }}%"></div>
+                    {% endif %}
+                </div>
+                <div class="mc-ends"><span>UNDER</span><span>OVER</span></div>
+            </div>
+            {% endif %}
+
+            <div class="mc-legend"><span class="mc-m">Market (no-vig)</span><span class="mc-o">Model</span><span class="mc-g">Edge ≥ {{ MC_HOT }} pts</span></div>
+        </div>
+    </details>
+</div>
+{% endif %}

@@ -1119,12 +1119,11 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .qe-val.edge-pos, .qe-val.edge-neg { padding: 1px 6px; border-radius: 4px; }
 
-/* Edge bobber — away/home confidence scale on the card face.
-   Track runs the full width: away team's win prob at the left edge, home
-   team's at the right edge, 50/50 dead center. The market marker (a green
-   checkmark) sits on whichever side is favored; the fill between it and
-   center is colored by how confident that read is. A thin solid line
-   overlays the model's own read, offset at most 10pts from the market. */
+/* Mini model bobber on the open-bet card (_open_bets_section.html) — a
+   single-marker, no-legend version of the old game-card bobber. Still used
+   there even though the game card itself moved to the market chips below;
+   kept minimal (only the classes _open_bets_section.html actually renders:
+   no .eb-model/.eb-legend/.eb-dot/.eb-noodds, those were game-card-only). */
 .eb-wrap {
   margin-top: auto;
   padding: 10px 14px 14px;
@@ -1179,31 +1178,6 @@ body.embed-mode .container { padding-bottom: 0; }
   z-index: 2;
 }
 .eb-marker.eb-market { color: #0B0D12; font-weight: 800; }
-.eb-marker.eb-model { width: 12px; height: 12px; background: var(--blue); z-index: 1; }
-.eb-model-line {
-  display: flex; justify-content: center; align-items: baseline; gap: 6px;
-  margin-top: 2px; font-size: 0.62rem; font-weight: 700;
-}
-.eb-model-line .eb-tag-label { color: var(--blue); text-transform: uppercase; letter-spacing: 0.3px; }
-.eb-model-val { color: var(--silver); }
-.eb-legend {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
-  margin-top: 12px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  line-height: 1.3;
-}
-.eb-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.eb-legend-model { margin-left: auto; }
-.eb-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.eb-dot-model { background: var(--blue); }
-.eb-legend-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
-.eb-legend-model .eb-legend-label { color: var(--blue); }
-.eb-legend-val { color: var(--silver); }
-.eb-legend-sub { color: var(--text-muted); font-weight: 600; }
 .eb-tags {
   position: relative;
   height: 26px;
@@ -1224,16 +1198,102 @@ body.embed-mode .container { padding-bottom: 0; }
 .eb-tag .eb-tag-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .eb-tag.eb-tag-market .eb-tag-val { color: var(--silver); }
 .eb-tag-val .eb-tag-pct { color: var(--text-muted); font-weight: 600; }
-.eb-noodds {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 2px 4px;
+
+/* Market chips — ML / Spread / Total, replacing the old single-ML
+   "confidence bobber" on the game card itself (not the open-bet card
+   above, which keeps its own simpler .eb-wrap bobber). Deliberately quiet:
+   no glow/gradient/tag, small regular-weight numbers, thin grey pips. Edge
+   >= MC_HOT (3pts, set in _market_chips.html) gets only a soft green
+   number/border/pip tint — "this one differs from market", not "bet this"
+   (the header ★ owns that). Tap "Market vs model" to expand the table. */
+.mc-wrap {
+  margin-top: auto;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--border);
+  --mc-market: #e8b400;
+  --mc-model: var(--blue);
+  --mc-edge: var(--win);
+  --mc-edge-bg: rgba(34,197,94,0.14);
+  --mc-neutral-bg: rgba(148,163,184,0.12);
 }
-.eb-noodds .eb-marker { position: static; transform: none; }
-.eb-noodds .eb-market-noodds { background: #fff; }
-.eb-noodds-text { font-size: 0.68rem; color: var(--text-muted); }
-.eb-noodds-text b { color: var(--text); }
+.mc-chips { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.mc-chip {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 6px 9px;
+}
+/* Tappable = has a real bet behind it (jumps to the slip/new-bet form).
+   Chips with no line posted stay static — nothing to tap through to. */
+.mc-chip.mc-tappable { cursor: pointer; transition: border-color 0.12s, background-color 0.12s; }
+.mc-chip.mc-tappable:active { background: var(--bg-card); }
+.mc-chip.mc-tappable:hover { border-color: var(--border-strong); }
+.mc-chip .mc-t { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--text-muted); }
+.mc-chip .mc-big { font-size: 20px; font-weight: 650; line-height: 1; margin-top: 6px; font-variant-numeric: tabular-nums; color: var(--text); letter-spacing: -0.01em; }
+.mc-chip .mc-big.mc-big-plain { font-weight: 600; }
+.mc-chip .mc-big.mc-dash { color: var(--text-muted); font-weight: 500; }
+.mc-chip .mc-side { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-muted); margin-top: 4px; }
+.mc-chip .mc-side-muted { color: var(--text-muted); opacity: 0.75; }
+.mc-chip .mc-nomodel { margin-top: 2px; font-size: 9.5px; }
+.mc-pips { display: flex; gap: 3px; margin-top: 8px; }
+.mc-pips i { width: 9px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.06); display: block; }
+.mc-pips i.on { background: #586579; }
+.mc-chip .mc-foot { margin-top: 8px; font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mc-chip .mc-foot b { font-weight: 650; }
+.mc-chip .mc-foot .mc-a { color: var(--mc-market); }
+.mc-chip .mc-foot .mc-b { color: var(--mc-model); }
+.mc-chip .mc-foot .mc-ar { color: var(--text-muted); margin: 0 2px; }
+
+.mc-chip.mc-hot { border-color: rgba(34,197,94,0.32); }
+.mc-chip.mc-hot .mc-big { color: #5ed6a1; }
+.mc-chip.mc-hot .mc-pips i.on { background: #3aa676; }
+.mc-chip-marketonly .mc-side { color: var(--text-muted); }
+
+/* ---------- expanded table ---------- */
+.mc-fold { border-top: 1px solid var(--border); margin-top: 10px; }
+.mc-toggle {
+  display: flex; align-items: center; gap: 5px; width: 100%; padding: 9px 2px 2px;
+  color: var(--text-muted); font: 600 11.5px system-ui, sans-serif; cursor: pointer; list-style: none;
+}
+.mc-toggle::-webkit-details-marker { display: none; }
+.mc-toggle::before { content: "▸"; font-size: 0.7rem; }
+.mc-fold[open] .mc-toggle::before { content: "▾"; }
+.mc-toggle:hover { color: var(--text); }
+.mc-table { background: var(--bg-card-2); border-radius: 10px; margin-top: 6px; padding-bottom: 4px; }
+.mc-head, .mc-row { display: grid; grid-template-columns: 58px 1fr 1fr 68px; gap: 8px; padding: 0 12px; align-items: center; }
+.mc-head { padding-top: 10px; padding-bottom: 4px; font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+.mc-head .mc-m::before, .mc-head .mc-o::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.mc-head .mc-m::before { background: var(--mc-market); }
+.mc-head .mc-o::before { background: var(--mc-model); }
+.mc-head .mc-e { text-align: right; }
+.mc-row { padding-top: 9px; padding-bottom: 2px; }
+.mc-track-wrap { padding: 0 12px 10px; border-bottom: 1px solid var(--border); }
+.mc-lbl { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-muted); }
+.mc-val { font-weight: 650; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mc-val.mc-dash { color: var(--text-muted); font-weight: 500; }
+.mc-sub { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mc-val.mc-mkt { color: var(--mc-market); }
+.mc-val.mc-mdl { color: var(--mc-model); }
+.mc-edge {
+  justify-self: end; font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 8px;
+  background: var(--mc-neutral-bg); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* Light tint, not a bright outline — reads as "differs", not "bet this". */
+.mc-edge.mc-hot { background: var(--mc-edge-bg); color: #5ed6a1; }
+.mc-track { position: relative; height: 20px; margin-top: 2px; }
+.mc-track .mc-bar { position: absolute; left: 0; right: 0; top: 9px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; }
+.mc-track .mc-mid { position: absolute; left: 50%; top: 5px; width: 1px; height: 11px; background: var(--border-strong); }
+.mc-track .mc-gap { position: absolute; top: 8px; height: 5px; border-radius: 3px; background: rgba(148,163,184,0.35); }
+.mc-track .mc-gap.mc-hot { background: rgba(34,197,94,0.4); }
+.mc-track .mc-dot { position: absolute; top: 4px; width: 12px; height: 12px; border-radius: 50%; transform: translateX(-50%); }
+.mc-track .mc-dot-m { background: var(--mc-market); box-shadow: 0 0 0 2px var(--bg-card-2); }
+.mc-track .mc-dot-o { background: var(--bg-card-2); border: 2.5px solid var(--mc-model); }
+.mc-ends { display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--text-muted); margin-top: -1px; }
+.mc-legend { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; padding: 8px 12px 10px; font-size: 10.5px; color: var(--text-muted); }
+.mc-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.mc-legend .mc-m::before { background: var(--mc-market); }
+.mc-legend .mc-o::before { border: 2px solid var(--mc-model); }
+.mc-legend .mc-g::before { background: var(--mc-edge); }
 
 /* ── Period/quarter/inning linescore table (details sheet) ── */
 .linescore-wrap {
@@ -1728,7 +1788,6 @@ body.embed-mode .container { padding-bottom: 0; }
 .sb-score-away, .sb-score-home { color: var(--silver); }
 .sb-score-win { color: var(--text); }
 .sb-score-sep { color: var(--border-strong); font-size: 1.4rem; font-weight: 400; }
-.sb-vs { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
 .sb-inning { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
 
 .bet-pair { display: flex; gap: 5px; }

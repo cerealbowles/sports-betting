@@ -35,8 +35,6 @@
         + '<span class="sb-score-sep">–</span>'
         + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (home !== null ? home : '–') + '</span>'
         + '</div>';
-    } else {
-      html += '<div class="sb-vs">vs</div>';
     }
     var ls = info.live_state;
     if (info.status === 'Live' && ls && (ls.down_distance || ls.clock_text)) {

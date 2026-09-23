@@ -210,7 +210,7 @@ function closeDeleteBetModal() {
               + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (hs !== null ? hs : '–') + '</span></div>'
               + (isLive && info.bases ? renderDiamond(info.bases) : '');
           } else {
-            center = '<div class="sb-vs">vs</div>';
+            center = '';
           }
           sb.innerHTML = team('away', info.away_abbr, info.away_logo)
             + '<div class="sb-center">' + center + '</div>'
