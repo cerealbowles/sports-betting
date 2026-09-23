@@ -53,14 +53,30 @@ function bcFlip(el) {
     }, 170);
 }
 
+function bcEdit(el) {
+  var card = el.closest('.bet-card');
+  if (!card || card.classList.contains('bc-flipping')) return;
+  bcFlip(el);
+  setTimeout(function () {
+    var d = card.querySelector('.bc-details');
+    if (d) bdmShow(d.querySelector('.bdm-view'), 'edit');
+  }, 180);
+}
+
+function bcOpenGame(el) {
+  var url = el.getAttribute('data-game-url');
+  if (url) window.location.href = url;
+}
+
 document.addEventListener('click', function (e) {
     var t = e.target.closest('.bc-flip');
-    if (t) bcFlip(t);
+  if (t && t.classList.contains('bc-front-body')) bcOpenGame(t);
 });
 document.addEventListener('keydown', function (e) {
     if ((e.key !== 'Enter' && e.key !== ' ') || !e.target.classList || !e.target.classList.contains('bc-flip')) return;
     e.preventDefault();
-    e.target.click();
+  if (e.target.classList.contains('bc-front-body')) bcOpenGame(e.target);
+  else e.target.click();
 });
 
 function bdmInitClose(d) {

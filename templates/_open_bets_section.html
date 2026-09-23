@@ -69,6 +69,9 @@
 {% if open_bets %}
 <div class="bet-cards-grid">
 {% for b in open_bets %}
+    {% set eb_sport = (b.sport or '') | upper %}
+    {% set eb_schedule_endpoint = 'mlb_schedule' if eb_sport == 'MLB' else ('nba_schedule' if eb_sport == 'NBA' else ('nfl_schedule' if eb_sport == 'NFL' else ('nhl_schedule' if eb_sport == 'NHL' else ('wnba_schedule' if eb_sport == 'WNBA' else ('cfb_schedule' if eb_sport == 'CFB' else none))))) %}
+    {% set eb_game_url = (url_for(eb_schedule_endpoint) ~ '#gc-' ~ b.game_key) if eb_schedule_endpoint and b.game_key else none %}
     <div class="bet-card game-card" data-sport="{{ b.sport or '' }}" id="gc-bet-{{ b.id }}">
       <div class="bc-head bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
         <!-- Header bar — same look as the schedule cards: time (or Live/Final) left, CLV / live win% right -->
@@ -88,7 +91,7 @@
         <div class="scoreboard bc-scoreboard" data-bet-id="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}"></div>
       </div><!-- /.bc-head -->
 
-      <div class="bc-front-body bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
+    <div class="bc-front-body bc-flip" role="button" tabindex="0" data-game-url="{{ eb_game_url or '' }}" aria-label="View game card for {{ b.name }}">
 
         <!-- Model line: selected-side probability track for ML, spread, or O/U. -->
         {% if b.prob is not none %}
@@ -192,6 +195,7 @@
                 {% endif %}
             </div>
         </div>
+                <button type="button" class="small secondary bc-edit-front" onclick="event.stopPropagation(); bcEdit(this)">Edit</button>
 
       </div><!-- /.bc-front-body -->
 
@@ -217,9 +221,9 @@
               </div>
               {% if b.notes %}<div class="bdm-notes">{{ b.notes }}</div>{% endif %}
               <div class="bdm-actions">
-                  <button type="button" class="small secondary" onclick="bdmShow(this, 'edit')">Edit</button>
                   <button type="button" class="small" onclick="bdmShow(this, 'close')">Close Bet</button>
                   <button type="button" class="danger small" onclick="openDeleteBetModal(this)">Delete</button>
+                  <button type="button" class="small secondary bdm-edit-action" onclick="bdmShow(this, 'edit')">Edit</button>
               </div>
               <button type="button" class="secondary small bc-flip-back" onclick="bcFlip(this)">↩ Back to card</button>
           </div>
