@@ -90,27 +90,30 @@
 
       <div class="bc-front-body bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
 
-        <!-- Model line: same bobber track as the schedule cards, pinned to the model's home win prob -->
-        {% if b.bet_side in ('home', 'away') and b.prob is not none %}
-        {% set mh = (b.prob * 100) if b.bet_side == 'home' else (100 - b.prob * 100) %}
-        {% set mfill_left = 50 if mh >= 50 else mh %}
-        {% set mfill_w = (mh - 50) | abs %}
-        {% set mtag = [[mh, 12] | max, 88] | min %}
-        <div class="eb-wrap bc-model-line">
+        <!-- Model line: selected-side probability track for ML, spread, or O/U. -->
+        {% if b.prob is not none %}
+        {% set eb_type = (b.bet_type or 'Moneyline') | lower %}
+        {% set eb_type_class = 'ml' if 'money' in eb_type else ('spread' if 'spread' in eb_type else ('total' if ('over' in eb_type or 'under' in eb_type) else 'other')) %}
+        {% set eb_prob = b.prob * 100 %}
+        {% set eb_pos = [[eb_prob, 8] | max, 92] | min %}
+        {% set eb_fill_left = 50 if eb_pos >= 50 else eb_pos %}
+        {% set eb_fill_w = (eb_pos - 50) | abs %}
+        {% set eb_tag = [[eb_pos, 12] | max, 88] | min %}
+        <div class="eb-wrap bc-model-line eb-market-{{ eb_type_class }}">
             <div class="eb-scale-labels">
-                <span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span>
+                <span>{% if eb_type_class == 'ml' %}<span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span>{% else %}OTHER{% endif %}</span>
                 <span>50%</span>
-                <span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span>
+                <span>{% if eb_type_class == 'ml' %}<span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span>{% else %}{{ b.name | bet_pill_label }}{% endif %}</span>
             </div>
             <div class="eb-track">
-                <div class="eb-fill" style="left:{{ mfill_left }}%; width:{{ mfill_w }}%; background:var(--blue);"></div>
+                <div class="eb-fill" style="left:{{ eb_fill_left }}%; width:{{ eb_fill_w }}%;"></div>
                 <div class="eb-center-tick"></div>
-                <div class="eb-marker eb-market" style="left:{{ mh }}%; background:var(--blue);">✓</div>
+                <div class="eb-marker eb-market" style="left:{{ eb_pos }}%;">✓</div>
             </div>
             <div class="eb-tags">
-                <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ mtag }}%;">
+                <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ eb_tag }}%;">
                     <span class="eb-tag-label">Model</span>
-                    <span class="eb-tag-val"><span class="bc-pick-abbr" data-bet-id="{{ b.id }}">{{ b.bet_side | capitalize }}</span> {{ (b.prob * 100) | round(1) }}%{% if b.book_implied is not none %} <span class="eb-tag-pct">(book {{ b.book_implied }}%)</span>{% endif %}</span>
+                    <span class="eb-tag-val">{{ b.name | bet_pill_label }} {{ eb_prob | round(1) }}%{% if b.book_implied is not none %} <span class="eb-tag-pct">(book {{ b.book_implied }}%)</span>{% endif %}</span>
                 </div>
             </div>
         </div>

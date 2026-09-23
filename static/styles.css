@@ -1150,6 +1150,7 @@ body.embed-mode .container { padding-bottom: 0; }
   top: 0;
   height: 100%;
   border-radius: 3px;
+  background: var(--blue);
 }
 .eb-center-tick {
   position: absolute;
@@ -1177,7 +1178,11 @@ body.embed-mode .container { padding-bottom: 0; }
   line-height: 1;
   z-index: 2;
 }
-.eb-marker.eb-market { color: #0B0D12; font-weight: 800; }
+.eb-marker.eb-market { background: var(--blue); color: #0B0D12; font-weight: 800; }
+.eb-market-spread .eb-fill,
+.eb-market-spread .eb-marker { background: #f5b84b; }
+.eb-market-total .eb-fill,
+.eb-market-total .eb-marker { background: #5ed6a1; }
 .eb-tags {
   position: relative;
   height: 26px;
@@ -1999,6 +2004,7 @@ body.embed-mode .container { padding-bottom: 0; }
   grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
   gap: 10px;
   margin-top: 6px;
+  align-items: start;
 }
 
 .bet-card {
@@ -2009,6 +2015,7 @@ body.embed-mode .container { padding-bottom: 0; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 /* Card flip: turn edge-on, swap front summary <-> manage panel, turn back. */
