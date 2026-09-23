@@ -73,7 +73,12 @@ def _live_clock_map():
     return out
 
 
-def _get_schedule_raw():
+def _get_schedule_raw(target_date=None):
+    """NHL's /schedule/now returns a rolling 'gameWeek' window centered on
+    today; /schedule/{date} returns the same shape but centered on that date
+    instead, so a specific day just needs a different endpoint, not a filter."""
+    if target_date:
+        return _cached_get(f"{NHL_API}/schedule/{target_date}", f'nhl_sched_{target_date}', _TTL['schedule'])
     return _cached_get(f"{NHL_API}/schedule/now", 'nhl_sched_now', _TTL['schedule'])
 
 
@@ -368,10 +373,11 @@ def _get_period_linescore(game_id):
         return None
 
 
-def build_schedule_context():
-    """Returns today's NHL games ready for the template."""
+def build_schedule_context(target_date=None):
+    """Returns target_date's (default today, YYYY-MM-DD ET) NHL games ready
+    for the template."""
     from odds_api import _normalize
-    raw        = _get_schedule_raw()
+    raw        = _get_schedule_raw(target_date)
     standings  = _get_standings_map()
     form, last_game_date = _get_recent_form_map()
     odds_map   = odds_api.get_odds_map('nhl')
@@ -379,7 +385,7 @@ def build_schedule_context():
     if not raw:
         return []
 
-    today_str = _today_et()
+    today_str = target_date or _today_et()
     today_games = []
     for day in raw.get('gameWeek', []):
         if day.get('date') == today_str:
@@ -490,7 +496,7 @@ def build_schedule_context():
         })
 
     try:
-        date_display = datetime.now(_ET).strftime('%a, %b %-d')
+        date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')
     except Exception:
         date_display = today_str
 

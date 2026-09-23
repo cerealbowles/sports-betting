@@ -456,10 +456,12 @@ def get_today_game_count():
     return len([e for e in events if _event_date_et(e.get('date', '')) == today_str])
 
 
-def build_schedule_context():
-    """Returns today's NBA games from ESPN with model predictions. Empty list during offseason."""
-    today_str = _today_et()
-    data = _cached_get(ESPN_NBA, {}, f'nba_{today_str}', _TTL['scoreboard'])
+def build_schedule_context(target_date=None):
+    """Returns target_date's (default today, YYYY-MM-DD ET) NBA games from
+    ESPN with model predictions. Empty list during offseason."""
+    today_str = target_date or _today_et()
+    params = {'dates': today_str.replace('-', '')} if target_date else {}
+    data = _cached_get(ESPN_NBA, params, f'nba_{today_str}', _TTL['scoreboard'])
     if not data:
         return []
 
@@ -479,7 +481,7 @@ def build_schedule_context():
     games = [_build_game(event, team_stats, game_log, nba_odds_map) for event in today_events]
 
     try:
-        date_display = datetime.now(_ET).strftime('%a, %b %-d')
+        date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')
     except Exception:
         date_display = today_str
 

@@ -1035,6 +1035,30 @@ def _et_date(utc_str):
     return ''
 
 
+_DAY_NAV_RANGE = 3  # ±3 days from today, mirrors CFB/NFL's week-nav clamp
+
+def _build_day_nav(offset):
+    """Builds the prev/next day-nav context for the daily-schedule sports
+    (MLB/NHL/NBA/WNBA) — same shape/purpose as cfb_api.build_week_schedule_context's
+    week_ctx, but for a single ET calendar day instead of a week. `offset` is
+    clamped to ±_DAY_NAV_RANGE days from today so browsing can't wander into
+    schedule data these APIs don't reasonably serve."""
+    offset = max(-_DAY_NAV_RANGE, min(_DAY_NAV_RANGE, offset))
+    target = datetime.now(_ET) + timedelta(days=offset)
+    try:
+        date_display = target.strftime('%a, %b %-d')
+    except Exception:
+        date_display = target.strftime('%Y-%m-%d')
+    return {
+        'offset':       offset,
+        'date':         target.strftime('%Y-%m-%d'),
+        'date_display': date_display,
+        'is_today':     offset == 0,
+        'prev_offset':  offset - 1 if offset > -_DAY_NAV_RANGE else None,
+        'next_offset':  offset + 1 if offset < _DAY_NAV_RANGE else None,
+    }
+
+
 FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'WNBA', 'NHL', 'MLB')
 
 
@@ -1445,6 +1469,15 @@ def _as_decimal_odds(odds):
 def _bet_return_filter(bet):
     """Total payout (stake included) for an open bet, tolerant of American odds."""
     return bet.stake * _as_decimal_odds(bet.odds)
+
+
+@app.template_filter('sigmoid_pct')
+def _sigmoid_pct_filter(logit):
+    """Converts a summed logit (sum of a game's factor contributions) into the
+    home win probability that logit implies, as a 0-100 percent — lets the
+    factors panel show what its own displayed factors add up to, independent
+    of any post-hoc market-shrink applied to the model's headline home_prob."""
+    return round(100 / (1 + math.exp(-logit)), 1)
 
 
 @app.template_filter('bet_pill_label')
@@ -2376,7 +2409,8 @@ def _mlb_star_pick(game):
 
 @app.route('/mlb')
 def mlb_schedule():
-  schedule = mlb_api.build_schedule_context()
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = mlb_api.build_schedule_context(target_date=day_nav['date'])
   from odds_api import _normalize
   import odds_history as _oh_mv
   import re as _re
@@ -2672,12 +2706,12 @@ def mlb_schedule():
 
   resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
                          bankroll=bankroll, kelly_cap=kelly_cap,
-                         open_bets=mlb_bets,
+                         open_bets=mlb_bets, day_nav=day_nav,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(mlb_bets)} Open MLB Bet{'s' if len(mlb_bets) != 1 else ''}",
-                         sync_next='/mlb', subnav_sport='MLB'))
+                         sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB'))
   return _set_last_sport_cookie(resp, 'MLB')
 
 _SPORT_META = {
@@ -3626,35 +3660,38 @@ def _edge_recommendations(days, sport, limit=15):
 
 @app.route('/nhl')
 def nhl_schedule():
-  schedule = nhl_api.build_schedule_context()
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
   recommended = _edge_recommendations(schedule, 'NHL')
   resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL',
-                         recommended=recommended))
+                         recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'NHL')
 
 @app.route('/nba')
 def nba_schedule():
-  schedule = nba_api.build_schedule_context()
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
   recommended = _edge_recommendations(schedule, 'NBA')
   resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA',
-                         recommended=recommended))
+                         recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'NBA')
 
 @app.route('/wnba')
 def wnba_schedule():
-  schedule = wnba_api.build_schedule_context()
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
   recommended = _edge_recommendations(schedule, 'WNBA')
   resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA',
-                         recommended=recommended))
+                         recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'WNBA')
 
 @app.route('/nfl')

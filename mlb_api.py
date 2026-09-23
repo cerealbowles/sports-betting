@@ -650,10 +650,11 @@ def get_today_game_count():
     return len(dates[0].get('games', [])) if dates else 0
 
 
-def build_schedule_context():
-    """Returns today's games with full context ready for the template."""
+def build_schedule_context(target_date=None):
+    """Returns target_date's (default today, YYYY-MM-DD ET) games with full
+    context ready for the template."""
     from odds_api import _normalize
-    raw        = _get_schedule_raw()
+    raw        = _get_schedule_raw(date_str=target_date)
     recent, matchups, team_sched, recent_runs_map = _get_recent_data()
     team_era_map = _get_team_era_map()
     splits     = _get_standings_splits()
