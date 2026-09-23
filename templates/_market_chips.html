@@ -30,6 +30,13 @@
 {% set mc_model_home_prob = game.model.final_home_prob if game.model.final_home_prob is defined else game.model.home_prob %}
 {% set MC_HOT = 3.0 %}
 
+{# Confidence is model certainty, separate from market edge. The six bars
+    encode distance from 50% so a large disagreement is not mistaken for
+    confidence in the outcome. #}
+{% set mc_ml_conf = ([mc_model_home_prob, 1 - mc_model_home_prob] | max) * 100 %}
+{% set mc_ml_conf_level = 'high' if mc_ml_conf >= 65 else ('medium' if mc_ml_conf >= 55 else 'low') %}
+{% set mc_ml_conf_pips = 6 if mc_ml_conf >= 75 else (5 if mc_ml_conf >= 68 else (4 if mc_ml_conf >= 62 else (3 if mc_ml_conf >= 58 else (2 if mc_ml_conf >= 54 else 1)))) %}
+
 {# ---------------- Moneyline ---------------- #}
 {% set mc_ml_has = game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
 {% if mc_ml_has %}
@@ -66,6 +73,9 @@
 {% set mc_sp_away_val = -game.odds.home_spread %}
 {% set mc_sp_home_label = mc_home_team ~ ' ' ~ ('+' if mc_sp_home_val > 0) ~ mc_sp_home_val %}
 {% set mc_sp_away_label = mc_away_team ~ ' ' ~ ('+' if mc_sp_away_val > 0) ~ mc_sp_away_val %}
+{% set mc_sp_conf = ([mc_sp_mdl_home, 100 - mc_sp_mdl_home] | max) %}
+{% set mc_sp_conf_level = 'high' if mc_sp_conf >= 65 else ('medium' if mc_sp_conf >= 55 else 'low') %}
+{% set mc_sp_conf_pips = 6 if mc_sp_conf >= 75 else (5 if mc_sp_conf >= 68 else (4 if mc_sp_conf >= 62 else (3 if mc_sp_conf >= 58 else (2 if mc_sp_conf >= 54 else 1)))) %}
 {% if mc_sp_edge >= 0 %}
 {% set mc_sp_side = mc_sp_home_label %}
 {% set mc_sp_pts = mc_sp_edge %}
@@ -102,6 +112,9 @@
 
 {% if mc_tot_ok %}
 {% set mc_tot_model_over_pct = mc_tot_model_over_raw * 100 %}
+{% set mc_tot_conf = ([mc_tot_model_over_pct, 100 - mc_tot_model_over_pct] | max) %}
+{% set mc_tot_conf_level = 'high' if mc_tot_conf >= 65 else ('medium' if mc_tot_conf >= 55 else 'low') %}
+{% set mc_tot_conf_pips = 6 if mc_tot_conf >= 75 else (5 if mc_tot_conf >= 68 else (4 if mc_tot_conf >= 62 else (3 if mc_tot_conf >= 58 else (2 if mc_tot_conf >= 54 else 1)))) %}
 {% set mc_tot_edge = mc_tot_model_over_pct - mc_tot_over_pct %}
 {% if mc_tot_edge >= 0 %}
 {% set mc_tot_side_over = true %}
@@ -131,12 +144,12 @@
     <div class="mc-chips">
         {# ML — jumps straight to the inline bet slip with the edge side
            pre-selected, same as tapping a ★ recommended pick elsewhere. #}
-        <div class="mc-chip{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}"{% if mc_ml_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_ml_side == mc_home_team else 'away' }}')"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_ml_side == mc_home_team else 'away' }}')"{% endif %}>
             <span class="mc-t">ML</span>
             {% if mc_ml_has %}
             <span class="mc-big">{{ '+' if mc_ml_pts >= 0 }}{{ mc_ml_pts | round(1) }}</span>
             <span class="mc-side">{{ mc_ml_side }}</span>
-            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_ml_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_ml_conf_pips }}"></i>{% endfor %}</span>
             <span class="mc-foot"><b class="mc-a">{{ mc_ml_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_ml_mdl_pct | round(1) }}%</b></span>
             {% else %}
             <span class="mc-big mc-dash">—</span>
@@ -146,12 +159,12 @@
         {# Spread — no inline slip exists for this bet type (only ML has
            one), so this opens the full /new-bet page pre-filled, same as
            the existing Spread link in the details sheet always has. #}
-        <div class="mc-chip{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); window.location.href='{{ mc_sp_bet_url }}'"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); window.location.href='{{ mc_sp_bet_url }}'"{% endif %}>
             <span class="mc-t">SPREAD</span>
             {% if mc_sp_has and mc_sp_ok %}
             <span class="mc-big">{{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
             <span class="mc-side">{{ mc_sp_side }}</span>
-            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_sp_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_sp_conf_pips }}"></i>{% endfor %}</span>
             <span class="mc-foot"><b class="mc-a">{{ mc_sp_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_sp_mdl_pct | round(1) }}%</b></span>
             {% else %}
             <span class="mc-big mc-dash">—</span>
@@ -161,12 +174,12 @@
         {# Total — real pace-adjusted model on NBA/WNBA (bball_total_model.py);
            every other sport stays market-only, tap target following
            whichever side the market itself currently favors. #}
-        <div class="mc-chip{{ ' mc-hot' if mc_tot_ok and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}"{% if mc_tot_has %} onclick="event.stopPropagation(); window.location.href='{{ mc_tot_bet_url }}'"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}Model confidence: {{ mc_tot_conf | round(1) }}%{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); window.location.href='{{ mc_tot_bet_url }}'"{% endif %}>
             <span class="mc-t">TOTAL</span>
             {% if mc_tot_ok %}
             <span class="mc-big">{{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
             <span class="mc-side">{{ 'Over' if mc_tot_side_over else 'Under' }} {{ game.odds.total_line }}</span>
-            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_pts | round(0) | int }}"></i>{% endfor %}</span>
+            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_conf_pips }}"></i>{% endfor %}</span>
             <span class="mc-foot"><b class="mc-a">{{ mc_tot_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ mc_tot_mdl_pct | round(1) }}%</b></span>
             {% elif mc_tot_has %}
             <span class="mc-big mc-big-plain">{{ game.odds.total_line }}</span>
