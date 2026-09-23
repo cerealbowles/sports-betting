@@ -1,12 +1,8 @@
 {# Shared recommendations list for every sport except MLB (which has its own
-   Trust Score table). Expects `recommended` (from _edge_recommendations) and
-   `rec_title` ("Today's Recommendations" / "Weekly Recommendations"). #}
+   Trust Score table). Expects `recommended` (from _edge_recommendations). #}
 <details class="card rec-details" style="margin-bottom:14px;">
   <summary class="rec-summary">
-    <div class="section-header" style="margin-bottom:0;">
-      <h2>{{ rec_title }}</h2>
-      <span class="small">sorted by model edge · only games with a ★ recommendation, top 15</span>
-    </div>
+    <h2>Recommendations</h2>
   </summary>
   {% if not recommended %}
   <p style="color:var(--text-muted);font-size:0.8rem;margin:10px 0 0;">No positive-edge picks on the board right now — every upcoming game is priced at or above the model's fair value.</p>
