@@ -1,0 +1,29 @@
+{# Shared day-by-day nav header for the daily-schedule sports (MLB/NHL/NBA/WNBA)
+   — same look and prev/next-with-disabled-ends pattern as CFB/NFL's week-nav,
+   but stepping a single ET calendar day at a time instead of a week.
+
+   Expected context variables:
+     day_nav      – dict from app.py's _build_day_nav(): offset, date,
+                    date_display, is_today, prev_offset, next_offset
+     nav_endpoint – the url_for() endpoint name for this sport's schedule
+                    route (e.g. 'mlb_schedule'), set by the including page
+#}
+<div class="week-nav-header">
+    {% if day_nav.prev_offset is not none %}
+    <a href="{{ url_for(nav_endpoint, offset=day_nav.prev_offset) }}" class="week-nav-btn">◂ {{ 'Yesterday' if day_nav.prev_offset == -1 else 'Prev' }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        {{ day_nav.date_display }}
+        {% if day_nav.is_today %}<span class="week-current-badge">Today</span>{% endif %}
+    </div>
+    {% if day_nav.next_offset is not none %}
+    <a href="{{ url_for(nav_endpoint, offset=day_nav.next_offset) }}" class="week-nav-btn">{{ 'Tomorrow' if day_nav.next_offset == 1 else 'Next' }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+{% if not day_nav.is_today %}
+<div style="margin-bottom:14px;"><a href="{{ url_for(nav_endpoint) }}" class="refresh-link">Jump to today</a></div>
+{% endif %}

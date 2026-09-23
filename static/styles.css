@@ -686,7 +686,7 @@ body.embed-mode .container { padding-bottom: 0; }
   position: absolute;
   top: 6px;
   right: 6px;
-  z-index: 2;
+  z-index: 20;
   background: transparent;
   color: var(--text-muted);
   border: none;
@@ -1431,6 +1431,20 @@ body.embed-mode .container { padding-bottom: 0; }
 .fd-val-pos { color: var(--win); }
 .fd-val-neg { color: var(--loss); }
 
+/* ── Combined-factors total row — same diverging-bar language as the
+     per-factor rows above it, set apart by a divider so it reads as the
+     sum rather than one more input. ── */
+.factor-total-row {
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-strong);
+}
+.factor-total-row .fd-label-name { color: var(--text); font-weight: 800; }
+.fd-marker-wide {
+  width: auto; min-width: 28px; padding: 0 6px; border-radius: 8px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.2px;
+}
+.factor-total-row .fd-val { font-size: 0.8rem; }
+
 /* ── Inline bet slip — replaces navigating to /new-bet for Moneyline bets
      on CFB/NFL cards. Sits at the bottom of .game-card-details, below the
      bet-type chips, and slides open in place when a chip is tapped. ── */
@@ -1909,7 +1923,20 @@ body.embed-mode .container { padding-bottom: 0; }
 .bet-card { transition: transform 0.17s ease-in; transform: perspective(900px) rotateY(0); }
 .bet-card.bc-flipping { transform: perspective(900px) rotateY(90deg); }
 .bc-flip { cursor: pointer; }
-.bc-scoreboard { grid-template-columns: 1fr auto 1fr; }
+/* Always a single away/center/home row, regardless of viewport — overrides
+   the schedule card's @media(max-width:700px) 2-row "away home"/"center
+   center" grid (built for its longer name+record+conference team info),
+   which otherwise leaves this abbreviation-only scoreboard with a mismatched
+   3-column/2-column track count: an orphaned empty column pushes the home
+   team off-center with a big gap (the bug reported against this layout). */
+.bc-scoreboard {
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto;
+  grid-template-areas: none;
+}
+.bc-scoreboard .sb-team.sb-away,
+.bc-scoreboard .sb-team.sb-home { grid-area: auto; }
+.bc-scoreboard .sb-center { border-top: none; padding: 0; }
 .bc-scoreboard:empty { min-height: 96px; }
 .bc-scoreboard .sb-score { font-size: 1.9rem; }
 .sb-name.is-bet { color: var(--blue); }
