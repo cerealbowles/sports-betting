@@ -93,32 +93,48 @@
 
     <div class="bc-front-body bc-flip" role="button" tabindex="0" data-game-url="{{ eb_game_url or '' }}" aria-label="View game card for {{ b.name }}">
 
-        <!-- Model line: selected-side probability track for ML, spread, or O/U. -->
+        <!-- Market-vs-model row: same mc-row/mc-track-wrap look as the schedule
+             card's "Market vs model" fold (_market_chips.html), just one row —
+             the one matching this bet's own type — instead of the old
+             single-marker eb-track slider, so the bet-type (ML/Spread/Total)
+             reads at a glance from the shape, not just a text label. #}
         {% if b.prob is not none %}
         {% set eb_type = (b.bet_type or 'Moneyline') | lower %}
         {% set eb_type_class = 'ml' if 'money' in eb_type else ('spread' if 'spread' in eb_type else ('total' if ('over' in eb_type or 'under' in eb_type) else 'other')) %}
-        {% set eb_prob = b.prob * 100 %}
-        {% set eb_pos = [[eb_prob, 8] | max, 92] | min %}
-        {% set eb_fill_left = 50 if eb_pos >= 50 else eb_pos %}
-        {% set eb_fill_w = (eb_pos - 50) | abs %}
-        {% set eb_tag = [[eb_pos, 12] | max, 88] | min %}
-        <div class="eb-wrap bc-model-line eb-market-{{ eb_type_class }}">
-            <div class="eb-scale-labels">
-                <span>{% if eb_type_class == 'ml' %}<span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span>{% else %}OTHER{% endif %}</span>
-                <span>50%</span>
-                <span>{% if eb_type_class == 'ml' %}<span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span>{% else %}{{ b.name | bet_pill_label }}{% endif %}</span>
+        {% set eb_mkt_pct = b.book_implied if b.book_implied is not none else 0 %}
+        {% set eb_mdl_pct = b.prob * 100 %}
+        {% set eb_edge = b.edge_pct if b.edge_pct is not none else (eb_mdl_pct - eb_mkt_pct) %}
+        {% set eb_pill = b.name | bet_pill_label %}
+        {% set eb_lo = ([chip_track_pos(eb_mkt_pct), chip_track_pos(eb_mdl_pct)] | min) %}
+        {% set eb_hi = ([chip_track_pos(eb_mkt_pct), chip_track_pos(eb_mdl_pct)] | max) %}
+        {% set eb_hot = eb_edge is not none and eb_edge | abs >= 3.0 %}
+        <div class="mc-table eb-typerow">
+            <div class="mc-row">
+                <span class="mc-lbl">{{ 'ML' if eb_type_class == 'ml' else ('SPREAD' if eb_type_class == 'spread' else ('TOTAL' if eb_type_class == 'total' else 'BET')) }}</span>
+                {% if eb_type_class == 'total' %}
+                <div><div class="mc-val mc-mkt">{{ eb_pill.split(' ')[-1] }}</div><div class="mc-sub">{{ eb_mkt_pct | round(1) }}% {{ 'over' if eb_pill.startswith('O') else 'under' }}</div></div>
+                {% else %}
+                <div><div class="mc-val mc-mkt">{% if b.original_american is not none %}{{ '+' if b.original_american > 0 }}{{ b.original_american }}{% else %}{{ eb_pill }}{% endif %}</div><div class="mc-sub">{{ eb_mkt_pct | round(1) }}% implied</div></div>
+                {% endif %}
+                <div><div class="mc-val mc-mdl">{{ eb_mdl_pct | round(1) }}%</div><div class="mc-sub">{{ 'cover (proxy)' if eb_type_class == 'spread' else 'model' }}</div></div>
+                <span class="mc-edge{{ ' mc-hot' if eb_hot }}">{{ eb_pill.split(' ')[0] }} {{ '+' if eb_edge >= 0 }}{{ eb_edge | round(1) }}</span>
             </div>
-            <div class="eb-track">
-                <div class="eb-fill" style="left:{{ eb_fill_left }}%; width:{{ eb_fill_w }}%;"></div>
-                <div class="eb-center-tick"></div>
-                <div class="eb-marker eb-market" style="left:{{ eb_pos }}%;">✓</div>
-            </div>
-            <div class="eb-tags">
-                <div class="eb-tag eb-tag-market eb-tag-center" style="left:{{ eb_tag }}%;">
-                    <span class="eb-tag-label">Model</span>
-                    <span class="eb-tag-val">{{ b.name | bet_pill_label }} {{ eb_prob | round(1) }}%{% if b.book_implied is not none %} <span class="eb-tag-pct">(book {{ b.book_implied }}%)</span>{% endif %}</span>
+            <div class="mc-track-wrap">
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    <div class="mc-gap{{ ' mc-hot' if eb_hot }}" style="left:{{ eb_lo }}%;width:{{ eb_hi - eb_lo }}%"></div>
+                    <div class="mc-dot mc-dot-m" style="left:{{ chip_track_pos(eb_mkt_pct) }}%"></div>
+                    <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(eb_mdl_pct) }}%"></div>
+                </div>
+                <div class="mc-ends">
+                    {% if eb_type_class == 'total' %}
+                    <span>UNDER</span><span>OVER</span>
+                    {% else %}
+                    <span><span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span></span>
+                    <span><span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span></span>
+                    {% endif %}
                 </div>
             </div>
+            <div class="mc-legend"><span class="mc-m">Market (no-vig)</span><span class="mc-o">Model</span><span class="mc-g">Edge ≥ 3.0 pts</span></div>
         </div>
         {% endif %}
 
@@ -194,8 +210,8 @@
                 </span>
                 {% endif %}
             </div>
+            <button type="button" class="small secondary bc-edit-front" onclick="event.stopPropagation(); bcEdit(this)">Edit</button>
         </div>
-                <button type="button" class="small secondary bc-edit-front" onclick="event.stopPropagation(); bcEdit(this)">Edit</button>
 
       </div><!-- /.bc-front-body -->
 
