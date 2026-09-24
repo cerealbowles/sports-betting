@@ -1765,7 +1765,7 @@ body.embed-mode .container { padding-bottom: 0; }
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 18px;
-    align-items: stretch;
+    align-items: start;
 }
 /* Card bg (--bg-card) and page bg (--bg) are close in value, so the grid
    gap alone barely reads as separation — a visible border makes each card
