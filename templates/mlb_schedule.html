@@ -268,11 +268,6 @@
 {# build bet URLs once as variables for cleanliness #}
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_away_prob if game.model.adj_away_prob else game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
 {% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbr + ' ML') | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% if game.rec %}&unf_rank={{ game.rec.rank }}{% endif %}&next=/mlb{% endset %}
-{% if game.odds and game.odds.total_line %}
-{% set over_url %}{{ url_for('new_bet') }}?name={{ ('Over ' + game.odds.total_line|string) | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.over_odds %}&odds={{ game.odds.over_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&next=/mlb{% endset %}
-{% set under_url %}{{ url_for('new_bet') }}?name={{ ('Under ' + game.odds.total_line|string) | urlencode }}&sport=MLB&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.under_odds %}&odds={{ game.odds.under_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&next=/mlb{% endset %}
-{% endif %}
-
 <div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
 
     <!-- ── Simplified, always-visible summary — tap to open full stats ── -->

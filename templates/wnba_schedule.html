@@ -44,11 +44,6 @@
 
 {% set bet_away_url %}{{ url_for('new_bet') }}?name={{ (game.away.abbrev + ' ML') | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.away_best }}&implied={{ game.odds.away_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.away_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=away{% endset %}
 {% set bet_home_url %}{{ url_for('new_bet') }}?name={{ (game.home.abbrev + ' ML') | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}{% if game.odds %}&odds={{ game.odds.home_best }}&implied={{ game.odds.home_implied }}{% endif %}{% if game.model %}&model_prob={{ game.model.home_prob }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}&bet_side=home{% endset %}
-{% if game.odds and game.odds.total_line %}
-{% set over_url %}{{ url_for('new_bet') }}?name={{ ('Over ' + game.odds.total_line|string) | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.over_odds %}&odds={{ game.odds.over_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
-{% set under_url %}{{ url_for('new_bet') }}?name={{ ('Under ' + game.odds.total_line|string) | urlencode }}&sport=WNBA&eventstartutc={{ game.game_time_utc | urlencode }}&bet_type=Over%2FUnder{% if game.odds.under_odds %}&odds={{ game.odds.under_odds }}{% endif %}&home_name={{ game.home.name | urlencode }}&away_name={{ game.away.name | urlencode }}{% endset %}
-{% endif %}
-
 <div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;">
 
     <!-- ── Simplified, always-visible summary — tap to open full stats ── -->
@@ -299,7 +294,7 @@
                 <span class="bet-type-label">Over/Under</span>
                 <div class="bet-type-chips">
                     <button type="button" class="btn-bet-team"
-                            data-name="Over {{ game.odds.total_line }}" data-sub="{{ game.away.abbr }} @ {{ game.home.abbr }}"
+                            data-name="Over {{ game.odds.total_line }}" data-sub="{{ game.away.abbrev }} @ {{ game.home.abbrev }}"
                             data-odds="{{ game.odds.over_odds or '' }}" data-odds-display="{{ '+' if game.odds.over_odds and game.odds.over_odds > 0 }}{{ game.odds.over_odds or '' }}"
                             data-sport="WNBA" data-bet-type="Over/Under"
                             data-eventstartutc="{{ game.game_time_utc }}"
@@ -307,7 +302,7 @@
                             data-game-key="{{ game.game_key }}"
                             onclick="openBetSlip(this)">O {{ game.odds.total_line }}</button>
                     <button type="button" class="btn-bet-team"
-                            data-name="Under {{ game.odds.total_line }}" data-sub="{{ game.away.abbr }} @ {{ game.home.abbr }}"
+                            data-name="Under {{ game.odds.total_line }}" data-sub="{{ game.away.abbrev }} @ {{ game.home.abbrev }}"
                             data-odds="{{ game.odds.under_odds or '' }}" data-odds-display="{{ '+' if game.odds.under_odds and game.odds.under_odds > 0 }}{{ game.odds.under_odds or '' }}"
                             data-sport="WNBA" data-bet-type="Over/Under"
                             data-eventstartutc="{{ game.game_time_utc }}"
