@@ -139,9 +139,10 @@
 
 <div class="mc-wrap">
     <div class="mc-chips">
-        {# ML — jumps straight to the inline bet slip with the edge side
-           pre-selected, same as tapping a ★ recommended pick elsewhere. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_ml_side == mc_home_team else 'away' }}')"{% endif %}>
+        {# ML — surfaces the "Model Factors" panel behind this number instead
+           of jumping straight to the bet slip (the bet is still one tap
+           away from there, once you've seen why the model says what it says). #}
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
             <span class="mc-t">ML</span>
             {% if mc_ml_has %}
             <span class="mc-big">{{ '+' if mc_ml_pts >= 0 }}{{ mc_ml_pts | round(1) }}</span>
@@ -153,10 +154,10 @@
             <span class="mc-side mc-side-muted">no line</span>
             {% endif %}
         </div>
-        {# Spread — opens the inline .bet-slip (same as ML) via the Spread
-           btn-bet-team rendered by _spread_bet_row.html in the details
-           sheet, instead of navigating to the old /new-bet page. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this proxy hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_sp_edge >= 0 else 'away' }}', 'Spread')"{% endif %}>
+        {# Spread — surfaces the same "Model Factors" panel as ML, since the
+           spread proxy is derived straight from that win-probability model
+           (spread_proxy.py), not a separately-trained model of its own. #}
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this proxy hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
             <span class="mc-t">SPREAD</span>
             {% if mc_sp_has and mc_sp_ok %}
             <span class="mc-big">{{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
@@ -170,10 +171,10 @@
         </div>
         {# Total — real pace-adjusted model on NBA/WNBA (bball_total_model.py);
            every other sport stays market-only, tap target following
-           whichever side the market itself currently favors. Opens the
-           inline .bet-slip via the existing Over/Under btn-bet-team in the
-           details sheet instead of navigating to the old /new-bet page. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'over' if mc_tot_side_over else 'under' }}', 'Over/Under')"{% endif %}>
+           whichever side the market itself currently favors. Surfaces its
+           own "Total Model" panel (_total_factors.html) — totals don't
+           share the ML win-prob model's factor list. #}
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
             <span class="mc-t">TOTAL</span>
             {% if mc_tot_ok %}
             <span class="mc-big">{{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>

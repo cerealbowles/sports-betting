@@ -209,7 +209,7 @@
                it's still one tap away, but doesn't push the boxscore down.
                Pregame (or if ESPN hasn't posted a boxscore yet) it stays
                expanded via the `open` attribute, same as before. #}
-            <details class="factors-collapsible"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
+            <details class="factors-collapsible" id="factors-{{ game.game_key }}"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
                 <summary class="factors-collapsible-summary">Model Factors</summary>
                 <div class="factors-panel">
                     <div class="factors-header">
@@ -267,6 +267,7 @@
             </details>
             {% endif %}
             {% endif %}
+            {% include "_total_factors.html" %}
 
             {% if game.status in ('Live', 'Final') and game.team_stats %}
             <div class="team-stats-panel">

@@ -115,4 +115,6 @@ def predict_total(home_runs_pg, home_pitcher, away_runs_pg, away_pitcher,
         'total_projection': round(intercept + coef * raw_proj, 2),
         'home_pitching_era': round(home_pitching, 2),
         'away_pitching_era': round(away_pitching, 2),
+        'home_offense': round(home_offense, 2),
+        'away_offense': round(away_offense, 2),
     }

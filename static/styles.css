@@ -1401,6 +1401,18 @@ body.embed-mode .container { padding-bottom: 0; }
   font-size: 0.67rem; color: var(--text-muted);
   letter-spacing: 0.3px; text-transform: uppercase;
 }
+
+/* Total-model breakdown (_total_factors.html) — plain label:value rows
+   instead of the signed-contribution diverging-bar chart above, since
+   predict_total() only returns scalar components, not a logit-style
+   factor list. */
+.total-factor-rows { display: flex; flex-direction: column; gap: 6px; }
+.total-factor-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.78rem; padding: 3px 0;
+}
+.total-factor-label { color: var(--text-muted); }
+.total-factor-val { font-weight: 700; font-variant-numeric: tabular-nums; }
 .fd-side-label {
   font-size: 0.62rem; font-weight: 700; letter-spacing: 0.4px;
   color: var(--text-muted);

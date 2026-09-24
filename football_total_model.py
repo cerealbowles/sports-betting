@@ -103,4 +103,8 @@ def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg,
     return {
         'total_projection': round(total_projection, 1),
         'pace':              round(game_pace, 1),
+        'home_ortg':         round(home_ortg, 1),
+        'away_ortg':         round(away_ortg, 1),
+        'home_drtg':         round(home_drtg, 1),
+        'away_drtg':         round(away_drtg, 1),
     }

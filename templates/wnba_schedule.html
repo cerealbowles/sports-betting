@@ -193,7 +193,7 @@
         {% set ns = namespace(max_abs=0.01) %}
         {% for label, contrib in displayed %}{% if contrib | abs > ns.max_abs %}{% set ns.max_abs = contrib | abs %}{% endif %}{% endfor %}
         {% set pick_is_away = game.model.away_prob >= game.model.home_prob %}
-        <details class="factors-collapsible"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
+        <details class="factors-collapsible" id="factors-{{ game.game_key }}"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
             <summary class="factors-collapsible-summary">Model Factors</summary>
             <div class="factors-panel">
                 <div class="factors-header">
@@ -251,6 +251,7 @@
         </details>
         {% endif %}
         {% endif %}
+        {% include "_total_factors.html" %}
 
         </div>
         {% endif %}

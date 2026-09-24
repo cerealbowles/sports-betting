@@ -1,0 +1,40 @@
+{# Total-model breakdown — the TOTAL chip's equivalent of the ML/Spread
+   "Model Factors" panel above. Totals don't have a signed-contribution
+   factor list like the win-prob model does (predict_total() in each
+   *_total_model.py just returns a handful of scalar components), so this
+   is a plain label:value readout of whatever components that sport's
+   model exposes, rather than forcing them into the diverging-bar chart
+   built for signed logit contributions.
+
+   Expects `game` in context, with `game.total_model` set by the sport
+   API module's game-dict builder whenever predict_total() found the
+   inputs it needs. Renders nothing if that's absent (no total model for
+   this sport/matchup). #}
+{% if game.total_model %}
+{% set total_rows = total_component_rows(game.total_model) %}
+<details class="factors-collapsible total-factors-collapsible" id="total-factors-{{ game.game_key }}">
+    <summary class="factors-collapsible-summary">Total Model</summary>
+    <div class="factors-panel">
+        <div class="factors-header">
+            <span class="factors-title">
+                {{ game.total_model.total_projection }} proj
+                {%- if game.odds and game.odds.total_line is not none %} vs {{ game.odds.total_line }} line{% endif %}
+            </span>
+        </div>
+        {% if total_rows %}
+        <div class="total-factor-rows">
+            {% for label, val in total_rows %}
+            <div class="total-factor-row">
+                <span class="total-factor-label">{{ label }}</span>
+                <span class="total-factor-val">{{ val }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="total-factor-rows">
+            <div class="small" style="padding:8px 14px;color:var(--text-muted);">No component breakdown for this sport's total model yet — just the final projection above.</div>
+        </div>
+        {% endif %}
+    </div>
+</details>
+{% endif %}

@@ -40,4 +40,8 @@ def predict_total(home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg):
     raw_proj = home_exp + away_exp
 
     intercept, coef, _ = CALIBRATION['NHL']
-    return {'total_projection': round(intercept + coef * raw_proj, 2)}
+    return {
+        'total_projection':     round(intercept + coef * raw_proj, 2),
+        'home_expected_goals':  round(home_exp, 2),
+        'away_expected_goals':  round(away_exp, 2),
+    }

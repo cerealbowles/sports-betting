@@ -1680,6 +1680,36 @@ def _chip_track_pos(pct):
 app.jinja_env.globals['chip_track_pos'] = _chip_track_pos
 
 
+_TOTAL_FIELD_LABELS = {
+    'pace':                'Pace (est. possessions/game)',
+    'home_pitching_era':   'Home pitching ERA (blended)',
+    'away_pitching_era':   'Away pitching ERA (blended)',
+    'home_offense':        'Home offense (RPG, recency-blended)',
+    'away_offense':        'Away offense (RPG, recency-blended)',
+    'home_ortg':           'Home offensive rating',
+    'away_ortg':           'Away offensive rating',
+    'home_drtg':           'Home defensive rating',
+    'away_drtg':           'Away defensive rating',
+    'home_expected_goals': 'Home expected goals',
+    'away_expected_goals': 'Away expected goals',
+}
+
+
+def _total_component_rows(total_model):
+    """(label, value) pairs for every component predict_total() returned
+    besides the final projection itself — see _total_factors.html, the
+    TOTAL chip's equivalent of the ML/Spread "Model Factors" panel."""
+    if not total_model:
+        return []
+    return [
+        (_TOTAL_FIELD_LABELS.get(k, k), v)
+        for k, v in total_model.items() if k != 'total_projection'
+    ]
+
+
+app.jinja_env.globals['total_component_rows'] = _total_component_rows
+
+
 @app.template_filter('bet_pill_label')
 def _bet_pill_label_filter(name):
     """Compact bet selection for the game-card pill: 'SEA Moneyline' -> 'SEA ML',
