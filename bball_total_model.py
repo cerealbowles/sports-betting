@@ -40,6 +40,16 @@ CALIBRATION = {
     'WNBA': (-194.4991, 2.190909, 15.646),
 }
 
+# Approximate modern-era league-average pace (possessions/game) and rating
+# (points per 100 possessions) — the baseline factor_breakdown() below
+# measures each game's inputs against. Reference figures, not fit from this
+# app's own data (same spirit as mlb_total_model.LEAGUE_BP_ERA); refine if
+# a season's actual averages drift from these.
+LEAGUE_AVG = {
+    'NBA':  {'pace': 99.5, 'rating': 114.0},
+    'WNBA': {'pace': 83.0, 'rating': 100.0},
+}
+
 _BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 _cache = {}
 _TTL = 6 * 3600  # pace components are season aggregates — move slowly, cache long
@@ -123,4 +133,68 @@ def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg,
         'away_ortg':         round(away_ortg, 1),
         'home_drtg':         round(home_drtg, 1),
         'away_drtg':         round(away_drtg, 1),
+    }
+
+
+def factor_breakdown(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed):
+    """Splits predict_total()'s raw_proj = pace * ratings_sum / 200 into
+    signed per-input contributions, for the Total Model diverging-bar
+    panel — same chart the ML Model Factors panel uses.
+
+    Unlike the additive MLB/NHL total models, raw_proj is bilinear in pace
+    and ratings_sum (pace multiplies the ratings, it doesn't add to them),
+    so a per-input split isn't as simple as "coefficient times deviation".
+    This uses the exact algebraic identity for a product of two deviations:
+
+        P*R = P0*R0 + R0*(P-P0) + P0*(R-R0) + (P-P0)*(R-R0)
+
+    where P0/R0 are the league-average pace/ratings-sum baseline. The first
+    term is baseline raw_proj, the next two are each input's contribution
+    holding the other at its average, and the last is an explicit
+    "Interaction" row — not an approximation error being hidden, an exact
+    piece of the identity, usually small but shown rather than dropped.
+    baseline + sum(contribs) == predict_total(...)['total_projection']
+    exactly (up to rounding).
+    """
+    avg = LEAGUE_AVG.get(sport)
+    if not avg or sport not in CALIBRATION:
+        return None
+    if None in (home_ppg, home_ppg_allowed, away_ppg, away_ppg_allowed):
+        return None
+
+    home_pace_c = _fetch_pace_components(sport, home_id)
+    away_pace_c = _fetch_pace_components(sport, away_id)
+    if not home_pace_c or not away_pace_c:
+        return None
+    home_pace = _possessions(home_pace_c)
+    away_pace = _possessions(away_pace_c)
+    if home_pace <= 0 or away_pace <= 0:
+        return None
+
+    game_pace = (home_pace + away_pace) / 2
+    home_ortg = home_ppg / home_pace * 100
+    home_drtg = home_ppg_allowed / home_pace * 100
+    away_ortg = away_ppg / away_pace * 100
+    away_drtg = away_ppg_allowed / away_pace * 100
+    ratings_sum = home_ortg + away_drtg + away_ortg + home_drtg
+
+    intercept, coef, _ = CALIBRATION[sport]
+    pace0 = avg['pace']
+    ratings0 = 4 * avg['rating']  # 4 rating terms, each averaging to LEAGUE_AVG['rating']
+    k = coef / 200.0
+
+    pace_dev = game_pace - pace0
+    ratings_dev = ratings_sum - ratings0
+    contribs = [
+        ('Pace', k * ratings0 * pace_dev),
+        ('Home Off. Rating', k * pace0 * (home_ortg - avg['rating'])),
+        ('Away Def. Rating', k * pace0 * (away_drtg - avg['rating'])),
+        ('Away Off. Rating', k * pace0 * (away_ortg - avg['rating'])),
+        ('Home Def. Rating', k * pace0 * (home_drtg - avg['rating'])),
+        ('Interaction (pace × rating)', k * pace_dev * ratings_dev),
+    ]
+    baseline = intercept + coef * (pace0 * ratings0 / 200.0)
+    return {
+        'baseline': round(baseline, 2),
+        'contribs': [(label, round(c, 3)) for label, c in contribs],
     }

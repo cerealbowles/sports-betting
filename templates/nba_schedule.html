@@ -187,72 +187,8 @@
 
         {% if game.model %}
         {% include "_market_chips.html" %}
-
-        {% set displayed = game.model.factors | rejectattr(1, 'equalto', 0) | list %}
-        {% if displayed %}
-        {% set ns = namespace(max_abs=0.01) %}
-        {% for label, contrib in displayed %}{% if contrib | abs > ns.max_abs %}{% set ns.max_abs = contrib | abs %}{% endif %}{% endfor %}
-        {% set pick_is_away = game.model.away_prob >= game.model.home_prob %}
-        <details class="factors-collapsible" id="factors-{{ game.game_key }}"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
-            <summary class="factors-collapsible-summary">Model Factors</summary>
-            <div class="factors-panel">
-                <div class="factors-header">
-                    <span class="fd-side-label fd-side-left">{{ game.away.abbrev }}</span>
-                    <span class="factors-title">Model Factors</span>
-                    <span class="fd-side-label fd-side-right">{{ game.home.abbrev }}</span>
-                </div>
-                <div class="factor-diverge-list">
-                    {% for label, contrib in displayed %}
-                    {% set pct = ([(contrib | abs) / ns.max_abs * 35, 4] | max) %}
-                    {% set favors_home = contrib > 0 %}
-                    {% set agree = (favors_home and not pick_is_away) or (not favors_home and pick_is_away) %}
-                    {% set marker_pos = (50 + pct) if favors_home else (50 - pct) %}
-                    {% set tone = 'pos' if agree else 'neg' %}
-                    <div class="factor-diverge-row">
-                        <div class="fd-track-wrap">
-                            <div class="fd-track">
-                                <div class="fd-center-line"></div>
-                                <div class="fd-fill fd-fill-{{ tone }}" style="left:{{ [marker_pos, 50] | min }}%; width:{{ pct }}%;"></div>
-                                <div class="fd-marker fd-marker-{{ tone }}" style="left:{{ marker_pos }}%;">{{ '✓' if agree else '✗' }}</div>
-                                <span class="fd-val fd-val-{{ tone }} {{ 'fd-val-after' if favors_home else 'fd-val-before' }}" style="left:{{ marker_pos }}%;">{{ '+' if contrib > 0 }}{{ contrib }}</span>
-                            </div>
-                            <div class="fd-label {{ 'fd-label-left' if favors_home else 'fd-label-right' }}">
-                                <span class="fd-label-name">{{ label }}</span>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                    {# ── Combined factors total — the model's logit (sum of every
-                         factor above, before any market-shrink adjustment), shown
-                         as the win% those factors alone add up to. ── #}
-                    {% set total_favors_home = game.model.logit > 0 %}
-                    {% set total_home_pct = game.model.logit | sigmoid_pct %}
-                    {% set total_pct = total_home_pct if total_favors_home else (100 - total_home_pct) %}
-                    {% set total_abbr = game.home.abbrev if total_favors_home else game.away.abbrev %}
-                    {% set total_agree = (total_favors_home and not pick_is_away) or (not total_favors_home and pick_is_away) %}
-                    {% set total_bar_pct = ([(game.model.logit | abs) / ns.max_abs * 35, 35] | min) %}
-                    {% set total_marker_pos = (50 + total_bar_pct) if total_favors_home else (50 - total_bar_pct) %}
-                    {% set total_tone = 'pos' if total_agree else 'neg' %}
-                    <div class="factor-diverge-row factor-total-row">
-                        <div class="fd-track-wrap">
-                            <div class="fd-track">
-                                <div class="fd-center-line"></div>
-                                <div class="fd-fill fd-fill-{{ total_tone }}" style="left:{{ [total_marker_pos, 50] | min }}%; width:{{ total_bar_pct }}%;"></div>
-                                <div class="fd-marker fd-marker-{{ total_tone }} fd-marker-wide" style="left:{{ total_marker_pos }}%;">{{ total_abbr }}</div>
-                                <span class="fd-val fd-val-{{ total_tone }} {{ 'fd-val-after' if total_favors_home else 'fd-val-before' }}" style="left:{{ total_marker_pos }}%;">{{ total_pct }}%</span>
-                            </div>
-                            <div class="fd-label {{ 'fd-label-left' if total_favors_home else 'fd-label-right' }}">
-                                <span class="fd-label-name">Combined factors</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </details>
+        {% include "_factors_panel.html" %}
         {% endif %}
-        {% endif %}
-        {% include "_total_factors.html" %}
-        {% include "_spread_factors.html" %}
 
         </div>
         {% endif %}

@@ -37,6 +37,17 @@ CALIBRATION = {
     'CFB': (-33.3024, 1.629036, 13.865),
 }
 
+# Approximate modern-era league-average pace (offensive plays/game) and
+# rating (points per 100 plays) — the baseline factor_breakdown() below
+# measures each game's inputs against. Reference figures, not fit from this
+# app's own data (same spirit as mlb_total_model.LEAGUE_BP_ERA); refine if
+# a season's actual averages drift from these. CFB runs a faster, higher-
+# scoring pace than the pros.
+LEAGUE_AVG = {
+    'NFL': {'pace': 64.0, 'rating': 36.0},
+    'CFB': {'pace': 72.0, 'rating': 40.0},
+}
+
 _BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 _cache = {}
 _TTL = 6 * 3600  # season-aggregate play counts move slowly — cache long
@@ -107,4 +118,51 @@ def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg,
         'away_ortg':         round(away_ortg, 1),
         'home_drtg':         round(home_drtg, 1),
         'away_drtg':         round(away_drtg, 1),
+    }
+
+
+def factor_breakdown(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed):
+    """Splits predict_total()'s raw_proj = pace * ratings_sum / 200 into
+    signed per-input contributions — see bball_total_model.factor_breakdown's
+    docstring, identical reasoning/formula shape (this model is deliberately
+    the same shape, plays-per-game standing in for possessions). Exact
+    identity: baseline + sum(contribs) == predict_total(...)['total_projection'].
+    """
+    avg = LEAGUE_AVG.get(sport)
+    if not avg or sport not in CALIBRATION:
+        return None
+    if None in (home_ppg, home_ppg_allowed, away_ppg, away_ppg_allowed):
+        return None
+
+    home_pace = _fetch_pace(sport, home_id)
+    away_pace = _fetch_pace(sport, away_id)
+    if not home_pace or not away_pace or home_pace <= 0 or away_pace <= 0:
+        return None
+
+    game_pace = (home_pace + away_pace) / 2
+    home_ortg = home_ppg / home_pace * 100
+    home_drtg = home_ppg_allowed / home_pace * 100
+    away_ortg = away_ppg / away_pace * 100
+    away_drtg = away_ppg_allowed / away_pace * 100
+    ratings_sum = home_ortg + away_drtg + away_ortg + home_drtg
+
+    intercept, coef, _ = CALIBRATION[sport]
+    pace0 = avg['pace']
+    ratings0 = 4 * avg['rating']
+    k = coef / 200.0
+
+    pace_dev = game_pace - pace0
+    ratings_dev = ratings_sum - ratings0
+    contribs = [
+        ('Pace', k * ratings0 * pace_dev),
+        ('Home Off. Rating', k * pace0 * (home_ortg - avg['rating'])),
+        ('Away Def. Rating', k * pace0 * (away_drtg - avg['rating'])),
+        ('Away Off. Rating', k * pace0 * (away_ortg - avg['rating'])),
+        ('Home Def. Rating', k * pace0 * (home_drtg - avg['rating'])),
+        ('Interaction (pace × rating)', k * pace_dev * ratings_dev),
+    ]
+    baseline = intercept + coef * (pace0 * ratings0 / 200.0)
+    return {
+        'baseline': round(baseline, 2),
+        'contribs': [(label, round(c, 3)) for label, c in contribs],
     }

@@ -1,0 +1,43 @@
+{# Shared diverging-bar ("bobber") chart — renders whatever `panel` dict
+   ml_factors_panel()/spread_factors_panel()/total_factors_panel() built
+   (app.py). One chart implementation for all three tabs instead of three
+   near-duplicate ones; only the data feeding it differs.
+   Expects `panel` (the dict) and `title` (str) in context. #}
+<div class="factors-header">
+    <span class="fd-side-label fd-side-left">{{ panel.neg_label }}</span>
+    <span class="factors-title">{{ title }}{{ ' · unproven' if panel.unproven }}</span>
+    <span class="fd-side-label fd-side-right">{{ panel.pos_label }}</span>
+</div>
+{% if panel.unproven %}
+<div class="small" style="padding:0 14px 10px;color:var(--text-muted);">Unproven for this sport: hasn't beaten break-even out-of-sample here yet — treat with caution.</div>
+{% endif %}
+<div class="factor-diverge-list">
+    {% for row in panel.rows %}
+    <div class="factor-diverge-row">
+        <div class="fd-track-wrap">
+            <div class="fd-track">
+                <div class="fd-center-line"></div>
+                <div class="fd-fill fd-fill-{{ row.tone }}" style="left:{{ [row.marker_pos, 50] | min }}%; width:{{ row.pct }}%;"></div>
+                <div class="fd-marker fd-marker-{{ row.tone }}" style="left:{{ row.marker_pos }}%;">{{ '✓' if row.tone == 'pos' else '✗' }}</div>
+                <span class="fd-val fd-val-{{ row.tone }} {{ 'fd-val-after' if row.favors_pos else 'fd-val-before' }}" style="left:{{ row.marker_pos }}%;">{{ '+' if row.value > 0 }}{{ row.value }}</span>
+            </div>
+            <div class="fd-label {{ 'fd-label-left' if row.favors_pos else 'fd-label-right' }}">
+                <span class="fd-label-name">{{ row.label }}</span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    <div class="factor-diverge-row factor-total-row">
+        <div class="fd-track-wrap">
+            <div class="fd-track">
+                <div class="fd-center-line"></div>
+                <div class="fd-fill fd-fill-{{ panel.total_row.tone }}" style="left:{{ [panel.total_row.marker_pos, 50] | min }}%; width:{{ panel.total_row.pct }}%;"></div>
+                <div class="fd-marker fd-marker-{{ panel.total_row.tone }} fd-marker-wide" style="left:{{ panel.total_row.marker_pos }}%;">{{ panel.total_row.marker_label }}</div>
+                <span class="fd-val fd-val-{{ panel.total_row.tone }} {{ 'fd-val-after' if panel.total_row.favors_pos else 'fd-val-before' }}" style="left:{{ panel.total_row.marker_pos }}%;">{{ panel.total_row.display }}</span>
+            </div>
+            <div class="fd-label {{ 'fd-label-left' if panel.total_row.favors_pos else 'fd-label-right' }}">
+                <span class="fd-label-name">{{ panel.total_row.label }}</span>
+            </div>
+        </div>
+    </div>
+</div>

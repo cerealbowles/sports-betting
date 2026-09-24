@@ -1,0 +1,41 @@
+{# Unified Model Factors / Spread Model / Total Model panel — a single
+   details block with a small tab switcher, so all three chips' charts
+   render in the same spot (openModelFactors() in main.js opens this and
+   picks the tab) instead of three sections stacked one after another.
+   Expects `game` in context. #}
+{% set mf_ml = ml_factors_panel(game) %}
+{% set mf_sp = spread_factors_panel(game) %}
+{% set mf_tot = total_factors_panel(game) %}
+{% if mf_ml or mf_sp or mf_tot %}
+{% set mf_tab_count = (mf_ml and 1 or 0) + (mf_sp and 1 or 0) + (mf_tot and 1 or 0) %}
+<details class="factors-collapsible" id="factors-{{ game.game_key }}"{% if game.status not in ('Live', 'Final') or not game.team_stats %} open{% endif %}>
+    <summary class="factors-collapsible-summary">Model Factors</summary>
+    <div class="factors-panel">
+        {% if mf_tab_count > 1 %}
+        <div class="mf-tabs">
+            {% if mf_ml %}<button type="button" class="mf-tab active" data-mf-tab="ml">ML</button>{% endif %}
+            {% if mf_sp %}<button type="button" class="mf-tab{{ '' if mf_ml else ' active' }}" data-mf-tab="spread">Spread</button>{% endif %}
+            {% if mf_tot %}<button type="button" class="mf-tab{{ '' if (mf_ml or mf_sp) else ' active' }}" data-mf-tab="total">Total</button>{% endif %}
+        </div>
+        {% endif %}
+        {% if mf_ml %}
+        <div class="mf-panel" data-mf-panel="ml">
+            {% set panel = mf_ml %}{% set title = 'Model Factors' %}
+            {% include "_factor_diverge_panel.html" %}
+        </div>
+        {% endif %}
+        {% if mf_sp %}
+        <div class="mf-panel" data-mf-panel="spread"{{ ' hidden' if mf_ml }}>
+            {% set panel = mf_sp %}{% set title = 'Spread Model' %}
+            {% include "_factor_diverge_panel.html" %}
+        </div>
+        {% endif %}
+        {% if mf_tot %}
+        <div class="mf-panel" data-mf-panel="total"{{ ' hidden' if (mf_ml or mf_sp) }}>
+            {% set panel = mf_tot %}{% set title = 'Total Model' %}
+            {% include "_factor_diverge_panel.html" %}
+        </div>
+        {% endif %}
+    </div>
+</details>
+{% endif %}

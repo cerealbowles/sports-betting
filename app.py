@@ -1691,34 +1691,147 @@ def _chip_track_pos(pct):
 app.jinja_env.globals['chip_track_pos'] = _chip_track_pos
 
 
-_TOTAL_FIELD_LABELS = {
-    'pace':                'Pace (est. possessions/game)',
-    'home_pitching_era':   'Home pitching ERA (blended)',
-    'away_pitching_era':   'Away pitching ERA (blended)',
-    'home_offense':        'Home offense (RPG, recency-blended)',
-    'away_offense':        'Away offense (RPG, recency-blended)',
-    'home_ortg':           'Home offensive rating',
-    'away_ortg':           'Away offensive rating',
-    'home_drtg':           'Home defensive rating',
-    'away_drtg':           'Away defensive rating',
-    'home_expected_goals': 'Home expected goals',
-    'away_expected_goals': 'Away expected goals',
-}
+def _diverge_row(value, max_abs, favors_positive, capped=False):
+    """One row's bar geometry for the shared diverging-bar chart (the
+    'bobber' — originally built only for ML's Model Factors, now shared by
+    Spread and Total too via _diverge_panel below). `favors_positive` is
+    the panel's OVERALL verdict (which side the full model favors); a row's
+    own tone is 'pos' when it points the same direction as that verdict,
+    'neg' when it fights it — that's the ✓/✗ marker, independent of the
+    row's raw sign."""
+    pct = (abs(value) / max_abs * 35) if max_abs else 0.0
+    pct = min(pct, 35) if capped else max(pct, 4)
+    row_pos = value > 0
+    agree = row_pos == favors_positive
+    return {
+        'pct': round(pct, 2),
+        'marker_pos': round(50 + pct if row_pos else 50 - pct, 2),
+        'tone': 'pos' if agree else 'neg',
+        'favors_pos': row_pos,
+    }
 
 
-def _total_component_rows(total_model):
-    """(label, value) pairs for every component predict_total() returned
-    besides the final projection itself — see _total_factors.html, the
-    TOTAL chip's equivalent of the ML/Spread "Model Factors" panel."""
-    if not total_model:
-        return []
-    return [
-        (_TOTAL_FIELD_LABELS.get(k, k), v)
-        for k, v in total_model.items() if k != 'total_projection'
-    ]
+def _diverge_panel(items, favors_positive, total_value, total_label, total_display,
+                    total_marker_label, pos_label, neg_label, unproven=False):
+    """items: [(label, value), ...] -> a full panel dict for
+    _factor_diverge_panel.html, the chart every one of ML/Spread/Total's
+    tabs renders through (see ml_factors_panel/spread_factors_panel/
+    total_factors_panel below) — one shared chart implementation instead of
+    three near-duplicate ones. `total_value`/`total_label`/`total_display`/
+    `total_marker_label` describe the "Combined factors"-style summary row
+    at the bottom, scaled against the SAME max_abs as the per-item rows so
+    it's visually comparable to them (capped at 35% width, matching the
+    original ML-only implementation this generalizes)."""
+    if not items:
+        return None
+    max_abs = max((abs(v) for _, v in items), default=0.01) or 0.01
+    rows = [{'label': label, 'value': val, **_diverge_row(val, max_abs, favors_positive)}
+            for label, val in items]
+    total_row = {
+        'label': total_label, 'display': total_display, 'marker_label': total_marker_label,
+        **_diverge_row(total_value, max_abs, favors_positive, capped=True),
+    }
+    return {
+        'pos_label': pos_label, 'neg_label': neg_label,
+        'rows': rows, 'total_row': total_row, 'unproven': unproven,
+    }
 
 
-app.jinja_env.globals['total_component_rows'] = _total_component_rows
+def _clean_team_prefix(label, home_abbr, away_abbr):
+    """MLB factor labels carry a leading team abbreviation (e.g. 'CIN SP+BP
+    SIERA') since the raw contribution is signed per-team — but the panel
+    header already shows both team abbrevs, so strip the redundant prefix.
+    No-op for every other sport (their labels never carry one)."""
+    for abbr in (home_abbr, away_abbr):
+        if abbr and label.startswith(abbr + ' '):
+            return label[len(abbr) + 1:]
+    return label
+
+
+def ml_factors_panel(game):
+    """Model Factors tab — win-probability factor breakdown. Always the
+    same data game cards have shown since day one; now routed through the
+    shared _diverge_panel so its chart code is identical to Spread/Total's
+    instead of the source of the pattern they copy."""
+    model = game.get('model')
+    if not model or not model.get('factors'):
+        return None
+    home, away = game.get('home') or {}, game.get('away') or {}
+    home_abbr = home.get('abbrev') or home.get('abbr') or 'Home'
+    away_abbr = away.get('abbrev') or away.get('abbr') or 'Away'
+    displayed = [(l, c) for l, c in model['factors'] if c]
+    if not displayed:
+        return None
+    items = [(_clean_team_prefix(l, home_abbr, away_abbr), c) for l, c in displayed]
+    favors_positive = (model.get('home_prob') or 0) > (model.get('away_prob') or 0)
+    logit = model.get('logit') or 0
+    home_pct = _sigmoid_pct_filter(logit)
+    total_favors_home = logit > 0
+    total_pct = home_pct if total_favors_home else round(100 - home_pct, 1)
+    return _diverge_panel(
+        items, favors_positive,
+        total_value=logit, total_label='Combined factors',
+        total_display=f'{total_pct}%',
+        total_marker_label=home_abbr if total_favors_home else away_abbr,
+        pos_label=home_abbr, neg_label=away_abbr,
+    )
+
+
+def spread_factors_panel(game):
+    """Spread Model tab — spread_model.py's independently-fit weighted
+    factors (see that module's docstring), same home/away-signed convention
+    as ML's factors so it shares the exact chart semantics."""
+    model = game.get('model')
+    if not model or not model.get('factors'):
+        return None
+    sport = game.get('sport')
+    wf = spread_model.weighted_factors(sport, model['factors'])
+    if not wf or not wf['rows']:
+        return None
+    home, away = game.get('home') or {}, game.get('away') or {}
+    home_abbr = home.get('abbrev') or home.get('abbr') or 'Home'
+    away_abbr = away.get('abbrev') or away.get('abbr') or 'Away'
+    margin = wf['margin']
+    favors_positive = margin > 0
+    return _diverge_panel(
+        wf['rows'], favors_positive,
+        total_value=margin, total_label='Projected margin',
+        total_display=f"{'+' if margin >= 0 else ''}{margin}",
+        total_marker_label=home_abbr if favors_positive else away_abbr,
+        pos_label=home_abbr, neg_label=away_abbr,
+        unproven=not spread_model.is_validated(sport),
+    )
+
+
+def total_factors_panel(game):
+    """Total Model tab — each sport's *_total_model.factor_breakdown(),
+    which decomposes the projection into signed deviations from a
+    league-average baseline (see those modules' docstrings) so it can use
+    the same diverging-bar chart as ML/Spread despite total not having a
+    natural home/away split — the two sides here are OVER/UNDER instead."""
+    breakdown = game.get('total_model_breakdown')
+    total_model = game.get('total_model')
+    if not breakdown or not breakdown.get('contribs') or not total_model:
+        return None
+    sport = game.get('sport')
+    projection = total_model.get('total_projection')
+    if projection is None:
+        return None
+    line = (game.get('odds') or {}).get('total_line')
+    favors_positive = (projection > line) if line is not None else (projection > breakdown['baseline'])
+    return _diverge_panel(
+        breakdown['contribs'], favors_positive,
+        total_value=projection - breakdown['baseline'], total_label='Projected total',
+        total_display=f'{projection}',
+        total_marker_label='O' if favors_positive else 'U',
+        pos_label='OVER', neg_label='UNDER',
+        unproven=_TOTAL_CONFIDENCE_CAP.get(sport) == 'unproven',
+    )
+
+
+app.jinja_env.globals['ml_factors_panel'] = ml_factors_panel
+app.jinja_env.globals['spread_factors_panel'] = spread_factors_panel
+app.jinja_env.globals['total_factors_panel'] = total_factors_panel
 
 
 @app.template_filter('bet_pill_label')

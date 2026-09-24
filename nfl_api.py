@@ -717,6 +717,10 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
             away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
     except Exception:
         total_model = None
+    try:
+        total_model_breakdown = football_total_model.factor_breakdown('NFL', **total_inputs)
+    except Exception:
+        total_model_breakdown = None
 
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
@@ -751,6 +755,7 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         'odds':          game_odds,
         'model':         model,
         'total_model':   total_model,
+        'total_model_breakdown': total_model_breakdown,
         'total_inputs':  total_inputs,
         'weather':       weather,
         'team_stats':    team_stats,

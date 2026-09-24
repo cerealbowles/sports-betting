@@ -472,6 +472,10 @@ def build_schedule_context(target_date=None):
                 home.get('gf_pg'), home.get('ga_pg'), away.get('gf_pg'), away.get('ga_pg'))
         except Exception:
             total_model = None
+        try:
+            total_model_breakdown = hockey_total_model.factor_breakdown(**total_inputs)
+        except Exception:
+            total_model_breakdown = None
 
         # Playoff series context
         series_info = None
@@ -506,6 +510,7 @@ def build_schedule_context(target_date=None):
             'sport':         'NHL',
             'model':         model,
             'total_model':   total_model,
+            'total_model_breakdown': total_model_breakdown,
             'total_inputs':  total_inputs,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",

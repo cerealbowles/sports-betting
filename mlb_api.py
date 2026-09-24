@@ -882,6 +882,10 @@ def build_schedule_context(target_date=None):
                     home.get('recent_rpg'), away.get('recent_rpg'))
             except Exception:
                 total_model = None
+            try:
+                total_model_breakdown = mlb_total_model.factor_breakdown(**total_inputs)
+            except Exception:
+                total_model_breakdown = None
 
             # Linescore only for games that have actually started
             linescore = None
@@ -924,6 +928,7 @@ def build_schedule_context(target_date=None):
                 'weather':       weather_api.get_game_weather(venue, 'mlb'),
                 'sport':         'MLB',
                 'total_model':   total_model,
+                'total_model_breakdown': total_model_breakdown,
                 'total_inputs':  total_inputs,
                 'odds':          game_odds,
                 'model':         model,

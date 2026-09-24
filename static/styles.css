@@ -1364,6 +1364,24 @@ body.embed-mode .container { padding-bottom: 0; }
   border-top: 1px solid var(--border);
   padding: 10px 14px 14px;
 }
+/* ML/Spread/Total tab switcher (_factors_panel.html) — all three render
+   through the same diverging-bar chart, overlaid in the same spot with
+   only the active one visible, instead of three sections stacked one
+   after another. */
+.mf-tabs {
+  display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: hidden; margin-bottom: 12px;
+}
+.mf-tab {
+  flex: 1; padding: 7px 4px; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.3px; text-transform: uppercase;
+  border: none; border-right: 1px solid var(--border); border-radius: 0;
+  background: var(--bg-card-2); color: var(--text-muted); cursor: pointer;
+  box-shadow: none; transform: none;
+}
+.mf-tab:last-child { border-right: none; }
+.mf-tab.active { background: rgba(96,165,250,0.14); color: var(--blue); }
+.mf-panel[hidden] { display: none; }
 
 /* ── Live/final team-stats panel (ESPN boxscore totals) — replaces the
      factors panel as the default view once a game has kicked off; the

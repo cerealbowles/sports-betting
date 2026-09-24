@@ -29,6 +29,11 @@ CALIBRATION = {
     'NHL': (-6.3531, 2.044779, 2.2849),
 }
 
+# Modern-era NHL league-average goals/game (GF and GA are the same league-
+# wide population, so one constant covers both) — the baseline
+# factor_breakdown() below measures each game's inputs against.
+LEAGUE_AVG_GOALS = 3.05
+
 
 def predict_total(home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg):
     """Returns {total_projection} or None if GF/GA inputs are missing."""
@@ -44,4 +49,26 @@ def predict_total(home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg):
         'total_projection':     round(intercept + coef * raw_proj, 2),
         'home_expected_goals':  round(home_exp, 2),
         'away_expected_goals':  round(away_exp, 2),
+    }
+
+
+def factor_breakdown(home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg):
+    """Splits predict_total()'s raw_proj into per-input signed contributions
+    — see mlb_total_model.factor_breakdown's docstring, identical reasoning
+    (this formula is the same additive shape). Exact identity: baseline +
+    sum(contribs) == predict_total(...)['total_projection']."""
+    if None in (home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg):
+        return None
+    intercept, coef, _ = CALIBRATION['NHL']
+    half = coef / 2.0
+    contribs = [
+        ('Home GF/G', half * (home_gf_pg - LEAGUE_AVG_GOALS)),
+        ('Away GA/G', half * (away_ga_pg - LEAGUE_AVG_GOALS)),
+        ('Away GF/G', half * (away_gf_pg - LEAGUE_AVG_GOALS)),
+        ('Home GA/G', half * (home_ga_pg - LEAGUE_AVG_GOALS)),
+    ]
+    baseline = intercept + coef * (2 * LEAGUE_AVG_GOALS)
+    return {
+        'baseline': round(baseline, 2),
+        'contribs': [(label, round(c, 3)) for label, c in contribs],
     }

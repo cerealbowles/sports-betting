@@ -428,6 +428,10 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
             away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
     except Exception:
         total_model = None
+    try:
+        total_model_breakdown = bball_total_model.factor_breakdown('WNBA', **total_inputs)
+    except Exception:
+        total_model_breakdown = None
 
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
@@ -449,6 +453,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
         'odds':          game_odds,
         'model':         model,
         'total_model':   total_model,
+        'total_model_breakdown': total_model_breakdown,
         'total_inputs':  total_inputs,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",

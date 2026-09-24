@@ -154,10 +154,10 @@
             <span class="mc-side mc-side-muted">no line</span>
             {% endif %}
         </div>
-        {# Spread — surfaces its own "Spread Model" panel (_spread_factors.html,
-           spread_model.py) — a real regression fit against actual margins,
-           not derived from the win-prob model's logit like the old
-           spread_proxy.py was. #}
+        {# Spread — switches the shared factors panel (_factors_panel.html)
+           to its "Spread" tab — spread_model.py, a real regression fit
+           against actual margins, not derived from the win-prob model's
+           logit like the old spread_proxy.py was. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
             <span class="mc-t">SPREAD</span>
             {% if mc_sp_has and mc_sp_ok %}
@@ -172,9 +172,9 @@
         </div>
         {# Total — real pace-adjusted model on NBA/WNBA (bball_total_model.py);
            every other sport stays market-only, tap target following
-           whichever side the market itself currently favors. Surfaces its
-           own "Total Model" panel (_total_factors.html) — totals don't
-           share the ML win-prob model's factor list. #}
+           whichever side the market itself currently favors. Switches the
+           shared factors panel (_factors_panel.html) to its "Total" tab —
+           totals don't share the ML win-prob model's factor list. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
             <span class="mc-t">TOTAL</span>
             {% if mc_tot_ok %}

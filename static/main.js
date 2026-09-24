@@ -121,17 +121,33 @@ var btn = details.querySelector('.btn-bet-team[data-bet-side="' + betSide + '"][
 if (btn && btn.tagName === 'BUTTON') btn.click();
 }
 
+/* Switches which of ML/Spread/Total is visible inside the single shared
+   factors panel (_factors_panel.html) — all three render through the same
+   chart (_factor_diverge_panel.html), overlaid in the same spot rather
+   than stacked as separate sections, with a small tab row picking which
+   one shows. `container` is the <details class="factors-collapsible">
+   element (there's exactly one per game now, not one per model type). */
+function switchFactorsTab(container, kind) {
+container.querySelectorAll('.mf-tab').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-mf-tab') === kind);
+});
+container.querySelectorAll('.mf-panel').forEach(function (p) {
+    p.hidden = p.getAttribute('data-mf-panel') !== kind;
+});
+}
+document.addEventListener('click', function (e) {
+var tab = e.target.closest('.mf-tab');
+if (!tab) return;
+var container = tab.closest('.factors-collapsible');
+if (container) switchFactorsTab(container, tab.getAttribute('data-mf-tab'));
+});
+
 /* Market-chips row (ML/Spread/Total, _market_chips.html) — tapping a chip
    used to jump straight into placing that bet (openRecommendedBet above).
-   Now it opens the details sheet and surfaces the model reasoning behind
-   that chip's number instead: ML points at "Model Factors" (_nfl_game_card
-   .html etc.'s factors-collapsible), Spread at its own "Spread Model"
-   panel (_spread_factors.html, spread_model.py — a real regression, not
-   derived from ML's factors like the old spread_proxy.py was), Total at
-   its own "Total Model" panel (_total_factors.html). Placing the bet is
-   still one tap away from there — this just stops assuming that's what a
-   chip tap means. */
-var MODEL_FACTORS_ID_PREFIX = {ml: 'factors-', spread: 'spread-factors-', total: 'total-factors-'};
+   Now it opens the details sheet, opens the shared factors panel
+   (_factors_panel.html) and switches it to the tapped chip's tab instead —
+   placing the bet is still one tap away from there, this just stops
+   assuming that's what a chip tap means. */
 function openModelFactors(gameKey, kind) {
 openGameDetails(gameKey);
 var details = document.getElementById('gd-' + gameKey);
@@ -140,10 +156,10 @@ setTimeout(function () {
     // getElementById, not querySelector('#...') — game_key routinely
     // contains spaces/dots (e.g. "st. louis cardinals_..."), which are
     // valid in an id attribute but break an unescaped CSS #id selector.
-    var prefix = MODEL_FACTORS_ID_PREFIX[kind] || MODEL_FACTORS_ID_PREFIX.ml;
-    var target = document.getElementById(prefix + gameKey);
+    var target = document.getElementById('factors-' + gameKey);
     if (!target || !details.contains(target)) return;
     target.open = true;
+    switchFactorsTab(target, kind);
     target.scrollIntoView({behavior: 'smooth', block: 'start'});
 }, 350);
 }

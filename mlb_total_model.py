@@ -44,6 +44,11 @@ DEFAULT_STARTER_IP = 5.5
 BULLPEN_SAMPLE_IP = 30.0
 RECENT_OFFENSE_WEIGHT = 0.20
 
+# Modern-era MLB league-average runs/game and blended pitching ERA — the
+# baseline factor_breakdown() below measures each game's inputs against.
+LEAGUE_AVG_OFFENSE = 4.30
+LEAGUE_AVG_PITCHING_ERA = LEAGUE_BP_ERA
+
 
 def _safe_float(v):
     try:
@@ -117,4 +122,41 @@ def predict_total(home_runs_pg, home_pitcher, away_runs_pg, away_pitcher,
         'away_pitching_era': round(away_pitching, 2),
         'home_offense': round(home_offense, 2),
         'away_offense': round(away_offense, 2),
+    }
+
+
+def factor_breakdown(home_runs_pg, home_pitcher, away_runs_pg, away_pitcher,
+                      home_bullpen=None, away_bullpen=None,
+                      home_recent_rpg=None, away_recent_rpg=None):
+    """Splits predict_total()'s raw_proj into per-input signed contributions
+    (deviation from LEAGUE_AVG_* × that input's coefficient in the linear
+    formula), for the Total Model diverging-bar panel — same chart the ML
+    Model Factors panel uses, just fed a total-runs-shaped breakdown instead
+    of a win-prob-shaped one.
+
+    raw_proj = 0.5*(home_offense + away_pitching + away_offense + home_pitching)
+    is exactly linear in its 4 inputs, so this decomposition is an EXACT
+    identity, not an approximation: baseline + sum(contribs) ==
+    predict_total(...)['total_projection'] (up to rounding). Returns None
+    under the same conditions predict_total() would.
+    """
+    home_offense = _offense(home_runs_pg, home_recent_rpg)
+    away_offense = _offense(away_runs_pg, away_recent_rpg)
+    home_pitching = _pitching_era(home_pitcher, home_bullpen)
+    away_pitching = _pitching_era(away_pitcher, away_bullpen)
+    if None in (home_offense, away_offense, home_pitching, away_pitching):
+        return None
+
+    intercept, coef, _ = CALIBRATION['MLB']
+    half = coef / 2.0
+    contribs = [
+        ('Home Offense', half * (home_offense - LEAGUE_AVG_OFFENSE)),
+        ('Away Pitching', half * (away_pitching - LEAGUE_AVG_PITCHING_ERA)),
+        ('Away Offense', half * (away_offense - LEAGUE_AVG_OFFENSE)),
+        ('Home Pitching', half * (home_pitching - LEAGUE_AVG_PITCHING_ERA)),
+    ]
+    baseline = intercept + coef * (LEAGUE_AVG_OFFENSE + LEAGUE_AVG_PITCHING_ERA)
+    return {
+        'baseline': round(baseline, 2),
+        'contribs': [(label, round(c, 3)) for label, c in contribs],
     }
