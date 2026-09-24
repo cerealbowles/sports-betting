@@ -2099,28 +2099,14 @@ body.embed-mode .container { padding-bottom: 0; }
   transition: left 0.3s ease;
 }
 
-/* Score section — hidden until JS populates */
-.bc-score {
-  display: none;
-  margin: 0 14px 10px;
-  padding: 9px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-card-2);
-  border: 1px solid var(--border);
-}
-
-.bc-score.score-live,
-.bc-score.score-final {
-  display: block;
-  position: relative; /* anchor for absolutely-positioned diamond */
-}
-
-/* Diamond sits in top-right, out of the text flow */
+/* Base-runner diamond — rendered by refreshScores() as a plain sibling of
+   .sb-score inside .sb-center (a flex column), so it just stacks below the
+   score there. (Previously position:absolute, anchored to a .bc-score
+   .score-live/.score-final wrapper that no longer exists in the current
+   scoreboard markup — with no positioned ancestor at that level it escaped
+   up to .bet-card's transform-created containing block and rendered pinned
+   to the card's right edge, overlapping the analytics row below.) */
 .bc-diamond-wrap {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
