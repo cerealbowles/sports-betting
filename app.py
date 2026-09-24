@@ -137,6 +137,26 @@ class GamePrediction(db.Model):
   spread_close   = db.Column(db.Float)
   total_open     = db.Column(db.Float)                        # ESPN pickcenter game total (O/U)
   total_close    = db.Column(db.Float)
+  # Spread pick tracking — separate from spread_open/close above (which are
+  # ESPN-sourced, post-game backfilled for display). These are the odds_api
+  # (FanDuel) line captured at prediction time, graded against the model's
+  # own spread_proxy cover probability.
+  spread_pick_line  = db.Column(db.Float)                     # home-team spread at pick time
+  spread_cover_prob = db.Column(db.Float)                     # model P(home covers), via spread_proxy
+  spread_home_price = db.Column(db.Integer)                   # American odds to back home ATS
+  spread_away_price = db.Column(db.Integer)                   # American odds to back away ATS
+  spread_covered    = db.Column(db.Boolean)                   # did HOME cover spread_pick_line; None = push/unresolved
+  spread_pick_roi   = db.Column(db.Float)                     # ROI for whichever side the model favored
+  # Total (O/U) pick tracking — total_proj/total_over_prob only available
+  # going forward (total model output was never persisted historically).
+  total_pick_line   = db.Column(db.Float)                     # market total at pick time
+  total_proj        = db.Column(db.Float)                     # model's projected total
+  total_over_prob   = db.Column(db.Float)                     # model P(over), via _total_over_prob
+  total_over_price  = db.Column(db.Integer)
+  total_under_price = db.Column(db.Integer)
+  total_actual      = db.Column(db.Integer)                   # combined final score
+  total_went_over   = db.Column(db.Boolean)                   # did actual total exceed total_pick_line; None = push/unresolved
+  total_pick_roi    = db.Column(db.Float)                     # ROI for whichever side the model favored
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -179,6 +199,20 @@ def ensure_column_exists():
     _add('game_predictions', 'spread_close',      'FLOAT DEFAULT NULL')
     _add('game_predictions', 'total_open',        'FLOAT DEFAULT NULL')
     _add('game_predictions', 'total_close',       'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_pick_line',  'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_cover_prob', 'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_home_price', 'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'spread_away_price', 'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'spread_covered',    'BOOLEAN DEFAULT NULL')
+    _add('game_predictions', 'spread_pick_roi',   'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_pick_line',   'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_proj',        'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_over_prob',   'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_over_price',  'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'total_under_price', 'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'total_actual',      'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'total_went_over',   'BOOLEAN DEFAULT NULL')
+    _add('game_predictions', 'total_pick_roi',    'FLOAT DEFAULT NULL')
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
@@ -1161,6 +1195,23 @@ def _upsert_predictions(schedule, sport='MLB'):
           edge = _pick_edge_pct(pred.home_prob, pred.home_odds, pred.away_odds)
           if edge is not None:
             pred.edge_pct = edge
+
+          spread_line = odds.get('home_spread')
+          if spread_line is not None:
+            pred.spread_pick_line  = spread_line
+            pred.spread_home_price = odds.get('home_spread_price')
+            pred.spread_away_price = odds.get('away_spread_price')
+            pred.spread_cover_prob = spread_proxy.cover_prob(sport, pred.home_prob, spread_line)
+
+          total_model = game.get('total_model') or {}
+          total_line  = odds.get('total_line')
+          proj        = total_model.get('total_projection')
+          if total_line is not None and proj is not None:
+            pred.total_pick_line  = total_line
+            pred.total_proj       = proj
+            pred.total_over_price  = odds.get('over_odds')
+            pred.total_under_price = odds.get('under_odds')
+            pred.total_over_prob   = _total_over_prob(sport, proj, total_line)
         if has_wind and pred.wind_mph is None:
           pred.wind_mph = wx['wind_mph']
           pred.wind_dir = wx.get('wind_dir')
@@ -1203,6 +1254,42 @@ def _upsert_predictions(schedule, sport='MLB'):
                 pred.pick_roi = round(profit if model_won else -1.0, 4)
               except (TypeError, ValueError):
                 pass
+
+            if pred.spread_pick_line is not None:
+              margin       = h - a
+              cover_target = -pred.spread_pick_line
+              if margin == cover_target:
+                pred.spread_pick_roi = 0.0   # push; spread_covered stays None
+              else:
+                pred.spread_covered = margin > cover_target   # did HOME cover
+                pick_home    = (pred.spread_cover_prob or 0.5) >= 0.5
+                pick_correct = (pick_home == pred.spread_covered)
+                price = pred.spread_home_price if pick_home else pred.spread_away_price
+                if price:
+                  try:
+                    o = int(price)
+                    profit = o / 100.0 if o > 0 else 100.0 / (-o)
+                    pred.spread_pick_roi = round(profit if pick_correct else -1.0, 4)
+                  except (TypeError, ValueError):
+                    pass
+
+            if pred.total_pick_line is not None:
+              pred.total_actual = h + a
+              if pred.total_actual == pred.total_pick_line:
+                pred.total_pick_roi = 0.0   # push
+              else:
+                pred.total_went_over = pred.total_actual > pred.total_pick_line
+                pick_over    = (pred.total_over_prob or 0.5) >= 0.5
+                pick_correct = (pick_over == pred.total_went_over)
+                price = pred.total_over_price if pick_over else pred.total_under_price
+                if price:
+                  try:
+                    o = int(price)
+                    profit = o / 100.0 if o > 0 else 100.0 / (-o)
+                    pred.total_pick_roi = round(profit if pick_correct else -1.0, 4)
+                  except (TypeError, ValueError):
+                    pass
+
             changed = True
         except (TypeError, ValueError):
           pass
@@ -2861,6 +2948,72 @@ def _recommended_bets_history(resolved, sport):
   }
 
 
+def _bet_type_accuracy_stats(resolved, prob_attr, outcome_attr, roi_attr):
+  """Accuracy/Brier/log-loss/calibration engine for a non-moneyline bet type
+  (Spread or Total), mirroring the moneyline computation below but generic
+  over which GamePrediction attributes hold the probability/outcome/ROI.
+  `outcome_attr` is a literal boolean outcome (e.g. spread_covered = did home
+  cover), symmetric with home_won — pushes/unresolved rows (outcome is None)
+  are excluded up front so Brier/log-loss only sees decided picks."""
+  rows = [p for p in resolved if getattr(p, outcome_attr) is not None]
+  n = len(rows)
+  stats = {'n': n, 'wins': 0, 'losses': 0, 'accuracy': None, 'brier': None,
+           'log_loss': None, 'roi': None, 'buckets': []}
+  if not n:
+    return stats
+
+  b_sum = ll_sum = correct = 0.0
+  roi_vals = []
+  for p in rows:
+    outcome = 1.0 if getattr(p, outcome_attr) else 0.0
+    prob    = max(0.001, min(0.999, getattr(p, prob_attr) or 0.5))
+    b_sum  += (prob - outcome) ** 2
+    ll_sum += outcome * math.log(prob) + (1 - outcome) * math.log(1 - prob)
+    if (prob >= 0.5) == bool(getattr(p, outcome_attr)):
+      correct += 1
+    r = getattr(p, roi_attr)
+    if r is not None:
+      roi_vals.append(r)
+
+  stats['brier']    = round(b_sum / n, 4)
+  stats['log_loss'] = round(-ll_sum / n, 4)
+  stats['accuracy'] = round(correct / n * 100, 1)
+  stats['wins']      = int(correct)
+  stats['losses']    = n - int(correct)
+  stats['roi']       = round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None
+
+  # Calibration: bucket by confidence in whichever side the model picked
+  # (mirrors the moneyline "favored team" framing).
+  buckets = []
+  for lo, hi in [(50, 52), (52, 54), (54, 56), (56, 58), (58, 60), (60, 65), (65, 70), (70, 75)]:
+    mid = (lo + hi) / 200.0
+    bucket_games = []
+    for p in rows:
+      raw_prob  = getattr(p, prob_attr) or 0.5
+      pick_prob = raw_prob if raw_prob >= 0.5 else 1.0 - raw_prob
+      if lo / 100 <= pick_prob < hi / 100:
+        pick_correct = (raw_prob >= 0.5) == bool(getattr(p, outcome_attr))
+        r = getattr(p, roi_attr)
+        bucket_games.append({'won': pick_correct, 'roi': r})
+    cnt = len(bucket_games)
+    if cnt == 0:
+      continue
+    wins_b   = sum(1 for g in bucket_games if g['won'])
+    roi_vals_b = [g['roi'] for g in bucket_games if g['roi'] is not None]
+    actual = wins_b / cnt
+    buckets.append({
+        'label':   f'{lo}–{hi}%',
+        'mid':     round(mid * 100, 1),
+        'count':   cnt,
+        'wins':    wins_b,
+        'actual':  round(actual * 100, 1),
+        'error':   round((actual - mid) * 100, 1),
+        'avg_roi': round(sum(roi_vals_b) / len(roi_vals_b) * 100, 1) if roi_vals_b else None,
+    })
+  stats['buckets'] = buckets
+  return stats
+
+
 @app.route('/model')
 def model_performance():
   from collections import defaultdict as _dd
@@ -2869,6 +3022,10 @@ def model_performance():
   if sport not in _MODEL_SPORTS:
     sport = 'MLB'
 
+  bet_type = request.args.get('type', 'moneyline').lower()
+  if bet_type not in ('moneyline', 'spread', 'total'):
+    bet_type = 'moneyline'
+
   preds = (GamePrediction.query
            .filter_by(sport=sport)
            .order_by(GamePrediction.game_date.desc(), GamePrediction.id.desc())
@@ -2876,6 +3033,9 @@ def model_performance():
 
   resolved = [p for p in preds if p.home_won is not None]
   n = len(resolved)
+
+  spread_stats = _bet_type_accuracy_stats(resolved, 'spread_cover_prob', 'spread_covered', 'spread_pick_roi')
+  total_stats  = _bet_type_accuracy_stats(resolved, 'total_over_prob', 'total_went_over', 'total_pick_roi')
 
   brier = accuracy = log_loss_val = None
   if n:
@@ -2992,8 +3152,6 @@ def model_performance():
         pass
   baseline_wr  = (_base_wins / _base_total * 100) if _base_total else None
   baseline_roi = (sum(_base_roi) / len(_base_roi) * 100) if _base_roi else None
-
-  grade_stats = []  # kept for template compatibility; grade system removed
 
   # Rank performance: does pick #1 outperform #2, #3 etc.?
   rank_buckets = {}  # label -> {'won', 'roi', 'clv', 'total'}
@@ -3615,8 +3773,10 @@ def model_performance():
       accuracy=accuracy,
       log_loss=log_loss_val,
       buckets=buckets,
+      bet_type=bet_type,
+      spread_stats=spread_stats,
+      total_stats=total_stats,
       factor_stats=factor_stats,
-      grade_stats=grade_stats,
       rank_stats=rank_stats,
       score_bucket_stats=score_bucket_stats,
       market_agree_stats=market_agree_stats,

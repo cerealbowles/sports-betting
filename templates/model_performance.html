@@ -3,6 +3,15 @@
 
 {% block head %}
 <style>
+.bet-type-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.bet-type-tab {
+    flex: 1; text-align: center; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--bg-card-2); border: 1px solid var(--border);
+    color: var(--text-muted); font-size: 0.8rem; font-weight: 700;
+    text-decoration: none;
+}
+.bet-type-tab.active { background: var(--orange); border-color: var(--orange); color: #fff; }
+
 .perf-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -177,6 +186,14 @@
     <span class="small">{{ sport }} · predictions vs outcomes</span>
 </div>
 
+{% set _bt_qs = request.args.to_dict() %}
+<div class="bet-type-tabs">
+    {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread'), ('total', 'Total')] %}
+    {% set _ = _bt_qs.update({'type': code}) %}
+    <a href="{{ url_for('model_performance', **_bt_qs) }}" class="bet-type-tab{% if bet_type == code %} active{% endif %}">{{ label }}</a>
+    {% endfor %}
+</div>
+
 {% if total == 0 %}
 <div class="card" style="padding: 24px; text-align: center;">
     <p style="color: var(--text-muted);">No predictions logged yet for {{ sport }}.
@@ -185,6 +202,99 @@
         </a>
     </p>
 </div>
+{% elif bet_type != 'moneyline' %}
+
+{% set bt_stats = spread_stats if bet_type == 'spread' else total_stats %}
+{% set bt_label = 'Spread' if bet_type == 'spread' else 'Total' %}
+<!-- ══ Spread / Total accuracy ══ -->
+<div class="perf-grid">
+    <div class="stat-card">
+        <div class="stat-label">Picks Tracked</div>
+        <div class="stat-value">{{ bt_stats.n }}</div>
+        <div class="stat-sub">{{ bt_stats.wins }}-{{ bt_stats.losses }} record</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Accuracy</div>
+        <div class="stat-value" style="color: {% if bt_stats.accuracy and bt_stats.accuracy >= 55 %}var(--win){% elif bt_stats.accuracy and bt_stats.accuracy < 50 %}var(--loss){% else %}var(--text){% endif %}">
+            {{ bt_stats.accuracy if bt_stats.accuracy is not none else '—' }}{% if bt_stats.accuracy is not none %}%{% endif %}
+        </div>
+        <div class="stat-sub">picks correct, pushes excluded</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">ROI</div>
+        <div class="stat-value {{ 'status-win' if bt_stats.roi and bt_stats.roi >= 0 else 'status-loss' }}">
+            {% if bt_stats.roi is not none %}{{ '+' if bt_stats.roi > 0 }}{{ bt_stats.roi }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">flat 1u, stored price at pick time</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Brier Score</div>
+        <div class="stat-value" style="color: {% if bt_stats.brier and bt_stats.brier < 0.22 %}var(--win){% elif bt_stats.brier and bt_stats.brier > 0.25 %}var(--loss){% else %}var(--text){% endif %}">
+            {{ bt_stats.brier if bt_stats.brier is not none else '—' }}
+        </div>
+        <div class="stat-sub">lower is better · 0.25 = random</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Log Loss</div>
+        <div class="stat-value">{{ bt_stats.log_loss if bt_stats.log_loss is not none else '—' }}</div>
+        <div class="stat-sub">lower is better · ~0.69 = random</div>
+    </div>
+</div>
+
+{% if bet_type == 'spread' %}
+<p class="section-note" style="margin-bottom:14px;">Spread picks are backfilled from history where possible: home win probability + the ESPN opening line already stored for past games feed <code>spread_proxy.cover_prob()</code>, graded against the actual final margin. Prices on backfilled rows assume standard -110 juice (ESPN's odds feed doesn't carry per-side pricing); rows tracked going forward use the real price from the sportsbook feed.</p>
+{% else %}
+<p class="section-note" style="margin-bottom:14px;">Total picks can only be tracked going forward — the model's total projection wasn't persisted historically, so there's nothing to backfill (unlike Spread, which reuses the win-probability model against already-stored market lines). This will fill in as new games are tracked.</p>
+{% endif %}
+
+{% if bt_stats.n == 0 %}
+<div class="card" style="padding: 24px; text-align: center;">
+    <p style="color: var(--text-muted);">No {{ bt_label.lower() }} picks tracked yet for {{ sport }}.</p>
+</div>
+{% else %}
+<div class="card" style="margin-bottom: 14px;">
+    <div class="section-header" style="margin-bottom: 12px;">
+        <h2>Calibration</h2>
+        <span class="small">predicted vs actual hit rate for the model's picked side</span>
+    </div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr>
+                <th>Pred Range</th>
+                <th>Picks</th>
+                <th>Predicted</th>
+                <th>Actual</th>
+                <th>Error</th>
+                <th>ROI%</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for b in bt_stats.buckets %}
+        <tr>
+            <td>{{ b.label }}</td>
+            <td>{{ b.count }}</td>
+            <td><span class="calib-bar-wrap"><span class="calib-bar calib-bar-pred" style="width:{{ b.mid }}%"></span></span>{{ b.mid }}%</td>
+            <td><span class="calib-bar-wrap"><span class="calib-bar calib-bar-act" style="width:{{ b.actual }}%"></span></span>{{ b.actual }}%</td>
+            <td>
+                <span class="{{ 'calib-err-ok' if b.error | abs <= 5 else ('calib-err-neg' if b.error | abs <= 10 else 'calib-err-pos') }}">
+                    {{ '+' if b.error > 0 }}{{ b.error }}%
+                </span>
+            </td>
+            <td>
+                {% if b.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">Each row shows picks where the model's confidence in its picked side fell in that range. Error = actual − predicted. Near zero is well-calibrated.</p>
+</div>
+{% endif %}
+
 {% else %}
 
 <!-- ── Summary stats ── -->
@@ -406,82 +516,13 @@
 </div>
 {% endif %}
 
-{% if grade_stats or rank_stats or rank_comparison or movement_stats or firing_stats or score_bucket_stats or market_agree_stats or consensus_stats or fav_dog_stats or closing_dist_stats %}
+{% if rank_stats or rank_comparison or movement_stats or firing_stats or score_bucket_stats or market_agree_stats or consensus_stats or fav_dog_stats or closing_dist_stats %}
 <!-- ══ ZONE 2: Scoring & Market Signal ══ -->
 <div class="zone-divider">
     <h3>Scoring &amp; Market Signal</h3>
     <span class="zone-sub">how the trust score reads odds, line movement &amp; edge</span>
     <span class="zone-line"></span>
 </div>
-{% endif %}
-
-{% if grade_stats %}
-<!-- ── Grade performance ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Grade Performance</span>
-        <span class="sd-sub">outcomes by composite grade at prediction time</span>
-        {% if grade_stats %}
-        <span class="sd-teaser">{{ grade_stats[0].grade }}: <strong>{{ '+' if grade_stats[0].avg_roi and grade_stats[0].avg_roi > 0 }}{{ grade_stats[0].avg_roi if grade_stats[0].avg_roi is not none else '—' }}%</strong> ROI · {{ grade_stats[0].win_rate }}% WR (n={{ grade_stats[0].count }})</span>
-        {% endif %}
-    </summary>
-    <div class="score-details-body">
-    <div class="calib-scroll">
-    <table class="calib-table grade-perf-table">
-        <thead>
-            <tr>
-                <th class="grade-col-th"></th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Avg CLV</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for g in grade_stats %}
-        <tr>
-            <td class="grade-badge-cell">
-                <span class="grade-badge grade-{{ g.grade | replace('–','-') }}">{{ g.grade }}</span>
-            </td>
-            <td>{{ g.count }}</td>
-            <td>
-                {% if g.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if g.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if g.avg_roi > 0 }}{{ g.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if g.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if g.lift_wr > 0 else ('lift-neg' if g.lift_wr < 0 else 'lift-zero') }}">{{ '+' if g.lift_wr > 0 }}{{ g.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if g.avg_clv is not none %}
-                <span class="{{ 'calib-err-ok' if g.avg_clv > 0 else ('calib-err-neg' if g.avg_clv < -0.5 else '') }}">{{ '+' if g.avg_clv > 0 }}{{ g.avg_clv }}%</span>
-                <span style="font-size:0.65rem;color:var(--text-muted)"> n={{ g.clv_n }}</span>
-                {% else %}<span style="color:var(--text-muted);font-size:0.72rem">accumulating</span>{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if g.win_rate >= 55 else ('calib-err-pos' if g.win_rate >= 50 else 'calib-err-neg') }}">{{ g.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        {% if baseline_wr is not none %}
-        <tr style="border-top: 1px solid var(--border);">
-            <td class="grade-badge-cell"><span style="font-size:0.68rem;color:var(--text-muted);padding-left:2px;">All</span></td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">—</td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">{% if baseline_roi is not none %}{{ '+' if baseline_roi > 0 }}{{ baseline_roi }}%{% else %}—{% endif %}</td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">baseline</td>
-            <td></td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">{{ baseline_wr }}%</td>
-        </tr>
-        {% endif %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Lift = win rate above baseline (all picks with odds). ROI% = avg profit per unit × 100 at opening odds. CLV = closing implied prob shift toward our pick (positive = beat the close). A ≥ 0.60 · B ≥ 0.50 · C ≥ 0.25 · – below 0.25.</p>
-    </div>
-</details>
 {% endif %}
 
 {% if rank_stats %}
