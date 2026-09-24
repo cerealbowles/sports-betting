@@ -461,7 +461,12 @@ def build_schedule_context(target_date=None):
 
         # Opponent-adjusted goals total — see hockey_total_model.py. No new
         # fetch needed, GF/GA-per-game are already computed above for the
-        # win-prob model.
+        # win-prob model. total_inputs is stashed alongside the projection
+        # so a future total-model recalibration can replay this exact game.
+        total_inputs = {
+            'home_gf_pg': home.get('gf_pg'), 'home_ga_pg': home.get('ga_pg'),
+            'away_gf_pg': away.get('gf_pg'), 'away_ga_pg': away.get('ga_pg'),
+        }
         try:
             total_model = hockey_total_model.predict_total(
                 home.get('gf_pg'), home.get('ga_pg'), away.get('gf_pg'), away.get('ga_pg'))
@@ -501,6 +506,7 @@ def build_schedule_context(target_date=None):
             'sport':         'NHL',
             'model':         model,
             'total_model':   total_model,
+            'total_inputs':  total_inputs,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",

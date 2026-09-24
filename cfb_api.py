@@ -768,6 +768,12 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
         model = None
 
     # Pace-adjusted total (O/U) projection — see football_total_model.py.
+    # total_inputs is stashed alongside the projection so a future
+    # total-model recalibration can replay this exact game.
+    total_inputs = {
+        'home_id': home.get('id'), 'home_ppg': home.get('ppg'), 'home_ppg_allowed': home.get('ppg_allowed'),
+        'away_id': away.get('id'), 'away_ppg': away.get('ppg'), 'away_ppg_allowed': away.get('ppg_allowed'),
+    }
     try:
         total_model = football_total_model.predict_total(
             'CFB', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
@@ -797,6 +803,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
         'odds':          game_odds,
         'model':         model,
         'total_model':   total_model,
+        'total_inputs':  total_inputs,
         'weather':       weather,
         'team_stats':    team_stats,
         'bet_name':      f"{a_ab} @ {h_ab}",

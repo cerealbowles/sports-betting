@@ -157,6 +157,10 @@ class GamePrediction(db.Model):
   total_actual      = db.Column(db.Integer)                   # combined final score
   total_went_over   = db.Column(db.Boolean)                   # did actual total exceed total_pick_line; None = push/unresolved
   total_pick_roi    = db.Column(db.Float)                     # ROI for whichever side the model favored
+  total_inputs_json = db.Column(db.Text)                      # raw sport-specific inputs to total_model.predict_total()
+                                                                # at pick time (pitcher/bullpen, ppg, gf/ga, etc.) — lets a
+                                                                # future total-model recalibration replay this exact game,
+                                                                # the same way spread_proxy.py was fit from home_prob history.
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -213,6 +217,7 @@ def ensure_column_exists():
     _add('game_predictions', 'total_actual',      'INTEGER DEFAULT NULL')
     _add('game_predictions', 'total_went_over',   'BOOLEAN DEFAULT NULL')
     _add('game_predictions', 'total_pick_roi',    'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_inputs_json', 'TEXT DEFAULT NULL')
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
@@ -1212,6 +1217,10 @@ def _upsert_predictions(schedule, sport='MLB'):
             pred.total_over_price  = odds.get('over_odds')
             pred.total_under_price = odds.get('under_odds')
             pred.total_over_prob   = _total_over_prob(sport, proj, total_line)
+            try:
+              pred.total_inputs_json = json.dumps(game.get('total_inputs'))
+            except (TypeError, ValueError):
+              pass
         if has_wind and pred.wind_mph is None:
           pred.wind_mph = wx['wind_mph']
           pred.wind_dir = wx.get('wind_dir')

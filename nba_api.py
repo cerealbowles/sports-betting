@@ -419,6 +419,12 @@ def _build_game(event, team_stats, game_log, nba_odds_map):
     # Pace-adjusted total (O/U) projection — separate from the win-prob
     # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see
     # bball_total_model.py for why this can't reuse the win-prob factors).
+    # total_inputs is stashed alongside the projection so a future
+    # total-model recalibration can replay this exact game.
+    total_inputs = {
+        'home_id': home.get('id'), 'home_ppg': home.get('ppg'), 'home_ppg_allowed': home.get('ppg_allowed'),
+        'away_id': away.get('id'), 'away_ppg': away.get('ppg'), 'away_ppg_allowed': away.get('ppg_allowed'),
+    }
     try:
         total_model = bball_total_model.predict_total(
             'NBA', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
@@ -446,6 +452,7 @@ def _build_game(event, team_stats, game_log, nba_odds_map):
         'odds':          game_odds,
         'model':         model,
         'total_model':   total_model,
+        'total_inputs':  total_inputs,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'linescore':     _parse_linescores(comp) if status != 'Preview' else None,
