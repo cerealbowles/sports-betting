@@ -121,29 +121,24 @@ def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg,
     }
 
 
-def factor_breakdown(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed):
+def factor_breakdown(sport, total_model):
     """Splits predict_total()'s raw_proj = pace * ratings_sum / 200 into
     signed per-input contributions — see bball_total_model.factor_breakdown's
     docstring, identical reasoning/formula shape (this model is deliberately
-    the same shape, plays-per-game standing in for possessions). Exact
-    identity: baseline + sum(contribs) == predict_total(...)['total_projection'].
+    the same shape, plays-per-game standing in for possessions) AND the same
+    fix: takes predict_total()'s own result dict instead of re-fetching pace
+    over the network a second time per game. Exact identity: baseline +
+    sum(contribs) == predict_total(...)['total_projection'].
     """
     avg = LEAGUE_AVG.get(sport)
-    if not avg or sport not in CALIBRATION:
-        return None
-    if None in (home_ppg, home_ppg_allowed, away_ppg, away_ppg_allowed):
+    if not avg or sport not in CALIBRATION or not total_model:
         return None
 
-    home_pace = _fetch_pace(sport, home_id)
-    away_pace = _fetch_pace(sport, away_id)
-    if not home_pace or not away_pace or home_pace <= 0 or away_pace <= 0:
-        return None
-
-    game_pace = (home_pace + away_pace) / 2
-    home_ortg = home_ppg / home_pace * 100
-    home_drtg = home_ppg_allowed / home_pace * 100
-    away_ortg = away_ppg / away_pace * 100
-    away_drtg = away_ppg_allowed / away_pace * 100
+    game_pace = total_model['pace']
+    home_ortg = total_model['home_ortg']
+    home_drtg = total_model['home_drtg']
+    away_ortg = total_model['away_ortg']
+    away_drtg = total_model['away_drtg']
     ratings_sum = home_ortg + away_drtg + away_ortg + home_drtg
 
     intercept, coef, _ = CALIBRATION[sport]

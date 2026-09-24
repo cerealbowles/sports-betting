@@ -136,10 +136,18 @@ def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg,
     }
 
 
-def factor_breakdown(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed):
+def factor_breakdown(sport, total_model):
     """Splits predict_total()'s raw_proj = pace * ratings_sum / 200 into
     signed per-input contributions, for the Total Model diverging-bar
     panel — same chart the ML Model Factors panel uses.
+
+    Takes predict_total()'s own result dict — it already returns pace/
+    home_ortg/away_ortg/home_drtg/away_drtg, so this needs no new data.
+    (First version of this function took home_id/ppg and re-fetched pace
+    components over the network independently of predict_total(), doubling
+    every game's total-model latency and doubling exposure whenever that
+    ESPN endpoint is slow — the actual cause of intermittent page hangs,
+    worst on WNBA where it's least reliable.)
 
     Unlike the additive MLB/NHL total models, raw_proj is bilinear in pace
     and ratings_sum (pace multiplies the ratings, it doesn't add to them),
@@ -157,25 +165,14 @@ def factor_breakdown(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_p
     exactly (up to rounding).
     """
     avg = LEAGUE_AVG.get(sport)
-    if not avg or sport not in CALIBRATION:
-        return None
-    if None in (home_ppg, home_ppg_allowed, away_ppg, away_ppg_allowed):
+    if not avg or sport not in CALIBRATION or not total_model:
         return None
 
-    home_pace_c = _fetch_pace_components(sport, home_id)
-    away_pace_c = _fetch_pace_components(sport, away_id)
-    if not home_pace_c or not away_pace_c:
-        return None
-    home_pace = _possessions(home_pace_c)
-    away_pace = _possessions(away_pace_c)
-    if home_pace <= 0 or away_pace <= 0:
-        return None
-
-    game_pace = (home_pace + away_pace) / 2
-    home_ortg = home_ppg / home_pace * 100
-    home_drtg = home_ppg_allowed / home_pace * 100
-    away_ortg = away_ppg / away_pace * 100
-    away_drtg = away_ppg_allowed / away_pace * 100
+    game_pace = total_model['pace']
+    home_ortg = total_model['home_ortg']
+    home_drtg = total_model['home_drtg']
+    away_ortg = total_model['away_ortg']
+    away_drtg = total_model['away_drtg']
     ratings_sum = home_ortg + away_drtg + away_ortg + home_drtg
 
     intercept, coef, _ = CALIBRATION[sport]

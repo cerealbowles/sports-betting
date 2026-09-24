@@ -429,7 +429,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
     except Exception:
         total_model = None
     try:
-        total_model_breakdown = bball_total_model.factor_breakdown('WNBA', **total_inputs)
+        total_model_breakdown = bball_total_model.factor_breakdown('WNBA', total_model)
     except Exception:
         total_model_breakdown = None
 

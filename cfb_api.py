@@ -781,7 +781,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
     except Exception:
         total_model = None
     try:
-        total_model_breakdown = football_total_model.factor_breakdown('CFB', **total_inputs)
+        total_model_breakdown = football_total_model.factor_breakdown('CFB', total_model)
     except Exception:
         total_model_breakdown = None
 
