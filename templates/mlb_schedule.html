@@ -698,6 +698,8 @@
 
 {% block scripts %}
 {% include "_open_bets_scripts.html" with context %}
+{% set live_scores_endpoint = url_for('api_mlb_live_scores') %}
+{% include "_schedule_live_poll.html" %}
 <script>
 /* ── Click-to-sort by TS ─────────────────────────────── */
 (function() {

@@ -4390,6 +4390,14 @@ def api_nhl_live_scores():
     return jsonify(nhl_api.get_live_game_states())
 
 
+@app.route('/api/mlb/live-scores')
+def api_mlb_live_scores():
+    """Powers the auto-updating score/inning/bases on the /mlb schedule
+    page's game cards — see api_nfl_live_scores() above."""
+    from flask import jsonify
+    return jsonify(mlb_api.get_live_game_states())
+
+
 @app.route('/api/live-scores')
 def api_live_scores():
     """

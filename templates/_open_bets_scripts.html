@@ -164,36 +164,9 @@ function closeDeleteBetModal() {
 
 
 // ── Live score polling ────────────────────────────────────────────────────────
+// (The base-runner diamond used to render here too — it now only shows on
+// the /mlb schedule page, see _schedule_live_poll.html's renderDiamond.)
 (function () {
-  // Renders a 3-base diamond SVG + out dots for MLB live games.
-  // b = {first, second, third, outs}
-  function renderDiamond(b) {
-    var on  = '#FB4F14', off = 'rgba(148,163,184,0.18)';
-    var so  = '#FB4F14', sof = 'rgba(148,163,184,0.35)';
-    // Each 8×8 rect rotated 45° has half-diagonal ≈ 5.7px — keep centers ≥ 7px from each edge.
-    // viewBox 0 0 40 30: 2nd=(20,7), 1st=(34,20), 3rd=(6,20)
-    function sq(cx, cy, occ) {
-      return '<rect x="' + (cx - 4) + '" y="' + (cy - 4) + '" width="8" height="8"'
-        + ' transform="rotate(45 ' + cx + ' ' + cy + ')"'
-        + ' fill="' + (occ ? on : off) + '"'
-        + ' stroke="' + (occ ? so : sof) + '" stroke-width="1.2" rx="1"/>';
-    }
-    var svg = '<svg width="36" height="28" viewBox="0 0 36 28" style="display:block;">'
-      + sq(18,  7, b.second)   // 2nd — top center
-      + sq(30, 19, b.first)    // 1st — right
-      + sq(6,  19, b.third)    // 3rd — left
-      + '</svg>';
-    var dots = '<div style="display:flex;gap:3px;justify-content:center;">';
-    for (var i = 0; i < 2; i++) {  // only 2 dots — 3 outs ends the inning
-      var filled = i < (b.outs || 0);
-      dots += '<div style="width:5px;height:5px;border-radius:50%;'
-        + 'background:' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.22)') + ';'
-        + 'border:1px solid ' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.35)') + ';"></div>';
-    }
-    dots += '</div>';
-    return '<div class="bc-diamond-wrap">' + svg + dots + '</div>';
-  }
-
   function refreshScores() {
     fetch('/api/live-scores')
       .then(function (r) { return r.json(); })
@@ -223,8 +196,7 @@ function closeDeleteBetModal() {
             center = '<div class="sb-score">'
               + '<span class="sb-score-away' + (awayWin ? ' sb-score-win' : '') + '">' + (as !== null ? as : '–') + '</span>'
               + '<span class="sb-score-sep">–</span>'
-              + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (hs !== null ? hs : '–') + '</span></div>'
-              + (isLive && info.bases ? renderDiamond(info.bases) : '');
+              + '<span class="sb-score-home' + (homeWin ? ' sb-score-win' : '') + '">' + (hs !== null ? hs : '–') + '</span></div>';
           } else {
             center = '';
           }

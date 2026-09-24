@@ -140,6 +140,31 @@ def get_live_scores(date_str=None):
     return scores
 
 
+def get_live_game_states(date_str=None):
+    """
+    Returns {game_key: state_dict} for MLB games on `date_str` (defaults to
+    today, ET) — status, score, and an inning/bases live_state — matching
+    what the /mlb schedule page's game cards render server-side. Thin
+    reshape of get_live_scores() (same cached schedule call, no extra API
+    traffic) into the {status, away_score, home_score, live_state} shape
+    _schedule_live_poll.html expects, same as every other sport's
+    get_live_game_states().
+    """
+    scores = get_live_scores(date_str)
+    states = {}
+    for gk, s in scores.items():
+        live_state = None
+        if s['status'] == 'Live':
+            live_state = {'clock_text': s['period'], 'bases': s['bases']}
+        states[gk] = {
+            'status':     s['status'],
+            'away_score': s['away_score'],
+            'home_score': s['home_score'],
+            'live_state': live_state,
+        }
+    return states
+
+
 def get_game_boxscore(game_pk):
     """
     Trimmed current-game batting/pitching lines for one game, used by the schedule

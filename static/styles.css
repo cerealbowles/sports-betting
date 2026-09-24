@@ -2518,6 +2518,14 @@ body.embed-mode .container { padding-bottom: 0; }
     color: #ef4444; background: rgba(239,68,68,0.09); border-color: rgba(239,68,68,0.25);
 }
 .poss-ico { font-size: 0.7rem; }
+/* MLB base-runner diamond — its own section below the score/inning line on
+   the /mlb schedule page's live game cards, set off with a divider so it
+   doesn't read as part of the score itself. */
+.live-bases-row {
+    display: flex; justify-content: center;
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
 .timeout-dots { display: flex; gap: 3px; margin-top: 3px; }
 .fg-home .timeout-dots, .sb-home .timeout-dots { justify-content: flex-end; }
 .to-dot {
