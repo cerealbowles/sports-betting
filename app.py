@@ -1574,6 +1574,17 @@ def _as_decimal_odds(odds):
     return odds
 
 
+@app.template_filter('american_odds')
+def _american_odds_filter(odds):
+    """Decimal odds -> American, for prefilling the edit-bet odds field."""
+    decimal = _as_decimal_odds(odds)
+    if not decimal or decimal <= 1:
+        return None
+    if decimal >= 2.0:
+        return int(round((decimal - 1) * 100))
+    return int(round(-100 / (decimal - 1)))
+
+
 @app.template_filter('bet_return')
 def _bet_return_filter(bet):
     """Total payout (stake included) for an open bet, tolerant of American odds."""
