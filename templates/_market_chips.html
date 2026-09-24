@@ -63,7 +63,7 @@
 {% set mc_sp_has = game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none %}
 {% if mc_sp_has %}
 {% set mc_sp_vf = vig_free_pair(game.odds.home_spread_price, game.odds.away_spread_price) %}
-{% set mc_sp_mdl_raw = spread_cover_prob(game.sport, mc_model_home_prob, game.odds.home_spread) %}
+{% set mc_sp_mdl_raw = spread_model_cover_prob(game.sport, game.model.factors, game.odds.home_spread) if game.model and game.model.factors else none %}
 {% set mc_sp_ok = mc_sp_vf[0] is not none and mc_sp_mdl_raw is not none %}
 {% if mc_sp_ok %}
 {% set mc_sp_mkt_home = mc_sp_vf[0] * 100 %}
@@ -74,11 +74,11 @@
 {% set mc_sp_home_label = mc_home_team ~ ' ' ~ ('+' if mc_sp_home_val > 0) ~ mc_sp_home_val %}
 {% set mc_sp_away_label = mc_away_team ~ ' ' ~ ('+' if mc_sp_away_val > 0) ~ mc_sp_away_val %}
 {% set mc_sp_conf = ([mc_sp_mdl_home, 100 - mc_sp_mdl_home] | max) %}
-{# Sport-level track record overrides raw model certainty: a proxy that's
-   never beaten break-even out-of-sample for this sport (spread_proxy.
+{# Sport-level track record overrides raw model certainty: a model that's
+   never beaten break-even out-of-sample for this sport (spread_model.
    VALIDATED_SPORTS) shouldn't read as confident just because a given game's
    cover_prob lands far from 50%. #}
-{% set mc_sp_validated = spread_validated(game.sport) %}
+{% set mc_sp_validated = spread_model_validated(game.sport) %}
 {% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_conf >= 65 else ('medium' if mc_sp_conf >= 55 else 'low')) %}
 {% set mc_sp_conf_pips = 6 if mc_sp_conf >= 75 else (5 if mc_sp_conf >= 68 else (4 if mc_sp_conf >= 62 else (3 if mc_sp_conf >= 58 else (2 if mc_sp_conf >= 54 else 1)))) %}
 {% if mc_sp_edge >= 0 %}
@@ -154,10 +154,11 @@
             <span class="mc-side mc-side-muted">no line</span>
             {% endif %}
         </div>
-        {# Spread — surfaces the same "Model Factors" panel as ML, since the
-           spread proxy is derived straight from that win-probability model
-           (spread_proxy.py), not a separately-trained model of its own. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this proxy hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
+        {# Spread — surfaces its own "Spread Model" panel (_spread_factors.html,
+           spread_model.py) — a real regression fit against actual margins,
+           not derived from the win-prob model's logit like the old
+           spread_proxy.py was. #}
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
             <span class="mc-t">SPREAD</span>
             {% if mc_sp_has and mc_sp_ok %}
             <span class="mc-big">{{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
@@ -227,7 +228,7 @@
                 <span class="mc-lbl">SPREAD</span>
                 {% if mc_sp_has and mc_sp_ok %}
                 <div><div class="mc-val mc-mkt">{{ mc_sp_home_label }}</div><div class="mc-sub">{{ mc_sp_mkt_home | round(1) }}% cover</div></div>
-                <div><div class="mc-val mc-mdl">{{ mc_sp_home_label.split(' ')[0] }} {{ mc_sp_mdl_home | round(1) }}%</div><div class="mc-sub{{ ' mc-unproven' if not mc_sp_validated }}">{{ 'cover (proxy)' if mc_sp_validated else 'cover (unproven)' }}</div></div>
+                <div><div class="mc-val mc-mdl">{{ mc_sp_home_label.split(' ')[0] }} {{ mc_sp_mdl_home | round(1) }}%</div><div class="mc-sub{{ ' mc-unproven' if not mc_sp_validated }}">{{ 'cover (model)' if mc_sp_validated else 'cover (unproven)' }}</div></div>
                 <span class="mc-edge{{ ' mc-hot' if mc_sp_validated and mc_sp_pts >= MC_HOT }}">{{ mc_sp_side.split(' ')[0] }} {{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
                 {% else %}
                 <div class="mc-sub" style="grid-column:2/4;">No spread posted</div><span></span>

@@ -28,6 +28,7 @@ import wnba_api
 import wnba_model
 import market_edge_calibration
 import spread_proxy
+import spread_model
 import bball_total_model
 import football_total_model
 import hockey_total_model
@@ -1604,6 +1605,16 @@ app.jinja_env.globals['spread_implied_margin'] = spread_proxy.implied_margin
 app.jinja_env.globals['spread_cover_prob'] = spread_proxy.cover_prob
 app.jinja_env.globals['spread_validated'] = spread_proxy.is_validated
 app.jinja_env.globals['vig_free_pair'] = _vig_free_implied
+
+# spread_model.py — real from-scratch margin regression (see its docstring),
+# now the live source for the Spread chip/bet row, replacing the spread_proxy
+# calls above wherever a real game.model.factors list is available. The
+# spread_proxy globals stay registered (backfill_spread_accuracy.py and any
+# historical-row math still reference spread_proxy directly by import).
+app.jinja_env.globals['spread_model_margin'] = spread_model.predict_margin
+app.jinja_env.globals['spread_model_cover_prob'] = spread_model.cover_prob
+app.jinja_env.globals['spread_model_validated'] = spread_model.is_validated
+app.jinja_env.globals['spread_model_factor_rows'] = spread_model.weighted_factors
 
 _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
                              **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}

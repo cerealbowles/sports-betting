@@ -2,19 +2,18 @@
    template (MLB/NBA/NHL/WNBA/NFL/CFB) so Spread opens the same inline
    .bet-slip (openBetSlip() in main.js) that Moneyline/Total already use,
    instead of navigating to the old /new-bet page. Cover probability comes
-   from spread_proxy.py — the same proxy model _market_chips.html's Spread
-   chip already uses for its edge number, just computed here per-button
-   instead of only for the "recommended" side.
+   from spread_model.py — the same real, independently-fit model
+   _market_chips.html's Spread chip already uses for its edge number, just
+   computed here per-button instead of only for the "recommended" side.
 
    Expects `game` in context (with game.sport, game.odds.home_spread /
    .home_spread_price / .away_spread_price, game.home/.away .name/.abbr
-   or .abbrev/.logo_url, game.model.home_prob or .adj_home_prob). #}
+   or .abbrev/.logo_url, game.model.factors). #}
 {% if game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none %}
 {% set sb_away_abbr = game.away.abbrev or game.away.abbr %}
 {% set sb_home_abbr = game.home.abbrev or game.home.abbr %}
-{% set sb_home_prob = (game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob) if game.model else none %}
 {% set sb_vf = vig_free_pair(game.odds.home_spread_price, game.odds.away_spread_price) %}
-{% set sb_home_cover = spread_cover_prob(game.sport, sb_home_prob, game.odds.home_spread) if sb_home_prob is not none else none %}
+{% set sb_home_cover = spread_model_cover_prob(game.sport, game.model.factors, game.odds.home_spread) if game.model and game.model.factors else none %}
 {% set sb_away_cover = (1 - sb_home_cover) if sb_home_cover is not none else none %}
 {% set sb_home_val = game.odds.home_spread %}
 {% set sb_away_val = -game.odds.home_spread %}

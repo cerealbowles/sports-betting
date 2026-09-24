@@ -124,12 +124,14 @@ if (btn && btn.tagName === 'BUTTON') btn.click();
 /* Market-chips row (ML/Spread/Total, _market_chips.html) — tapping a chip
    used to jump straight into placing that bet (openRecommendedBet above).
    Now it opens the details sheet and surfaces the model reasoning behind
-   that chip's number instead: ML and Spread both point at the same
-   "Model Factors" panel (Spread's proxy is derived straight from that
-   win-probability model, so it's the same factors), Total points at its
-   own "Total Model" panel (_total_factors.html) since totals don't share
-   the win-prob model's factor list. Placing the bet is still one tap away
-   from there — this just stops assuming that's what a chip tap means. */
+   that chip's number instead: ML points at "Model Factors" (_nfl_game_card
+   .html etc.'s factors-collapsible), Spread at its own "Spread Model"
+   panel (_spread_factors.html, spread_model.py — a real regression, not
+   derived from ML's factors like the old spread_proxy.py was), Total at
+   its own "Total Model" panel (_total_factors.html). Placing the bet is
+   still one tap away from there — this just stops assuming that's what a
+   chip tap means. */
+var MODEL_FACTORS_ID_PREFIX = {ml: 'factors-', spread: 'spread-factors-', total: 'total-factors-'};
 function openModelFactors(gameKey, kind) {
 openGameDetails(gameKey);
 var details = document.getElementById('gd-' + gameKey);
@@ -138,7 +140,8 @@ setTimeout(function () {
     // getElementById, not querySelector('#...') — game_key routinely
     // contains spaces/dots (e.g. "st. louis cardinals_..."), which are
     // valid in an id attribute but break an unescaped CSS #id selector.
-    var target = document.getElementById((kind === 'total' ? 'total-factors-' : 'factors-') + gameKey);
+    var prefix = MODEL_FACTORS_ID_PREFIX[kind] || MODEL_FACTORS_ID_PREFIX.ml;
+    var target = document.getElementById(prefix + gameKey);
     if (!target || !details.contains(target)) return;
     target.open = true;
     target.scrollIntoView({behavior: 'smooth', block: 'start'});
