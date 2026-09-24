@@ -1729,6 +1729,10 @@ body.embed-mode .container { padding-bottom: 0; }
     transition: background 0.16s, transform 0.16s;
 }
 .btn-bet-team:hover { background: var(--orange); color: #fff; transform: translateY(-1px); }
+/* No odds fetched yet for this game — nothing to actually bet against, so
+   the chip is just a plain label instead of a (dead) link to place a bet. */
+.btn-bet-team-disabled { background: rgba(255,255,255,0.04); color: var(--text-muted); border-color: var(--border); cursor: default; }
+.btn-bet-team-disabled:hover { background: rgba(255,255,255,0.04); color: var(--text-muted); transform: none; }
 
 .track-pair { display: flex; gap: 5px; }
 
@@ -2045,6 +2049,14 @@ body.embed-mode .container { padding-bottom: 0; }
 /* Line movement bobber: green (in your favor, more negative) <-> red (against you) */
 .bc-linemove {
   margin: 0 14px 10px;
+}
+
+.bc-linemove-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 .bc-linemove-track {

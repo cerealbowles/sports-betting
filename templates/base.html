@@ -127,16 +127,6 @@
     </div>
 </div>
 
-<!-- Bet bottom sheet: swipes up over the current page instead of navigating
-     to /new-bet. The sheet's iframe loads the bet form with embed=1 so
-     base.html skips its own chrome inside the sheet. -->
-<div class="sheet-overlay" id="betSheetOverlay" onclick="closeBetSheetOutside(event)">
-    <div class="bottom-sheet" id="betSheet">
-        <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
-        <button type="button" class="sheet-close" onclick="closeBetSheet()" aria-label="Close">✕</button>
-        <iframe id="betSheetFrame" class="bet-sheet-iframe" src="about:blank" title="Place bet"></iframe>
-    </div>
-</div>
 {% endif %}
 
 {% block scripts %}{% endblock %}

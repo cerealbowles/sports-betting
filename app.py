@@ -1807,13 +1807,6 @@ def index():
   """
   return redirect(url_for('mlb_schedule'))
 
-@app.route('/new-bet')
-def new_bet():
-  settings = Setting.query.first()
-  if not settings:
-    settings = Setting(bankroll=50, percent_bankroll=0.25)
-  return render_template('new_bet.html', settings=settings)
-
 @app.route('/history')
 def history():
   open_bets   = OpenBet.query.all()

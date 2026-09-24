@@ -160,12 +160,27 @@
         </div>
         {% endif %}
 
-        <!-- Line movement bobber: green (in your favor, more negative) <-> red (against you) -->
+        <!-- Line movement bobber: green (in your favor, more negative) <-> red (against you) —
+             the actual odds/movement values sit right above the track (moved here from the
+             Financials row below so the numbers read together with the visual). -->
         {% if b.line_move is not none %}
         {% set clamped = b.line_move | abs %}
         {% set clamped = 40 if clamped > 40 else clamped %}
         {% set pct = 50 + (clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
         <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move < 0 else ('against you' if b.line_move > 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
+            <div class="bc-linemove-head">
+                <span class="bc-fin-label">Line</span>
+                <span class="line-cell">
+                    <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
+                    {% if b.current_american is not none %}
+                    <span class="line-arrow">→</span>
+                    <span class="line-curr">{{ '+' if b.current_american > 0 }}{{ b.current_american }}</span>
+                    {% if b.line_move %}{% set mv = b.line_move %}
+                    <span class="line-move {{ 'move-up' if mv > 0 else 'move-dn' }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>
+                    {% endif %}
+                    {% endif %}
+                </span>
+            </div>
             <div class="bc-linemove-track">
                 <div class="bc-linemove-bobber" style="left: {{ pct }}%;"></div>
             </div>
@@ -193,18 +208,14 @@
                     </span>
                 </span>
                 {% else %}
+                {# Pre-game with live movement data renders as the .bc-linemove
+                   block above instead (values sit with the bobber track there);
+                   this is just the no-data fallback (no game_key/odds history). #}
                 <span class="bc-fin-label">Line</span>
                 <span class="bc-fin-val">
                     {% if b.original_american is not none %}
                     <span class="line-cell">
                         <span class="line-orig">{{ '+' if b.original_american > 0 }}{{ b.original_american }}</span>
-                        {% if b.current_american is not none %}
-                        <span class="line-arrow">→</span>
-                        <span class="line-curr">{{ '+' if b.current_american > 0 }}{{ b.current_american }}</span>
-                        {% if b.line_move %}{% set mv = b.line_move %}
-                        <span class="line-move {{ 'move-up' if mv > 0 else 'move-dn' }}">{{ '▲' if mv > 0 else '▼' }}{{ mv | abs }}</span>
-                        {% endif %}
-                        {% endif %}
                     </span>
                     {% else %}—{% endif %}
                 </span>
@@ -324,7 +335,7 @@
 </div>
 {% else %}
 <div class="small" style="padding:16px 4px; text-align:center; color:var(--text-muted);">
-    No open bets. <a href="{{ url_for('new_bet') }}" style="color:var(--orange); font-weight:700; text-decoration:none;">Place your first bet →</a>
+    No open bets. <a href="{{ url_for('index') }}" style="color:var(--orange); font-weight:700; text-decoration:none;">Find a game to bet on →</a>
 </div>
 {% endif %}
 

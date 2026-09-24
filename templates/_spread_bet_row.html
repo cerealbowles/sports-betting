@@ -1,0 +1,50 @@
+{# Shared inline Spread bet-type-row — used by every sport's schedule/game-card
+   template (MLB/NBA/NHL/WNBA/NFL/CFB) so Spread opens the same inline
+   .bet-slip (openBetSlip() in main.js) that Moneyline/Total already use,
+   instead of navigating to the old /new-bet page. Cover probability comes
+   from spread_proxy.py — the same proxy model _market_chips.html's Spread
+   chip already uses for its edge number, just computed here per-button
+   instead of only for the "recommended" side.
+
+   Expects `game` in context (with game.sport, game.odds.home_spread /
+   .home_spread_price / .away_spread_price, game.home/.away .name/.abbr
+   or .abbrev/.logo_url, game.model.home_prob or .adj_home_prob). #}
+{% if game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none %}
+{% set sb_away_abbr = game.away.abbrev or game.away.abbr %}
+{% set sb_home_abbr = game.home.abbrev or game.home.abbr %}
+{% set sb_home_prob = (game.model.adj_home_prob if game.model.adj_home_prob else game.model.home_prob) if game.model else none %}
+{% set sb_vf = vig_free_pair(game.odds.home_spread_price, game.odds.away_spread_price) %}
+{% set sb_home_cover = spread_cover_prob(game.sport, sb_home_prob, game.odds.home_spread) if sb_home_prob is not none else none %}
+{% set sb_away_cover = (1 - sb_home_cover) if sb_home_cover is not none else none %}
+{% set sb_home_val = game.odds.home_spread %}
+{% set sb_away_val = -game.odds.home_spread %}
+<div class="bet-type-row">
+    <span class="bet-type-label">Spread</span>
+    <div class="bet-type-chips">
+        <button type="button" class="btn-bet-team"
+                data-name="{{ sb_away_abbr }} {{ '+' if sb_away_val > 0 }}{{ sb_away_val }}" data-sub="{{ sb_away_abbr }} @ {{ sb_home_abbr }}"
+                data-team="{{ sb_away_abbr }}" data-opp="{{ sb_home_abbr }}"
+                data-logo="{{ game.away.logo_url }}"
+                data-odds="{{ game.odds.away_spread_price }}" data-odds-display="{{ '+' if game.odds.away_spread_price > 0 }}{{ game.odds.away_spread_price }}"
+                data-model-prob="{{ sb_away_cover if sb_away_cover is not none else '' }}"
+                data-implied-prob="{{ sb_vf[1] if sb_vf[1] is not none else '' }}"
+                data-sport="{{ game.sport }}" data-bet-type="Spread" data-bet-side="away"
+                data-eventstartutc="{{ game.game_time_utc }}"
+                data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                data-game-key="{{ game.game_key }}"
+                onclick="openBetSlip(this)">{{ sb_away_abbr }} {{ '+' if sb_away_val > 0 }}{{ sb_away_val }}</button>
+        <button type="button" class="btn-bet-team"
+                data-name="{{ sb_home_abbr }} {{ '+' if sb_home_val > 0 }}{{ sb_home_val }}" data-sub="{{ sb_away_abbr }} @ {{ sb_home_abbr }}"
+                data-team="{{ sb_home_abbr }}" data-opp="{{ sb_away_abbr }}"
+                data-logo="{{ game.home.logo_url }}"
+                data-odds="{{ game.odds.home_spread_price }}" data-odds-display="{{ '+' if game.odds.home_spread_price > 0 }}{{ game.odds.home_spread_price }}"
+                data-model-prob="{{ sb_home_cover if sb_home_cover is not none else '' }}"
+                data-implied-prob="{{ sb_vf[0] if sb_vf[0] is not none else '' }}"
+                data-sport="{{ game.sport }}" data-bet-type="Spread" data-bet-side="home"
+                data-eventstartutc="{{ game.game_time_utc }}"
+                data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                data-game-key="{{ game.game_key }}"
+                onclick="openBetSlip(this)">{{ sb_home_abbr }} {{ '+' if sb_home_val > 0 }}{{ sb_home_val }}</button>
+    </div>
+</div>
+{% endif %}
