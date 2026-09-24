@@ -1602,6 +1602,7 @@ def _sigmoid_pct_filter(logit):
 
 app.jinja_env.globals['spread_implied_margin'] = spread_proxy.implied_margin
 app.jinja_env.globals['spread_cover_prob'] = spread_proxy.cover_prob
+app.jinja_env.globals['spread_validated'] = spread_proxy.is_validated
 app.jinja_env.globals['vig_free_pair'] = _vig_free_implied
 
 _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
@@ -1627,6 +1628,44 @@ def _total_over_prob(sport, total_projection, market_total_line):
 
 
 app.jinja_env.globals['total_over_prob'] = _total_over_prob
+
+
+# Confidence cap for the Total O/U chip. Unlike spread_proxy.VALIDATED_SPORTS
+# (fit from an out-of-sample check against 106-2312 live-graded picks per
+# sport), the total models have zero in-app graded history yet — total
+# tracking (total_went_over/total_pick_roi, see _upsert_predictions below)
+# only started today, so /model?type=total reads n=0 across every sport.
+# This is a stopgap using each model's pre-ship season-level fit instead
+# (see bball_total_model.py / football_total_model.py / mlb_total_model.py /
+# hockey_total_model.py docstrings):
+#   NFL R²=0.23, CFB R²=0.27   — decent fits, no cap.
+#   NBA R²=0.09, WNBA R²=0.16  — modest fits, cap at 'medium'.
+#   MLB R²=0.053, NHL R²=0.032 — weak fits (each flagged "meaningfully
+#     weaker" in its own docstring), flagged 'unproven' like the spread
+#     proxy's worst sports.
+# Revisit once each sport has a few hundred live-graded total picks —
+# swap this out for a real out-of-sample check the same way spread_proxy's
+# VALIDATED_SPORTS was derived.
+_TOTAL_CONFIDENCE_CAP = {
+    'NFL': None, 'CFB': None,
+    'NBA': 'medium', 'WNBA': 'medium',
+    'MLB': 'unproven', 'NHL': 'unproven',
+}
+
+
+def _total_confidence_tier(sport, raw_level):
+    """Caps a total pick's raw distance-from-50% confidence level by the
+    sport's known model quality, so a weak model can't read as 'high'
+    confidence just because one game's number lands far from 50%."""
+    cap = _TOTAL_CONFIDENCE_CAP.get(sport)
+    if cap == 'unproven':
+        return 'unproven'
+    if cap == 'medium' and raw_level == 'high':
+        return 'medium'
+    return raw_level
+
+
+app.jinja_env.globals['total_confidence_tier'] = _total_confidence_tier
 
 
 def _chip_track_pos(pct):

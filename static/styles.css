@@ -1177,7 +1177,15 @@ body.embed-mode .container { padding-bottom: 0; }
 .mc-chip.mc-confidence-high { border-color: rgba(34,197,94,0.42); }
 .mc-chip.mc-confidence-high .mc-big { color: #5ed6a1; }
 .mc-chip.mc-confidence-high .mc-pips i.on { background: #3aa676; }
+/* Unproven — distinct from mc-confidence-low: "low" means the proxy is
+   validated for this sport but this particular game's number is close to
+   50%; "unproven" means the sport itself has never beaten break-even
+   out-of-sample (spread_proxy.VALIDATED_SPORTS), regardless of the number. */
+.mc-chip.mc-confidence-unproven { border-color: rgba(239,68,68,0.42); }
+.mc-chip.mc-confidence-unproven .mc-big { color: #f87171; }
+.mc-chip.mc-confidence-unproven .mc-pips i.on { background: #b91c1c; }
 .mc-chip-marketonly .mc-side { color: var(--text-muted); }
+.mc-sub.mc-unproven { color: #f87171; }
 
 /* ---------- expanded table ---------- */
 .mc-fold { border-top: 1px solid var(--border); margin-top: 10px; }

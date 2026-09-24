@@ -61,3 +61,27 @@ def cover_prob(sport, home_prob, home_spread_line):
     if sigma <= 0:
         return None
     return _phi((margin - (-home_spread_line)) / sigma)
+
+
+# Out-of-sample cover accuracy per sport (fit COEFFS on the first 70% of each
+# sport's resolved games chronologically, graded cover picks on the held-out
+# last 30%; checked 2026-09-24 against instance/bets.db). Break-even at
+# standard -110 is 52.4%:
+#   MLB 58.5% (n=694 test)   NHL 62.4% (n=258) — real, validated edge.
+#   CFB 51.4% (n=36)   NFL 43.8% (n=33)   NBA 43.3% (n=268)   WNBA 46.4% (n=97)
+#   — at or below a coin flip, and for CFB/NFL/WNBA the sample is also thin.
+# These four keep collecting live-graded picks via spread_pick_roi/
+# spread_covered every game (see app.py _upsert_predictions), so this set
+# should be revisited once each sport clears a few hundred more graded games —
+# it is not a permanent verdict, just where the evidence stands right now.
+VALIDATED_SPORTS = {'MLB', 'NHL'}
+
+
+def is_validated(sport):
+    """Whether this sport's spread proxy has actually beaten break-even
+    out-of-sample, vs. just being fit-and-graded on the same historical data.
+    Sports outside VALIDATED_SPORTS should be flagged low-confidence in the
+    UI regardless of how far from 50% a given game's cover_prob lands —
+    that number reflects the proxy's own certainty, not whether the proxy
+    is any good for this sport."""
+    return sport in VALIDATED_SPORTS

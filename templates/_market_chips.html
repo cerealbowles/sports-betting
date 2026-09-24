@@ -74,7 +74,12 @@
 {% set mc_sp_home_label = mc_home_team ~ ' ' ~ ('+' if mc_sp_home_val > 0) ~ mc_sp_home_val %}
 {% set mc_sp_away_label = mc_away_team ~ ' ' ~ ('+' if mc_sp_away_val > 0) ~ mc_sp_away_val %}
 {% set mc_sp_conf = ([mc_sp_mdl_home, 100 - mc_sp_mdl_home] | max) %}
-{% set mc_sp_conf_level = 'high' if mc_sp_conf >= 65 else ('medium' if mc_sp_conf >= 55 else 'low') %}
+{# Sport-level track record overrides raw model certainty: a proxy that's
+   never beaten break-even out-of-sample for this sport (spread_proxy.
+   VALIDATED_SPORTS) shouldn't read as confident just because a given game's
+   cover_prob lands far from 50%. #}
+{% set mc_sp_validated = spread_validated(game.sport) %}
+{% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_conf >= 65 else ('medium' if mc_sp_conf >= 55 else 'low')) %}
 {% set mc_sp_conf_pips = 6 if mc_sp_conf >= 75 else (5 if mc_sp_conf >= 68 else (4 if mc_sp_conf >= 62 else (3 if mc_sp_conf >= 58 else (2 if mc_sp_conf >= 54 else 1)))) %}
 {% if mc_sp_edge >= 0 %}
 {% set mc_sp_side = mc_sp_home_label %}
@@ -105,7 +110,12 @@
 {% if mc_tot_ok %}
 {% set mc_tot_model_over_pct = mc_tot_model_over_raw * 100 %}
 {% set mc_tot_conf = ([mc_tot_model_over_pct, 100 - mc_tot_model_over_pct] | max) %}
-{% set mc_tot_conf_level = 'high' if mc_tot_conf >= 65 else ('medium' if mc_tot_conf >= 55 else 'low') %}
+{% set mc_tot_conf_raw = 'high' if mc_tot_conf >= 65 else ('medium' if mc_tot_conf >= 55 else 'low') %}
+{# No in-app graded sample exists yet for totals (see total_confidence_tier's
+   docstring) — this caps the raw number by each model's known pre-ship fit
+   quality instead, same reasoning as spread_validated() above. #}
+{% set mc_tot_conf_level = total_confidence_tier(game.sport, mc_tot_conf_raw) %}
+{% set mc_tot_validated = mc_tot_conf_level != 'unproven' %}
 {% set mc_tot_conf_pips = 6 if mc_tot_conf >= 75 else (5 if mc_tot_conf >= 68 else (4 if mc_tot_conf >= 62 else (3 if mc_tot_conf >= 58 else (2 if mc_tot_conf >= 54 else 1)))) %}
 {% set mc_tot_edge = mc_tot_model_over_pct - mc_tot_over_pct %}
 {% if mc_tot_edge >= 0 %}
@@ -146,7 +156,7 @@
         {# Spread — opens the inline .bet-slip (same as ML) via the Spread
            btn-bet-team rendered by _spread_bet_row.html in the details
            sheet, instead of navigating to the old /new-bet page. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_sp_edge >= 0 else 'away' }}', 'Spread')"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_has and mc_sp_ok }}{{ ' mc-hot' if mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_has and mc_sp_ok }}" title="{% if mc_sp_has and mc_sp_ok %}{% if mc_sp_validated %}Model confidence: {{ mc_sp_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this proxy hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model confidence{% endif %}"{% if mc_sp_has and mc_sp_ok %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'home' if mc_sp_edge >= 0 else 'away' }}', 'Spread')"{% endif %}>
             <span class="mc-t">SPREAD</span>
             {% if mc_sp_has and mc_sp_ok %}
             <span class="mc-big">{{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
@@ -163,7 +173,7 @@
            whichever side the market itself currently favors. Opens the
            inline .bet-slip via the existing Over/Under btn-bet-team in the
            details sheet instead of navigating to the old /new-bet page. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}Model confidence: {{ mc_tot_conf | round(1) }}%{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'over' if mc_tot_side_over else 'under' }}', 'Over/Under')"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openRecommendedBet('{{ game.game_key }}', '{{ 'over' if mc_tot_side_over else 'under' }}', 'Over/Under')"{% endif %}>
             <span class="mc-t">TOTAL</span>
             {% if mc_tot_ok %}
             <span class="mc-big">{{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
@@ -216,8 +226,8 @@
                 <span class="mc-lbl">SPREAD</span>
                 {% if mc_sp_has and mc_sp_ok %}
                 <div><div class="mc-val mc-mkt">{{ mc_sp_home_label }}</div><div class="mc-sub">{{ mc_sp_mkt_home | round(1) }}% cover</div></div>
-                <div><div class="mc-val mc-mdl">{{ mc_sp_home_label.split(' ')[0] }} {{ mc_sp_mdl_home | round(1) }}%</div><div class="mc-sub">cover (proxy)</div></div>
-                <span class="mc-edge{{ ' mc-hot' if mc_sp_pts >= MC_HOT }}">{{ mc_sp_side.split(' ')[0] }} {{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
+                <div><div class="mc-val mc-mdl">{{ mc_sp_home_label.split(' ')[0] }} {{ mc_sp_mdl_home | round(1) }}%</div><div class="mc-sub{{ ' mc-unproven' if not mc_sp_validated }}">{{ 'cover (proxy)' if mc_sp_validated else 'cover (unproven)' }}</div></div>
+                <span class="mc-edge{{ ' mc-hot' if mc_sp_validated and mc_sp_pts >= MC_HOT }}">{{ mc_sp_side.split(' ')[0] }} {{ '+' if mc_sp_pts >= 0 }}{{ mc_sp_pts | round(1) }}</span>
                 {% else %}
                 <div class="mc-sub" style="grid-column:2/4;">No spread posted</div><span></span>
                 {% endif %}
@@ -240,8 +250,8 @@
                 <span class="mc-lbl">TOTAL</span>
                 {% if mc_tot_ok %}
                 <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{{ mc_tot_over_pct | round(1) }}% over</div></div>
-                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection }} proj</div><div class="mc-sub">{% if game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
-                <span class="mc-edge{{ ' mc-hot' if mc_tot_pts >= MC_HOT }}">{{ 'O' if mc_tot_side_over else 'U' }} {{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
+                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection }} proj</div><div class="mc-sub{{ ' mc-unproven' if not mc_tot_validated }}">{% if not mc_tot_validated %}model (unproven){% elif game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
+                <span class="mc-edge{{ ' mc-hot' if mc_tot_validated and mc_tot_pts >= MC_HOT }}">{{ 'O' if mc_tot_side_over else 'U' }} {{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
                 {% elif mc_tot_has %}
                 <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{% if mc_tot_over_pct is not none %}{{ mc_tot_over_pct | round(1) }}% over{% endif %}</div></div>
                 <div><div class="mc-val mc-dash">—</div><div class="mc-sub">no model yet</div></div>
