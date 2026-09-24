@@ -4427,14 +4427,30 @@ def api_live_scores():
         if not info:
             continue
         entry = dict(info)
-        # Attach live implied win probability from current FanDuel odds
+        # Attach implied win probability for the bet's own side. Once the
+        # game is Live this is the actual current in-play moneyline
+        # (odds_history.save_live, written every odds refresh by
+        # odds_api.get_odds_map) — real market movement, e.g. CWS going up
+        # 4-0 shortens their live price and this % rises with it. Pre-game
+        # it falls back to the last pre-kickoff snapshot (CLV context).
+        #
+        # Sport keys don't match between the two tables without translating:
+        # bet.sport is 'MLB' but odds_history rows are written under the Odds
+        # API sport key ('baseball_mlb') — passing bet.sport straight through
+        # silently matched nothing.
         if bet.bet_side in ('home', 'away'):
-            snap = _oh.get_latest((bet.sport or '').upper(), bet.game_key, game_start=bet.eventstart)
-            if snap:
-                live_amer = snap.get(f'{bet.bet_side}_odds')
-                if live_amer is not None:
-                    entry['live_odds']    = live_amer
-                    entry['live_implied'] = _amer_to_implied(live_amer)
+            sk = _SPORT_ODDS_KEY.get((bet.sport or '').upper(), '')
+            if sk:
+                snap = None
+                if info.get('status') == 'Live':
+                    snap = _oh.get_live(sk, bet.game_key)
+                if not snap:
+                    snap = _oh.get_latest(sk, bet.game_key, game_start=bet.eventstart)
+                if snap:
+                    live_amer = snap.get(f'{bet.bet_side}_odds')
+                    if live_amer is not None:
+                        entry['live_odds']    = live_amer
+                        entry['live_implied'] = _amer_to_implied(live_amer)
         result[str(bet.id)] = entry
 
     return jsonify(result)
@@ -4830,7 +4846,9 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
 # NOTE: works correctly with a single Gunicorn worker (1 process = 1 shared cache).
 
 def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
-    """Post the full ranked MLB recommendation list to Discord at noon ET."""
+    """Post the ranked list of ★-recommended MLB picks to Discord at noon ET
+    (only games passing _mlb_star_pick's kelly/edge/payout-floor rule —
+    previously this sent every Preview game with a model+odds pair)."""
     import requests as _req
     import odds_history
     from zoneinfo import ZoneInfo
@@ -4848,6 +4866,12 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             model = game.get('model')
             odds  = game.get('odds')
             if not model or not odds:
+                continue
+            # Only games that earn the ★ on their own card — same kelly > 0 /
+            # edge >= 4pt / payout b >= 0.25 rule as everywhere else in the
+            # app, so the noon ping matches what "Recommended" means on-site
+            # instead of ranking every game with a model+odds pair.
+            if not _mlb_star_pick(game):
                 continue
             home_obj  = game.get('home') or {}
             away_obj  = game.get('away') or {}
@@ -4897,7 +4921,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             })
 
     if not candidates:
-        print('[daily-picks] no Preview games with trust scores — message not sent', flush=True)
+        print('[daily-picks] no Preview games earned a ★ recommendation — message not sent', flush=True)
         return
 
     print(f'[daily-picks] building embed with {len(candidates)} games', flush=True)
@@ -4923,7 +4947,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             'title':       f'⚾ MLB Daily Picks · {today_str}',
             'description': description,
             'color':       0xFB4F14,
-            'footer':      {'text': 'Sorted by Trust Score · noon ET snapshot'},
+            'footer':      {'text': 'Recommended picks only · sorted by Trust Score · noon ET snapshot'},
         }]}, timeout=10)
         print(f'[daily-picks] Discord response: {r.status_code}', flush=True)
     except Exception as e:

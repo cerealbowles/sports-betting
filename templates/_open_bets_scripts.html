@@ -248,11 +248,21 @@ function closeDeleteBetModal() {
             var tm = st.parentElement.querySelector('.bc-time');
             if (tm) tm.hidden = true;
           }
+          // Live market readout for the bet's own side — the current in-play
+          // moneyline once the game is Live, e.g. CWS going up 4-0 shortens
+          // their live price and this rises with it. Pre-game this is the
+          // last pre-kickoff snapshot instead, so it's labeled differently.
           var hdr = document.querySelector('.bc-live-hdr[data-bet-id="' + betId + '"]');
-          if (hdr && info.live_implied != null) {
-            var imp = info.live_implied;
-            var impCls = imp >= 60 ? 'limp-good' : (imp <= 40 ? 'limp-bad' : 'limp-neutral');
-            hdr.innerHTML = '<span class="bc-live-implied ' + impCls + '">' + imp.toFixed(1) + '% win</span>';
+          if (hdr) {
+            if (info.live_implied != null) {
+              var imp = info.live_implied;
+              var impCls = imp >= 60 ? 'limp-good' : (imp <= 40 ? 'limp-bad' : 'limp-neutral');
+              var oddsTxt = info.live_odds != null ? ((info.live_odds > 0 ? '+' : '') + info.live_odds + ' · ') : '';
+              var label = isLive ? oddsTxt + imp.toFixed(1) + '% win now' : oddsTxt + imp.toFixed(1) + '% pre-game';
+              hdr.innerHTML = '<span class="bc-live-implied ' + impCls + '" title="' + (isLive ? 'Current market odds for your side' : 'Market odds as of last pre-game snapshot') + '">' + label + '</span>';
+            } else {
+              hdr.innerHTML = '';
+            }
           }
         });
       })

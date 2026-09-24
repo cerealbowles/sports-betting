@@ -1696,6 +1696,17 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .weather-badge { color: var(--text-muted); font-size: 0.72rem; }
 
+/* Bet-type badge on open-bet cards — ML/Spread/Total needs to read at a
+   glance in the header, without expanding the card down to the market chip. */
+.eb-type-badge {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.04em;
+    padding: 2px 7px; border-radius: 999px;
+}
+.eb-type-badge.eb-type-ml { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(96,165,250,0.32); }
+.eb-type-badge.eb-type-spread { background: var(--orange-dim); color: var(--orange); border: 1px solid rgba(251,79,20,0.32); }
+.eb-type-badge.eb-type-total { background: rgba(34,197,94,0.14); color: var(--win); border: 1px solid rgba(34,197,94,0.32); }
+.eb-type-badge.eb-type-other { background: rgba(255,255,255,0.08); color: var(--text-muted); border: 1px solid var(--border); }
+
 .scoreboard {
     display: grid;
     grid-template-columns: 1fr 140px 1fr;

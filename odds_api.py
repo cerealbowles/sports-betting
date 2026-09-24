@@ -398,9 +398,12 @@ def get_odds_map(sport):
         # e.g. "2026-05-16T00" vs "2026-05-16T17" are distinct keys
         event_time = (event.get('commence_time') or '')[:13]  # 'YYYY-MM-DDTHH'
         hist_key = f"{_normalize(home_name)}_{_normalize(away_name)}_{event_time}"
-        # Only record pre-game (Preview) odds — once the game has started, price
-        # swings reflect in-game win probability, not market/sharp movement,
-        # and would corrupt line-movement analysis.
+        # Only record pre-game (Preview) odds into the CLV/line-movement history —
+        # once the game has started, price swings reflect in-game win probability,
+        # not market/sharp movement, and would corrupt line-movement analysis.
+        # In-play prices go to the separate live_odds table instead (see
+        # odds_history.save_live), which just tracks the single freshest price
+        # per game for the open-bet card's "current market" readout.
         commence_raw = event.get('commence_time') or ''
         is_preview = True
         if commence_raw:
@@ -411,6 +414,8 @@ def get_odds_map(sport):
                 is_preview = True
         if is_preview:
             odds_history.record(sport_key, hist_key, home_price, away_price)
+        else:
+            odds_history.save_live(sport_key, hist_key, home_price, away_price)
         movement = odds_history.get_movement(sport_key, hist_key)
 
         map_key = f"{_normalize(home_name)}_{event_time}"

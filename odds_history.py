@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS pregame_odds (
     recorded_at TEXT NOT NULL,
     PRIMARY KEY (sport, game_key)
 );
+CREATE TABLE IF NOT EXISTS live_odds (
+    sport       TEXT NOT NULL,
+    game_key    TEXT NOT NULL,
+    home_odds   INTEGER NOT NULL,
+    away_odds   INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (sport, game_key)
+);
 '''
 
 
@@ -136,6 +144,42 @@ def get_pregame(sport, game_key):
                 (sport, game_key),
             ).fetchone()
         return json.loads(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def save_live(sport, game_key, home_odds, away_odds):
+    """Overwrite the current in-play moneyline for a live game.
+
+    Deliberately a separate table from odds_snapshot (pre-game only, used
+    for CLV/line-movement analysis) so in-game price swings never leak into
+    that history — this just holds the single freshest live price per game,
+    for the open-bet card's "current market odds" readout once a game goes
+    Live (see api_live_scores in app.py).
+    """
+    try:
+        with _conn() as c:
+            c.execute(
+                'INSERT OR REPLACE INTO live_odds (sport, game_key, home_odds, away_odds, recorded_at) '
+                'VALUES (?,?,?,?,?)',
+                (sport, game_key, home_odds, away_odds,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+    except Exception:
+        pass
+
+
+def get_live(sport, game_key):
+    """Freshest in-play moneyline recorded by save_live(), or None if the
+    book hasn't offered (or we haven't yet polled) a live price for this
+    game."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                'SELECT home_odds, away_odds FROM live_odds WHERE sport=? AND game_key=?',
+                (sport, game_key),
+            ).fetchone()
+        return {'home_odds': row[0], 'away_odds': row[1]} if row else None
     except Exception:
         return None
 
