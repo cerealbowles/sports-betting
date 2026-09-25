@@ -50,10 +50,21 @@
 
 {# Confidence is model certainty, separate from market edge. The six bars
     encode distance from 50% so a large disagreement is not mistaken for
-    confidence in the outcome. #}
+    confidence in the outcome.
+    Thresholds come from confidence_tiers(game.sport) (app.py) — each
+    sport's own percentile cutoffs over its actual blended-confidence
+    history (0.6*model + 0.4*empirical win rate at that confidence level;
+    MLB's version of that blend also folds in its trust-score rank bucket —
+    see _historical_confidence_values's docstring), not a flat guessed
+    number. A flat 65% 'high' cutoff was found to be mathematically
+    unreachable for MLB (1,027-game sample topped out at 64.0%). Recomputed
+    automatically every time new games resolve (_recompute_confidence_tiers,
+    wired into _recompute_all_calibration) — falls back to a flat 65/55
+    default for a sport that hasn't accumulated enough resolved games yet. #}
 {% set mc_ml_conf = ([mc_model_home_prob, 1 - mc_model_home_prob] | max) * 100 %}
-{% set mc_ml_conf_level = 'high' if mc_ml_conf >= 65 else ('medium' if mc_ml_conf >= 55 else 'low') %}
-{% set mc_ml_conf_pips = 6 if mc_ml_conf >= 75 else (5 if mc_ml_conf >= 68 else (4 if mc_ml_conf >= 62 else (3 if mc_ml_conf >= 58 else (2 if mc_ml_conf >= 54 else 1)))) %}
+{% set mc_ct = confidence_tiers(game.sport) %}
+{% set mc_ml_conf_level = 'high' if mc_ml_conf >= mc_ct.high else ('medium' if mc_ml_conf >= mc_ct.medium else 'low') %}
+{% set mc_ml_conf_pips = 6 if mc_ml_conf >= mc_ct.pips[4] else (5 if mc_ml_conf >= mc_ct.pips[3] else (4 if mc_ml_conf >= mc_ct.pips[2] else (3 if mc_ml_conf >= mc_ct.pips[1] else (2 if mc_ml_conf >= mc_ct.pips[0] else 1)))) %}
 
 {# ---------------- Moneyline ---------------- #}
 {% set mc_ml_has = game.odds and game.odds.home_implied is not none and game.odds.away_implied is not none %}
@@ -118,8 +129,17 @@
    line instead of rounding the raw margin to the nearest half-point. #}
 {% set mc_sp_model_fav_val = -1.5 if game.sport in ('MLB', 'NHL') else ((-(mc_sp_margin | abs) * 2) | round | int) / 2.0 %}
 {% set mc_sp_model_conf = mc_sp_margin | abs %}
-{% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_model_conf >= 6 else ('medium' if mc_sp_model_conf >= 3 else 'low')) %}
-{% set mc_sp_conf_pips = 6 if mc_sp_model_conf >= 9 else (5 if mc_sp_model_conf >= 7 else (4 if mc_sp_model_conf >= 5 else (3 if mc_sp_model_conf >= 3 else (2 if mc_sp_model_conf >= 1.5 else 1)))) %}
+{# Thresholds come from spread_confidence_tiers(game.sport) (app.py) —
+   each sport's own percentile cutoffs over its actual predicted-margin
+   history, not a flat guessed point value, the same idea as the ML chip's
+   confidence_tiers(). Self-updates as new games resolve
+   (_recompute_spread_confidence_tiers, wired into _recompute_all_
+   calibration); falls back to a flat 6pt/3pt default until a sport has
+   enough resolved games. Irrelevant for unvalidated sports — they're
+   forced to 'unproven' regardless. #}
+{% set mc_sp_ct = spread_confidence_tiers(game.sport) %}
+{% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_model_conf >= mc_sp_ct.high else ('medium' if mc_sp_model_conf >= mc_sp_ct.medium else 'low')) %}
+{% set mc_sp_conf_pips = 6 if mc_sp_model_conf >= mc_sp_ct.pips[4] else (5 if mc_sp_model_conf >= mc_sp_ct.pips[3] else (4 if mc_sp_model_conf >= mc_sp_ct.pips[2] else (3 if mc_sp_model_conf >= mc_sp_ct.pips[1] else (2 if mc_sp_model_conf >= mc_sp_ct.pips[0] else 1)))) %}
 {% endif %}
 {% set mc_sp_fd_label = (mc_home_team ~ ' ' ~ ('+' if game.odds.home_spread > 0) ~ game.odds.home_spread) if (game.odds and game.odds.home_spread is not none) else none %}
 
@@ -169,13 +189,20 @@
 {% if mc_tot_ok %}
 {% set mc_tot_model_over_pct = mc_tot_model_over_raw * 100 %}
 {% set mc_tot_conf = ([mc_tot_model_over_pct, 100 - mc_tot_model_over_pct] | max) %}
-{% set mc_tot_conf_raw = 'high' if mc_tot_conf >= 65 else ('medium' if mc_tot_conf >= 55 else 'low') %}
+{# Thresholds come from total_confidence_tiers(game.sport) (app.py) — each
+   sport's own percentile cutoffs over its actual total_over_prob history,
+   same idea as the ML/Spread chips. Self-updates as total picks resolve
+   (_recompute_total_confidence_tiers); total-pick grading only started
+   recently so this reliably falls back to the flat 65%/55% default until
+   enough games have gone Final. #}
+{% set mc_tot_ct = total_confidence_tiers(game.sport) %}
+{% set mc_tot_conf_raw = 'high' if mc_tot_conf >= mc_tot_ct.high else ('medium' if mc_tot_conf >= mc_tot_ct.medium else 'low') %}
 {# No in-app graded sample exists yet for totals (see total_confidence_tier's
    docstring) — this caps the raw number by each model's known pre-ship fit
    quality instead, same reasoning as spread_validated() above. #}
 {% set mc_tot_conf_level = total_confidence_tier(game.sport, mc_tot_conf_raw) %}
 {% set mc_tot_validated = mc_tot_conf_level != 'unproven' %}
-{% set mc_tot_conf_pips = 6 if mc_tot_conf >= 75 else (5 if mc_tot_conf >= 68 else (4 if mc_tot_conf >= 62 else (3 if mc_tot_conf >= 58 else (2 if mc_tot_conf >= 54 else 1)))) %}
+{% set mc_tot_conf_pips = 6 if mc_tot_conf >= mc_tot_ct.pips[4] else (5 if mc_tot_conf >= mc_tot_ct.pips[3] else (4 if mc_tot_conf >= mc_tot_ct.pips[2] else (3 if mc_tot_conf >= mc_tot_ct.pips[1] else (2 if mc_tot_conf >= mc_tot_ct.pips[0] else 1)))) %}
 {# Side shown is whichever way the market currently leans, not whichever
    way the model likes better — a model that likes the market's side less
    shows up as negative points instead of quietly flipping to the other side. #}

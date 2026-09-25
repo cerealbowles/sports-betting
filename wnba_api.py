@@ -30,7 +30,7 @@ _cache = {}
 # scoreboard: 120s matches nfl_api.py/get_live_scores()'s TTL — live-game
 # state (clock/period/score) needs to be fresh on manual refresh.
 # season_log: 1 hour — team season stats don't need live-game freshness.
-_TTL = {'scoreboard': 120, 'season_log': 3600}
+_TTL = {'scoreboard': 120, 'season_log': 3600, 'prior_season_stats': 24 * 3600}
 
 
 def _parse_linescores(comp, regulation_periods=4):
@@ -103,6 +103,16 @@ def _get_wnba_season():
     season. Jan-Apr is the offseason; use the season that just finished."""
     today = datetime.now(_ET).date()
     return today.year if today.month >= 5 else today.year - 1
+
+
+# Below this many current-season games played, a team's win%/split/ppg
+# factors are blended with its final prior-season numbers — same fix and
+# same reasoning as nfl_api.EARLY_SEASON_GAMES (see that constant's
+# docstring): without it, 4 of the model's factors compute off a 0-0
+# no-data default for every one of a new season's first few games. Weight
+# ramps linearly to 100% current-season data by the time a team has played
+# this many games.
+EARLY_SEASON_GAMES = 4
 
 
 # ── Season game log ────────────────────────────────────────────────────────────
@@ -189,6 +199,78 @@ def _compute_team_season_stats(games):
         }
         for t, v in pts.items() if v['g'] > 0
     }
+
+
+def _get_prior_season_team_stats(season):
+    """Final wins/losses, home/road split, and ppg/ppg_allowed for every team
+    from `season` (the season *before* the one currently in progress). Used
+    to blend in prior-season signal for early-current-season games — see
+    EARLY_SEASON_GAMES. Mirrors nfl_api._get_prior_season_team_stats."""
+    key = f'wnba_prior_stats_{season}'
+    now_ts = time.time()
+    if key in _cache:
+        data, ts = _cache[key]
+        if now_ts - ts < _TTL['prior_season_stats']:
+            return data
+
+    games = _get_season_game_log(season)
+    wl = defaultdict(lambda: {'wins': 0, 'losses': 0, 'split_w': 0, 'split_l': 0})
+    for g in games:
+        h, a, h_won = g['home_name'], g['away_name'], g['home_won']
+        wl[h]['wins']    += 1 if h_won else 0
+        wl[h]['losses']  += 0 if h_won else 1
+        wl[h]['split_w'] += 1 if h_won else 0
+        wl[h]['split_l'] += 0 if h_won else 1
+        wl[a]['wins']    += 0 if h_won else 1
+        wl[a]['losses']  += 1 if h_won else 0
+        wl[a]['split_w'] += 0 if h_won else 1
+        wl[a]['split_l'] += 1 if h_won else 0
+
+    ppg = _compute_team_season_stats(games)
+    result = {
+        t: {**v, 'ppg': ppg.get(t, {}).get('ppg'), 'ppg_allowed': ppg.get(t, {}).get('ppg_allowed')}
+        for t, v in wl.items()
+    }
+    _cache[key] = (result, now_ts)
+    return result
+
+
+def _apply_prior_season_blend(team, prior_stats):
+    """When `team` has played fewer than EARLY_SEASON_GAMES games this
+    season, blend its current-season win%/split%/ppg/ppg_allowed with last
+    season's final numbers, weighted toward current-season data as more of
+    it accumulates. Sets 'blend_*' keys consumed by wnba_model.predict();
+    leaves the raw wins/losses/ppg fields untouched so the game card still
+    displays the team's actual current-season record. Mirrors
+    nfl_api._apply_prior_season_blend."""
+    cur_games = team.get('wins', 0) + team.get('losses', 0)
+    if cur_games >= EARLY_SEASON_GAMES:
+        return
+    prior = prior_stats.get(team.get('name', ''))
+    if not prior:
+        return
+
+    w = cur_games / EARLY_SEASON_GAMES  # weight given to current-season data
+
+    cur_win_pct = team['wins'] / cur_games if cur_games else 0.5
+    prior_total = prior['wins'] + prior['losses']
+    prior_win_pct = prior['wins'] / prior_total if prior_total else 0.5
+    team['blend_win_pct'] = w * cur_win_pct + (1 - w) * prior_win_pct
+
+    cur_split_total = team.get('split_w', 0) + team.get('split_l', 0)
+    cur_split_pct = team['split_w'] / cur_split_total if cur_split_total else 0.5
+    prior_split_total = prior['split_w'] + prior['split_l']
+    prior_split_pct = prior['split_w'] / prior_split_total if prior_split_total else 0.5
+    team['blend_split_pct'] = w * cur_split_pct + (1 - w) * prior_split_pct
+
+    cur_ppg = team.get('ppg')
+    if prior.get('ppg') is not None:
+        team['blend_ppg'] = w * cur_ppg + (1 - w) * prior['ppg'] if cur_ppg is not None else prior['ppg']
+    cur_ppga = team.get('ppg_allowed')
+    if prior.get('ppg_allowed') is not None:
+        team['blend_ppg_allowed'] = (
+            w * cur_ppga + (1 - w) * prior['ppg_allowed'] if cur_ppga is not None else prior['ppg_allowed']
+        )
 
 
 def _team_recent_form(games, team_name, n=5):
@@ -328,7 +410,7 @@ def get_live_game_states(date_str=None):
 
 # ── Schedule context ───────────────────────────────────────────────────────────
 
-def _build_game(event, team_stats, game_log, wnba_odds_map):
+def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None):
     """Builds one game's full display dict — teams, live state, model, odds.
     Shared by build_schedule_context() (the /wnba page and the daily-digest
     cache warmer)."""
@@ -402,6 +484,8 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
         team['ppg_allowed'] = ts.get('ppg_allowed')
         team['form']        = _team_recent_form(game_log, name)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
+        if prior_stats:
+            _apply_prior_season_blend(team, prior_stats)
 
     game_odds = odds_api.lookup_game_odds(wnba_odds_map, home.get('name', ''), away.get('name', ''),
                                            game_date=event.get('date', '')[:13] or None)
@@ -415,17 +499,24 @@ def _build_game(event, team_stats, game_log, wnba_odds_map):
     except Exception:
         model = None
 
-    # Pace-adjusted total (O/U) projection — see bball_total_model.py.
+    # Pace-adjusted total (O/U) projection — see bball_total_model.py. Uses
+    # blend_ppg/blend_ppg_allowed the same way wnba_model.predict() does
+    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
+    # same fix as nfl_api.py/cfb_api.py/nba_api.py's total_inputs blocks.
     # total_inputs is stashed alongside the projection so a future
     # total-model recalibration can replay this exact game.
+    home_ppg         = home.get('blend_ppg', home.get('ppg'))
+    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+    away_ppg         = away.get('blend_ppg', away.get('ppg'))
+    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
     total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home.get('ppg'), 'home_ppg_allowed': home.get('ppg_allowed'),
-        'away_id': away.get('id'), 'away_ppg': away.get('ppg'), 'away_ppg_allowed': away.get('ppg_allowed'),
+        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
+        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
     }
     try:
         total_model = bball_total_model.predict_total(
-            'WNBA', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
-            away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
+            'WNBA', home.get('id'), home_ppg, home_ppg_allowed,
+            away.get('id'), away_ppg, away_ppg_allowed)
     except Exception:
         total_model = None
     try:
@@ -498,9 +589,10 @@ def build_schedule_context(target_date=None):
     season       = _get_wnba_season()
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
+    prior_stats  = _get_prior_season_team_stats(season - 1)
     wnba_odds_map = odds_api.get_odds_map('wnba')
 
-    games = [_build_game(event, team_stats, game_log, wnba_odds_map) for event in today_events]
+    games = [_build_game(event, team_stats, game_log, wnba_odds_map, prior_stats) for event in today_events]
 
     try:
         date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')

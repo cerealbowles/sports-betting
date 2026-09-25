@@ -79,23 +79,34 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     # Weight shrunk after nhl_bootstrap.py's 2023-25 refit showed this heavily
     # overweighted/collinear with split record & form (all three measure
     # "team is good" from the same underlying results) — keep it, but small.
-    h_pp = _points_pct(home.get('wins', 0), home.get('losses', 0), home.get('ot_losses', 0))
-    a_pp = _points_pct(away.get('wins', 0), away.get('losses', 0), away.get('ot_losses', 0))
+    # 'blend_points_pct' (set by nhl_api._apply_prior_season_blend) mixes in
+    # last season's final standings for teams with <EARLY_SEASON_GAMES games
+    # played this season — same fix as nfl_api.py's EARLY_SEASON_GAMES blend.
+    h_pp = home.get('blend_points_pct')
+    if h_pp is None:
+        h_pp = _points_pct(home.get('wins', 0), home.get('losses', 0), home.get('ot_losses', 0))
+    a_pp = away.get('blend_points_pct')
+    if a_pp is None:
+        a_pp = _points_pct(away.get('wins', 0), away.get('losses', 0), away.get('ot_losses', 0))
     _add('Points percentage', (h_pp - a_pp) * 0.22)
 
     # ── 3. Home / road split record ───────────────────────────────────────────
-    h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
-    a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
+    h_split = home.get('blend_split_pct')
+    if h_split is None:
+        h_split = _pct(home.get('split_w', 0), home.get('split_l', 0))
+    a_split = away.get('blend_split_pct')
+    if a_split is None:
+        a_split = _pct(away.get('split_w', 0), away.get('split_l', 0))
     _add('Home/road record', (h_split - a_split) * 0.08)
 
     # ── 4. Offensive efficiency — goals scored per game ───────────────────────
-    h_gf = _safe_float(home.get('gf_pg'), LEAGUE_GPG)
-    a_gf = _safe_float(away.get('gf_pg'), LEAGUE_GPG)
+    h_gf = _safe_float(home.get('blend_gf_pg', home.get('gf_pg')), LEAGUE_GPG)
+    a_gf = _safe_float(away.get('blend_gf_pg', away.get('gf_pg')), LEAGUE_GPG)
     _add('Goals for/G', (h_gf - a_gf) * 0.3)
 
     # ── 5. Defensive efficiency — goals allowed per game ──────────────────────
-    h_ga = _safe_float(home.get('ga_pg'), LEAGUE_GPG)
-    a_ga = _safe_float(away.get('ga_pg'), LEAGUE_GPG)
+    h_ga = _safe_float(home.get('blend_ga_pg', home.get('ga_pg')), LEAGUE_GPG)
+    a_ga = _safe_float(away.get('blend_ga_pg', away.get('ga_pg')), LEAGUE_GPG)
     _add('Goals against/G', (a_ga - h_ga) * 0.24)
 
     # ── 6. Recent form — last 5 games ─────────────────────────────────────────

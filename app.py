@@ -319,7 +319,7 @@ def _consensus_bucket(factors_json, fav_home):
 # and doesn't push probabilities past 0/1.
 # Applied with 60% shrinkage × sample-size credibility (full at n ≥ 50).
 
-_CONS_CALIB: dict = {}   # consensus bucket -> logit-space correction (float)
+_CONS_CALIB: dict = {}   # {sport: {consensus bucket -> logit-space correction}}
 _CONS_CALIB_LOCK = threading.Lock()
 
 
@@ -332,11 +332,16 @@ def _safe_logit(p):
     return math.log(p / (1 - p))
 
 
-def _consensus_adjusted_prob(pick_prob, factors_json, fav_home):
-    """Apply consensus-bucket calibration correction to model pick probability."""
+def _consensus_adjusted_prob(pick_prob, factors_json, fav_home, sport='MLB'):
+    """Apply consensus-bucket calibration correction to model pick probability.
+    Namespaced per sport — _CONS_CALIB used to be a single flat dict shared
+    across every sport's calibration pass, so whichever sport recomputed
+    last silently overwrote every other sport's corrections for any bucket
+    label they shared (the bucket strings like '40–60%' are literal-identical
+    across sports)."""
     ck = _consensus_bucket(factors_json, fav_home)
     with _CONS_CALIB_LOCK:
-        correction = _CONS_CALIB.get(ck, 0.0)
+        correction = _CONS_CALIB.get(sport, {}).get(ck, 0.0)
     if correction == 0.0:
         return pick_prob
     return _sigmoid(_safe_logit(pick_prob) + correction)
@@ -350,8 +355,6 @@ def _recompute_consensus_calibration(sport='MLB'):
     within each factor-consensus bucket, then stores a shrunk logit correction.
     Called at startup and after each nightly outcome resolution.
     """
-    global _CONS_CALIB
-
     with app.app_context():
         resolved = GamePrediction.query.filter(
             GamePrediction.sport == sport,
@@ -390,7 +393,378 @@ def _recompute_consensus_calibration(sport='MLB'):
         )
 
     with _CONS_CALIB_LOCK:
-        _CONS_CALIB.update(new_calib)
+        _CONS_CALIB[sport] = new_calib
+
+
+# ── Cross-sport confidence blend + tier calibration ─────────────────────────
+# MLB's ML chip already blends its model probability with a trust-score
+# rank-bucket win rate (see mlb_schedule's final_home_prob stamping) — this
+# section brings the same "don't just trust the raw model number, temper it
+# with what actually happened historically at this confidence level" idea to
+# every other sport, and makes the chip's high/medium/low tier cutoffs
+# self-tuning per sport instead of a flat guessed number. Both recompute on
+# the same cadence as every other calibration pass in this file
+# (_recompute_all_calibration, called at startup and on every finalized-game
+# check/nightly resolve for every sport) — no manual re-tuning needed as
+# results accumulate.
+_PROB_CALIB_BANDS = [
+    (50, 52), (52, 54), (54, 56), (56, 58), (58, 60),
+    (60, 65), (65, 70), (70, 75), (75, 100.0001),
+]
+_PROB_CALIBRATION = {}   # {sport: {'50-52%': {'n': int, 'wr': float}, ...}} — namespaced per sport
+_PROB_CALIB_LOCK = threading.Lock()
+
+_CONFIDENCE_TIERS = {}   # {sport: {'high': pct, 'medium': pct, 'pips': [p1..p5], 'n': int}}
+_CONFIDENCE_TIERS_LOCK = threading.Lock()
+# Used until a sport has enough resolved games for its own tiers (or forever,
+# for a sport that never accumulates enough) — the original flat guess this
+# whole mechanism replaced.
+_DEFAULT_CONFIDENCE_TIERS = {'high': 65.0, 'medium': 55.0, 'pips': [54, 58, 62, 68, 75]}
+
+
+def _prob_calib_band(pct):
+    for lo, hi in _PROB_CALIB_BANDS:
+        if lo <= pct < hi:
+            return f'{lo}-{int(hi) if hi < 100 else 100}%'
+    return None
+
+
+def _recompute_prob_calibration(sport):
+    """Historical win rate per model-confidence band (e.g. '60-65%'), from
+    this sport's own resolved games only. Feeds _stamp_confidence_blend
+    (the non-MLB equivalent of MLB's rank-bucket blend) and
+    _recompute_confidence_tiers below."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.home_won.isnot(None),
+        ).all()
+
+    bands = {}
+    for p in resolved:
+        if p.home_prob is None:
+            continue
+        fav_home = p.home_prob >= 0.5
+        pick_prob_pct = (p.home_prob if fav_home else 1 - p.home_prob) * 100
+        band = _prob_calib_band(pick_prob_pct)
+        if not band:
+            continue
+        bands.setdefault(band, []).append(fav_home == bool(p.home_won))
+
+    MIN_N = 15
+    stats = {band: {'n': len(results), 'wr': round(100 * sum(results) / len(results), 1)}
+             for band, results in bands.items() if len(results) >= MIN_N}
+
+    with _PROB_CALIB_LOCK:
+        _PROB_CALIBRATION[sport] = stats
+    print(f'[prob-calibration] {sport} recomputed from {len(resolved)} games: {stats}', flush=True)
+
+
+def _stamp_confidence_blend(schedule, sport):
+    """Non-MLB equivalent of mlb_schedule's final_home_prob stamping: blends
+    each Preview/Live game's raw model probability with this sport's own
+    empirical win rate for that confidence band (_recompute_prob_calibration),
+    60% model / 40% band win rate, and stamps the result onto
+    game['model']['final_home_prob']/'final_away_prob'. _market_chips.html's
+    ML chip and _best_market_pick both already prefer final_home_prob over
+    the raw model prob when it's present, so this is the only change needed
+    to make their confidence/edge numbers reflect the blend. No-ops (leaves
+    the raw prob as the effective value) wherever a band has no calibration
+    data yet."""
+    bands = _PROB_CALIBRATION.get(sport) or {}
+    if not bands:
+        return
+    for day in (schedule or []):
+        for game in day.get('games', []):
+            if game.get('status') == 'Final':
+                continue
+            model = game.get('model')
+            if not model or model.get('home_prob') is None:
+                continue
+            hp = model['home_prob']
+            fav_home = hp >= 0.5
+            pick_prob = hp if fav_home else 1 - hp
+            bkt = bands.get(_prob_calib_band(pick_prob * 100) or '')
+            if not bkt:
+                continue
+            final = 0.6 * pick_prob + 0.4 * (bkt['wr'] / 100.0)
+            model['final_home_prob'] = round(final if fav_home else 1 - final, 4)
+            model['final_away_prob'] = round(final if not fav_home else 1 - final, 4)
+
+
+def _historical_confidence_values(sport):
+    """Every resolved game's blended confidence value (0-100), using
+    whichever blend that sport's schedule route actually applies at render
+    time, so the tier cutoffs derived from this distribution match what's
+    actually displayed:
+      - MLB: 0.6*consensus-adjusted prob + 0.4*trust-score rank-bucket win
+        rate — mirrors mlb_schedule's own final_home_prob stamping exactly.
+      - Every other sport: 0.6*raw model prob + 0.4*this-sport's-own
+        confidence-band win rate (_recompute_prob_calibration) — MLB's
+        richer trust-score/rank pipeline doesn't exist for these sports.
+    """
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.home_won.isnot(None),
+        ).all()
+
+    vals = []
+    if sport == 'MLB':
+        for p in resolved:
+            if p.home_prob is None or not p.daily_rank:
+                continue
+            fav_home = p.home_prob >= 0.5
+            pick_prob = p.home_prob if fav_home else 1 - p.home_prob
+            adj = _consensus_adjusted_prob(pick_prob, p.factors_json, fav_home, sport='MLB')
+            bkt = _UNIFIED_RANK_STATS.get('MLB', {}).get(_unified_rank_bucket(p.daily_rank) or '')
+            final = (0.6 * adj + 0.4 * (bkt['wr'] / 100.0)) if bkt else adj
+            vals.append(final * 100)
+    else:
+        bands = _PROB_CALIBRATION.get(sport) or {}
+        for p in resolved:
+            if p.home_prob is None:
+                continue
+            fav_home = p.home_prob >= 0.5
+            pick_prob = p.home_prob if fav_home else 1 - p.home_prob
+            bkt = bands.get(_prob_calib_band(pick_prob * 100) or '')
+            final = (0.6 * pick_prob + 0.4 * (bkt['wr'] / 100.0)) if bkt else pick_prob
+            vals.append(final * 100)
+    return vals
+
+
+def _recompute_confidence_tiers(sport):
+    """Percentile-based high/medium/low cutoffs for the ML confidence chip,
+    derived from this sport's own actual distribution of blended confidence
+    instead of a flat guessed number — an investigation into MLB found a
+    flat 65% 'high' cutoff was mathematically unreachable by any of 1,027
+    historical games once the blend was applied (max ever seen: 64.0%).
+    High = roughly this sport's own top 15% most-confident historical
+    picks; medium = top ~60%. Needs a minimum sample before overriding
+    _DEFAULT_CONFIDENCE_TIERS so an early/thin sport doesn't get a
+    single-digit-n percentile as its permanent cutoff."""
+    vals = sorted(_historical_confidence_values(sport))
+    n = len(vals)
+    MIN_N = 40
+    if n < MIN_N:
+        return
+
+    def _pct(p):
+        return vals[min(int(n * p / 100), n - 1)]
+
+    tiers = {
+        'high':   round(_pct(85), 1),
+        'medium': round(_pct(40), 1),
+        'pips':   [round(_pct(p), 1) for p in (35, 55, 70, 83, 95)],
+        'n': n,
+        'computed_at': datetime.now(timezone.utc).isoformat(),
+    }
+    with _CONFIDENCE_TIERS_LOCK:
+        _CONFIDENCE_TIERS[sport] = tiers
+    print(f'[confidence-tiers] {sport} recomputed from {n} games: '
+          f'high>={tiers["high"]} medium>={tiers["medium"]}', flush=True)
+
+
+def _confidence_tiers(sport):
+    return _CONFIDENCE_TIERS.get(sport) or _DEFAULT_CONFIDENCE_TIERS
+
+
+app.jinja_env.globals['confidence_tiers'] = _confidence_tiers
+
+
+# ── Spread chip confidence tiers ─────────────────────────────────────────────
+# Same idea as the ML confidence tiers above, applied to the Spread chip's
+# confidence metric — which is predicted-margin magnitude in points, not a
+# probability (spread_model.predict_margin), so it gets its own percentile
+# scale in point units rather than reusing _CONFIDENCE_TIERS's 0-100% scale.
+# Only meaningful for spread_model.VALIDATED_SPORTS (MLB, NHL) — every other
+# sport's chip is forced to the 'unproven' tier regardless of these numbers
+# (see _market_chips.html), so there's no point computing real thresholds
+# for a sport whose tier the template overrides unconditionally.
+_SPREAD_CONFIDENCE_TIERS = {}
+_SPREAD_CONFIDENCE_TIERS_LOCK = threading.Lock()
+_DEFAULT_SPREAD_CONFIDENCE_TIERS = {'high': 6.0, 'medium': 3.0, 'pips': [1.5, 3, 5, 7, 9]}
+
+
+def _recompute_spread_confidence_tiers(sport):
+    """Percentile-based high/medium/low point-magnitude cutoffs for the
+    Spread chip, from this sport's own resolved games — replays
+    spread_model.predict_margin() over each game's stored factors_json,
+    the same call the live chip makes, so the tiers match what's actually
+    displayed. No-ops for unvalidated sports (see module docstring above)."""
+    if sport not in spread_model.VALIDATED_SPORTS:
+        return
+
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.home_won.isnot(None),
+            GamePrediction.factors_json.isnot(None),
+        ).all()
+
+    vals = []
+    for p in resolved:
+        try:
+            factors = json.loads(p.factors_json or '[]')
+        except (TypeError, ValueError):
+            continue
+        if not factors:
+            continue
+        margin = spread_model.predict_margin(sport, factors)
+        if margin is not None:
+            vals.append(abs(margin))
+
+    MIN_N = 40
+    n = len(vals)
+    if n < MIN_N:
+        return
+
+    vals.sort()
+
+    def _pct(p):
+        return vals[min(int(n * p / 100), n - 1)]
+
+    tiers = {
+        'high':   round(_pct(85), 2),
+        'medium': round(_pct(40), 2),
+        'pips':   [round(_pct(p), 2) for p in (35, 55, 70, 83, 95)],
+        'n': n,
+        'computed_at': datetime.now(timezone.utc).isoformat(),
+    }
+    with _SPREAD_CONFIDENCE_TIERS_LOCK:
+        _SPREAD_CONFIDENCE_TIERS[sport] = tiers
+    print(f'[spread-confidence-tiers] {sport} recomputed from {n} games: '
+          f'high>={tiers["high"]}pts medium>={tiers["medium"]}pts', flush=True)
+
+
+def _spread_confidence_tiers(sport):
+    return _SPREAD_CONFIDENCE_TIERS.get(sport) or _DEFAULT_SPREAD_CONFIDENCE_TIERS
+
+
+app.jinja_env.globals['spread_confidence_tiers'] = _spread_confidence_tiers
+
+
+# ── Total chip confidence tiers ──────────────────────────────────────────────
+# Same idea again, for the Total chip's confidence metric — distance of
+# total_over_prob from 50%, same 0-100% scale as the ML tiers, but computed
+# from each sport's own history (GamePrediction.total_over_prob/
+# total_went_over) rather than shared with ML's distribution. Independent
+# of total_confidence_tier()'s pre-ship-fit-quality cap ('unproven'/'medium'
+# for the weaker total models) — that cap is applied on top of whichever
+# level these thresholds produce, same as today.
+_TOTAL_CONFIDENCE_TIERS = {}
+_TOTAL_CONFIDENCE_TIERS_LOCK = threading.Lock()
+_DEFAULT_TOTAL_CONFIDENCE_TIERS = {'high': 65.0, 'medium': 55.0, 'pips': [54, 58, 62, 68, 75]}
+
+
+def _recompute_total_confidence_tiers(sport):
+    """Percentile-based high/medium/low cutoffs for the Total chip, from
+    this sport's own resolved games' total_over_prob (stored at pick time
+    via the same _total_over_prob() the live chip calls). Total-pick
+    grading only started recently, so this reliably no-ops (falls back to
+    _DEFAULT_TOTAL_CONFIDENCE_TIERS) until enough games have gone Final —
+    by design, same MIN_N gate as every other tier/calibration pass here."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.total_over_prob.isnot(None),
+        ).all()
+
+    vals = [max(p.total_over_prob, 1 - p.total_over_prob) * 100 for p in resolved]
+
+    MIN_N = 40
+    n = len(vals)
+    if n < MIN_N:
+        return
+
+    vals.sort()
+
+    def _pct(p):
+        return vals[min(int(n * p / 100), n - 1)]
+
+    tiers = {
+        'high':   round(_pct(85), 1),
+        'medium': round(_pct(40), 1),
+        'pips':   [round(_pct(p), 1) for p in (35, 55, 70, 83, 95)],
+        'n': n,
+        'computed_at': datetime.now(timezone.utc).isoformat(),
+    }
+    with _TOTAL_CONFIDENCE_TIERS_LOCK:
+        _TOTAL_CONFIDENCE_TIERS[sport] = tiers
+    print(f'[total-confidence-tiers] {sport} recomputed from {n} games: '
+          f'high>={tiers["high"]} medium>={tiers["medium"]}', flush=True)
+
+
+def _total_confidence_tiers(sport):
+    return _TOTAL_CONFIDENCE_TIERS.get(sport) or _DEFAULT_TOTAL_CONFIDENCE_TIERS
+
+
+app.jinja_env.globals['total_confidence_tiers'] = _total_confidence_tiers
+
+
+# ── Total model periodic auto-refit ──────────────────────────────────────────
+# bball_total_model.CALIBRATION / football_total_model.CALIBRATION /
+# hockey_total_model.CALIBRATION / mlb_total_model.CALIBRATION are each a
+# one-time linear fit (intercept, coef, sigma) from a single past season,
+# per their own docstrings ("Refit periodically — these are one-time fits"),
+# and nothing in this codebase ever did. This adds a second, automatically
+# refit affine correction on top of each sport's existing total_projection —
+# actual_total ≈ a + b*total_projection — fit directly against that sport's
+# own graded total picks (GamePrediction.total_proj/total_actual, both
+# already tracked per game).
+#
+# This deliberately does NOT replay each model's raw pace/ERA/GF-GA inputs
+# to refit the *original* CALIBRATION coefficients from scratch — pace in
+# particular is only cached in-memory with a 6h TTL, so a months-old game's
+# actual pace-at-the-time isn't recoverable, only whatever pace happens to
+# be current now. Composing two affine transforms is itself affine, so
+# fitting a correction on top of the model's own (already-calibrated)
+# output is mathematically equivalent to refitting the original intercept/
+# coef against the raw formula output would have been — same result,
+# without needing anything not already stored per game.
+_TOTAL_MODEL_REFIT = {}   # {sport: {'a': float, 'b': float, 'sigma': float, 'n': int, 'computed_at': str}}
+_TOTAL_MODEL_REFIT_LOCK = threading.Lock()
+
+
+def _recompute_total_model_refit(sport):
+    """Refits this sport's total-projection correction layer from resolved
+    games (see module note above). No-ops below MIN_N, same pattern as
+    every other calibration pass in this file — a sport with too few
+    graded total picks just keeps using its raw, unrefit projection."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.total_proj.isnot(None),
+            GamePrediction.total_actual.isnot(None),
+        ).all()
+
+    MIN_N = 40
+    n = len(resolved)
+    if n < MIN_N:
+        return
+
+    xs = [p.total_proj for p in resolved]
+    ys = [float(p.total_actual) for p in resolved]
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    var = sum((x - mean_x) ** 2 for x in xs)
+    if var == 0:
+        return
+    b = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / var
+    a = mean_y - b * mean_x
+
+    residuals = [y - (a + b * x) for x, y in zip(xs, ys)]
+    sigma = (sum(r * r for r in residuals) / n) ** 0.5
+    if sigma <= 0:
+        return
+
+    with _TOTAL_MODEL_REFIT_LOCK:
+        _TOTAL_MODEL_REFIT[sport] = {
+            'a': round(a, 4), 'b': round(b, 4), 'sigma': round(sigma, 3),
+            'n': n, 'computed_at': datetime.now(timezone.utc).isoformat(),
+        }
+    print(f'[total-refit] {sport} recomputed from {n} games: '
+          f'total_actual ~= {a:+.2f} + {b:.3f}*total_proj (sigma={sigma:.2f})', flush=True)
 
 
 # ── Trust Score weight cache ──────────────────────────────────────────────────
@@ -412,15 +786,22 @@ _PRIOR_CALIB  = {
     '65–70%': 0.30, '70–75%': 0.50,
 }
 
-_TRUST_WEIGHTS = {
-    'cons':   dict(_PRIOR_CONS),
-    'edge':   dict(_PRIOR_EDGE),
-    'favdog': dict(_PRIOR_FAVDOG),
-    'calib':  dict(_PRIOR_CALIB),
-    'n': 0,
-    'baseline_roi': 0.0,
-    'computed_at': None,
-}
+def _default_trust_weights():
+    return {
+        'cons':   dict(_PRIOR_CONS),
+        'edge':   dict(_PRIOR_EDGE),
+        'favdog': dict(_PRIOR_FAVDOG),
+        'calib':  dict(_PRIOR_CALIB),
+        'n': 0,
+        'baseline_roi': 0.0,
+        'computed_at': None,
+    }
+
+
+# {sport: {...}} — used to be one flat dict shared across every sport's
+# calibration pass, so whichever sport's _recompute_trust_weights ran last
+# in the calibration loop silently overwrote every other sport's weights.
+_TRUST_WEIGHTS = {}
 _TRUST_LOCK = threading.Lock()
 
 
@@ -483,6 +864,20 @@ def _recompute_team_bias(sport='MLB'):
     trust-weight buckets (n/50) since team-level tendencies should be stable
     across multiple seasons, not reactive to a 10-game hot/cold streak.
     """
+    # _TEAM_BIAS only exists in mlb_model.py today — no other sport's
+    # model.py reads a team-bias correction at all, so computing this for
+    # any other sport was pure waste, AND (until this guard) actively
+    # harmful: the write below was unconditional, so every sport's turn in
+    # the _recompute_all_calibration('MLB'), ('NFL'), ('CFB'), ... loop
+    # overwrote mlb_model._TEAM_BIAS with that OTHER sport's bias dict —
+    # keyed by that sport's own team names, which never match MLB team
+    # names, so MLB's team-bias correction was silently going to ~0 after
+    # every single recalibration cycle (every 20 min) once a later sport
+    # in the loop order ran. Revisit this guard if team-bias support is
+    # ever added to another sport's model.py.
+    if sport != 'MLB':
+        return
+
     import mlb_model as _mlb_m
 
     with app.app_context():
@@ -614,8 +1009,6 @@ def _recompute_trust_weights(sport='MLB'):
       - n >= 50 → 100% empirical
     Normalization: ±30% ROI above/below baseline maps to the full 0–1 scale.
     """
-    global _TRUST_WEIGHTS
-
     with app.app_context():
         resolved = GamePrediction.query.filter(
             GamePrediction.sport == sport,
@@ -721,14 +1114,14 @@ def _recompute_trust_weights(sport='MLB'):
     }
 
     with _TRUST_LOCK:
-        _TRUST_WEIGHTS.update(new_weights)
+        _TRUST_WEIGHTS[sport] = new_weights
 
     print(f'[trust-weights] recomputed from {n_total} {sport} games '
           f'(baseline ROI {baseline_roi:+.1f}%). '
           f'Cons: {new_weights["cons"]}', flush=True)
 
 
-def _trust_score(home_prob, home_odds, away_odds, factors_json, detail=False):
+def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', detail=False):
     """
     0-100 composite trust score for ranking recommendations.
 
@@ -740,6 +1133,10 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, detail=False):
 
     Weights start as hand-tuned priors and blend toward empirical ROI-derived
     values as resolved game count grows (credibility: full empirical at n ≥ 50).
+    _TRUST_WEIGHTS is namespaced per sport — pass the right `sport` or this
+    silently falls back to fresh priors instead of that sport's own
+    calibrated weights (see _recompute_trust_weights's docstring for why
+    this used to be a single dict shared across every sport).
 
     When detail=True, returns a dict with per-component values for radar chart display.
     Always pass home_prob (not pick_prob) — fav_home is derived internally.
@@ -749,7 +1146,7 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, detail=False):
         return ({} if detail else 0)
 
     with _TRUST_LOCK:
-        w = dict(_TRUST_WEIGHTS)
+        w = dict(_TRUST_WEIGHTS.get(sport) or _default_trust_weights())
 
     fav_home  = (home_prob or 0.5) >= 0.5
     pick_prob = (home_prob or 0.5) if fav_home else 1.0 - (home_prob or 0.5)
@@ -935,13 +1332,13 @@ def _recompute_unified_rank_stats(sport='MLB'):
         day = list(_grp)
         scored = []
         for g in day:
-            td = _trust_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, detail=True)
+            td = _trust_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, sport=sport, detail=True)
             lm = _line_move_pct(g.home_prob, g.closing_home_odds or g.home_odds,
                                  g.closing_away_odds or g.away_odds,
                                  g.opening_home_odds, g.opening_away_odds)
             signal_pct = lm if lm is not None else g.pick_clv
             m_val = max(0.0, min(1.0, 0.5 + signal_pct / 10.0)) if signal_pct is not None else 0.5
-            mv_val = _movement_value(g.movement_profile)
+            mv_val = _movement_value(g.movement_profile, sport=sport)
             fav_home = (g.home_prob or 0.5) >= 0.5
             pick_odds = g.home_odds if fav_home else g.away_odds
             scored.append((g, _unified_score(td, m_val, mv_val, pick_odds)))
@@ -979,7 +1376,17 @@ _MOVEMENT_PROFILES = (
     ['flat', 'static', 'no_data']
 )
 _PRIOR_MOVEMENT = {p: 0.5 for p in _MOVEMENT_PROFILES}
-_MOVEMENT_WEIGHTS = dict(_PRIOR_MOVEMENT, n=0, computed_at=None)
+
+
+def _default_movement_weights():
+    return dict(_PRIOR_MOVEMENT, n=0, computed_at=None)
+
+
+# {sport: {...}} — used to be one flat dict shared across every sport's
+# calibration pass (same bug class as _CONS_CALIB/_TRUST_WEIGHTS elsewhere
+# in this file), so whichever sport's _recompute_movement_weights ran last
+# silently overwrote every other sport's movement-profile weights.
+_MOVEMENT_WEIGHTS = {}
 _MOVEMENT_LOCK = threading.Lock()
 
 
@@ -1028,9 +1435,8 @@ def _recompute_movement_profiles(sport='MLB'):
 def _recompute_movement_weights(sport='MLB'):
     """ROI-derived weight per movement profile, same credibility-blend pattern
     as _recompute_trust_weights — blends toward 0.5 (neutral prior) until a
-    profile has enough resolved games to trust empirically."""
-    global _MOVEMENT_WEIGHTS
-
+    profile has enough resolved games to trust empirically. Namespaced per
+    sport in _MOVEMENT_WEIGHTS — see that dict's comment for why."""
     with app.app_context():
         resolved = GamePrediction.query.filter(
             GamePrediction.sport == sport,
@@ -1065,18 +1471,20 @@ def _recompute_movement_weights(sport='MLB'):
     new_weights['computed_at'] = datetime.now(timezone.utc).isoformat()
 
     with _MOVEMENT_LOCK:
-        _MOVEMENT_WEIGHTS.update(new_weights)
+        _MOVEMENT_WEIGHTS[sport] = new_weights
 
     print(f'[movement-weights] recomputed from {n_total} classified {sport} games: {new_weights}', flush=True)
 
 
-def _movement_value(profile):
+def _movement_value(profile, sport='MLB'):
     """0-1 weight for a stored movement profile label, or 0.5 (neutral) if
-    the game has no profile yet (insufficient snapshot history)."""
+    the game has no profile yet (insufficient snapshot history) or this
+    sport hasn't computed its own weights yet."""
     if not profile:
         return 0.5
     with _MOVEMENT_LOCK:
-        return _MOVEMENT_WEIGHTS.get(profile, 0.5)
+        w = _MOVEMENT_WEIGHTS.get(sport) or _default_movement_weights()
+        return w.get(profile, 0.5)
 
 
 def _et_date(utc_str):
@@ -1686,6 +2094,11 @@ def _total_over_prob(sport, total_projection, market_total_line):
     total model applies (bball_total_model.py or football_total_model.py —
     same normal-approximation math either way, just a different fitted
     sigma per sport), via a normal approximation around the projection.
+    Applies _TOTAL_MODEL_REFIT's periodic correction on top of the model's
+    raw projection when this sport has one yet (see that section's module
+    note) — both the projection and the sigma used below shift to the
+    refit's own numbers, since a refit's residual std reflects actual
+    current-season accuracy instead of the static one-time CALIBRATION fit.
     Returns None if this sport has no total model or inputs are missing."""
     if total_projection is None or market_total_line is None:
         return None
@@ -1693,6 +2106,10 @@ def _total_over_prob(sport, total_projection, market_total_line):
     if not coeffs:
         return None
     _, _, sigma = coeffs
+    refit = _TOTAL_MODEL_REFIT.get(sport)
+    if refit:
+        total_projection = refit['a'] + refit['b'] * total_projection
+        sigma = refit['sigma']
     if sigma <= 0:
         return None
     z = (total_projection - market_total_line) / sigma
@@ -3058,7 +3475,7 @@ def mlb_schedule():
         bet_side    = 'away'
       edge = round((pick_prob - mkt_implied) * 100, 1)
 
-      adj_prob = _consensus_adjusted_prob(pick_prob, factors_json, hp >= ap)
+      adj_prob = _consensus_adjusted_prob(pick_prob, factors_json, hp >= ap, sport='MLB')
       adj_edge = round((adj_prob - mkt_implied) * 100, 1)
 
       k_b  = (amer_odds / 100.0) if amer_odds > 0 else ((-100.0 / amer_odds) if amer_odds < 0 else 0)
@@ -3087,7 +3504,7 @@ def mlb_schedule():
             line_move_pct = round((pick_curr - pick_open) * 100, 2)
             line_move_val = max(0.0, min(1.0, 0.5 + line_move_pct / 10.0))
 
-      ts_detail = _trust_score(hp, h_odds, a_odds, factors_json, detail=True)
+      ts_detail = _trust_score(hp, h_odds, a_odds, factors_json, sport='MLB', detail=True)
       trust = ts_detail.get('score', 0)
 
       # Movement profile — computed live so it reflects partial-day snapshot
@@ -3101,7 +3518,7 @@ def mlb_schedule():
           game_start = None
       movement_profile, movement_pct = _oh_mv.classify_movement(
           'baseball_mlb', home_name, away_name, bet_side == 'home', game_start)
-      movement_val = _movement_value(movement_profile)
+      movement_val = _movement_value(movement_profile, sport='MLB')
 
       unified = _unified_score(ts_detail, line_move_val, movement_val, amer_odds)
 
@@ -3289,7 +3706,7 @@ def _recommended_bets_history(resolved, sport):
     prob = p.home_prob if fav_home else (p.away_prob if p.away_prob is not None else 1.0 - p.home_prob)
     if sport == 'MLB':
       raw_fav = p.home_prob if p.home_prob >= 0.5 else 1.0 - p.home_prob
-      adj = _consensus_adjusted_prob(raw_fav, p.factors_json, p.home_prob >= 0.5)
+      adj = _consensus_adjusted_prob(raw_fav, p.factors_json, p.home_prob >= 0.5, sport='MLB')
       # adjustment is defined for the model's pick side; mirror it onto the favorite
       prob = adj if (p.home_prob >= 0.5) == fav_home else 1.0 - adj
     amer = p.home_odds if fav_home else p.away_odds
@@ -3677,7 +4094,7 @@ def model_performance():
   for p in resolved:
     if not p.home_odds or not p.away_odds:
       continue
-    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json)
+    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
     if ts == 0:
       continue
     if   ts >= 70: slbl = '70+'
@@ -3938,7 +4355,7 @@ def model_performance():
     # Retroactive Trust Score rank (current formula, no stale daily_rank)
     _ts_scored = []
     for _g in _day:
-      _td = _trust_score(_g.home_prob, _g.home_odds, _g.away_odds, _g.factors_json, detail=True)
+      _td = _trust_score(_g.home_prob, _g.home_odds, _g.away_odds, _g.factors_json, sport=sport, detail=True)
       _ts_scored.append((_g.id, _td.get('score', 0), _td))
     _ts_scored.sort(key=lambda x: -x[1])
     for _r, (_gid, _, __) in enumerate(_ts_scored, 1):
@@ -4025,7 +4442,7 @@ def model_performance():
       'roi':    round(100 * sum(roi_vals) / len(roi_vals), 1) if roi_vals else None,
       'roi_n':  len(roi_vals),
     })
-  movement_weights = dict(_MOVEMENT_WEIGHTS)
+  movement_weights = dict(_MOVEMENT_WEIGHTS.get(sport) or _default_movement_weights())
   movement_n_total = len(_mv_games)
 
   # ── Firing Efficiency Analysis ───────────────────────────────────────────────
@@ -4046,14 +4463,14 @@ def model_performance():
         roi = profit if model_won else -1.0
       except (TypeError, ValueError):
         pass
-    td   = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, detail=True)
+    td   = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
     ts   = td.get('score', 0)
     lm   = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
                           p.closing_away_odds or p.away_odds,
                           p.opening_home_odds, p.opening_away_odds)
     signal_pct = lm if lm is not None else p.pick_clv
     m_val = max(0.0, min(1.0, 0.5 + signal_pct / 10.0)) if signal_pct is not None else 0.5
-    mv_val = _movement_value(p.movement_profile)
+    mv_val = _movement_value(p.movement_profile, sport=sport)
     unf  = _unified_score(td, m_val, mv_val, pick_odds)
     edge = _pick_edge_pct(p.home_prob, p.home_odds, p.away_odds)
     _fire_games.append({
@@ -4150,7 +4567,7 @@ def model_performance():
   _team_pfx = re.compile(r'^(?:Hm|Aw) ')
   enriched_preds = []
   for p in resolved[:40]:
-    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json)
+    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
     fav_home = (p.home_prob or 0.5) >= 0.5
     actual_home_won = bool(p.home_won)
     pick_won = (fav_home == actual_home_won)
@@ -4306,6 +4723,7 @@ def nhl_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NHL')
+  _stamp_confidence_blend(schedule, 'NHL')
   _attach_graded_results(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
@@ -4319,6 +4737,7 @@ def nba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NBA')
+  _stamp_confidence_blend(schedule, 'NBA')
   _attach_graded_results(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
@@ -4332,6 +4751,7 @@ def wnba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'WNBA')
+  _stamp_confidence_blend(schedule, 'WNBA')
   _attach_graded_results(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
@@ -4345,6 +4765,7 @@ def nfl_schedule():
   week = request.args.get('week', type=int)
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
+  _stamp_confidence_blend(week_ctx['days'], 'NFL')
   _attach_graded_results(week_ctx['days'], 'NFL')
   _mark_favorites(week_ctx['days'], 'NFL')
   _match_open_bets_to_games(week_ctx['days'], sport='NFL')
@@ -4383,6 +4804,7 @@ def cfb_schedule():
   week = request.args.get('week', type=int)
   week_ctx = cfb_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'CFB')
+  _stamp_confidence_blend(week_ctx['days'], 'CFB')
   _attach_graded_results(week_ctx['days'], 'CFB')
   _mark_favorites(week_ctx['days'], 'CFB')
   _match_open_bets_to_games(week_ctx['days'], sport='CFB')
@@ -5090,7 +5512,7 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             # Trust Score (which is partly derived from its edge/fav-dog
             # component values) — the composite number itself is never
             # stored, compared, or surfaced below.
-            td = _trust_score(hp, h_odds, a_odds, fj, detail=True)
+            td = _trust_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
 
             # Compute Trust Score — needs opening → current line move
             line_move_val = 0.5  # neutral default
@@ -5116,7 +5538,7 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             movement_profile, _ = odds_history.classify_movement(
                 'baseball_mlb', home_obj.get('name', ''), away_obj.get('name', ''),
                 bet_side == 'home', game_start)
-            movement_val = _movement_value(movement_profile)
+            movement_val = _movement_value(movement_profile, sport='MLB')
             pick_odds = h_odds if bet_side == 'home' else a_odds
             unified = _unified_score(td, line_move_val, movement_val, pick_odds)
 
@@ -5273,7 +5695,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             a_odds = odds.get('away_best', 0)
             bet_side  = 'home' if hp >= ap else 'away'
             fj        = model.get('factors_json') or json.dumps(model.get('factors', []))
-            td        = _trust_score(hp, h_odds, a_odds, fj, detail=True)
+            td        = _trust_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
             lm = _line_move_pct(hp, h_odds, a_odds,
                                 odds.get('opening_home'), odds.get('opening_away'))
             lm_val = max(0.0, min(1.0, 0.5 + lm / 10.0)) if lm is not None else 0.5
@@ -5287,7 +5709,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             movement_profile, _ = odds_history.classify_movement(
                 'baseball_mlb', home_obj.get('name', ''), away_obj.get('name', ''),
                 bet_side == 'home', game_start)
-            movement_val = _movement_value(movement_profile)
+            movement_val = _movement_value(movement_profile, sport='MLB')
             pick_odds = h_odds if bet_side == 'home' else a_odds
             unf       = _unified_score(td, lm_val, movement_val, pick_odds)
             pick_abbr = home_abbr if bet_side == 'home' else away_abbr
@@ -5583,6 +6005,18 @@ def _recompute_all_calibration(sport):
     _recompute_movement_profiles(sport)
     _recompute_movement_weights(sport)
     _recompute_consensus_calibration(sport)
+    _recompute_prob_calibration(sport)
+    # Must run after _recompute_unified_rank_stats/_recompute_prob_calibration
+    # above — it reads both to reconstruct each sport's blended confidence
+    # distribution (see _historical_confidence_values's docstring).
+    _recompute_confidence_tiers(sport)
+    _recompute_spread_confidence_tiers(sport)
+    _recompute_total_model_refit(sport)
+    # After _recompute_total_model_refit — total_confidence_tiers reads
+    # stored historical total_over_prob values (computed at pick time, so
+    # order doesn't change its own output), but conceptually the refit
+    # should settle first each cycle.
+    _recompute_total_confidence_tiers(sport)
 
 
 def _refit_mlb_platt():

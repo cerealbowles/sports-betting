@@ -21,7 +21,27 @@ _TTL = {
     'standings': 3600,  # 1 hour
     'recent':   3600,   # 1 hour
     'goalie':   21600,  # 6 hours
+    'prior_season_stats': 24 * 3600,
 }
+
+# Below this many current-season games played, a team's points%/split/gf-ga
+# factors are blended with its final prior-season numbers — same fix and
+# reasoning as nfl_api.EARLY_SEASON_GAMES. /standings/now already falls
+# back to last season's full table until the new season's rows appear (see
+# build_schedule_context's _fresh() below), which covers the pure-offseason
+# case, but once the new season starts posting real rows, a team's very
+# first few games are just as small-sample-noisy as any other sport's
+# week 1 — this covers that gap with a proper weighted blend instead of a
+# hard cutover.
+EARLY_SEASON_GAMES = 4
+
+
+def _get_nhl_season_start_year():
+    """Calendar year the current (or most recently started) NHL season
+    began in — e.g. 2026 for the 2026-27 season, which starts Oct 2026.
+    New season prep (camps/preseason) begins in Sept."""
+    today = datetime.now(_ET).date()
+    return today.year if today.month >= 8 else today.year - 1
 
 
 def _cached_get(url, key, ttl):
@@ -192,6 +212,84 @@ def _get_standings_map():
     return result
 
 
+def _get_prior_season_standings(season_start_year):
+    """Final standings from the season that ended the spring of
+    `season_start_year` (e.g. season_start_year=2026 -> the 2025-26 season,
+    Oct 2025-Apr 2026). Unlike the ESPN sports' _get_prior_season_team_stats
+    (which replays a full game log to reconstruct final win/loss/ppg), the
+    NHL API's /standings/{date} endpoint already returns a complete
+    aggregated snapshot for any date in one call — April 15 of
+    season_start_year reliably lands after the regular season's last games
+    but before the standings page resets for playoffs. Used to blend in
+    prior-season signal for early-current-season games — see
+    EARLY_SEASON_GAMES."""
+    key = f'nhl_prior_standings_{season_start_year}'
+    now_ts = time.time()
+    if key in _cache:
+        data, ts = _cache[key]
+        if now_ts - ts < _TTL['prior_season_stats']:
+            return data
+
+    date = f'{season_start_year}-04-15'
+    data = _cached_get(f"{NHL_API}/standings/{date}",
+                        f'nhl_standings_prior_{season_start_year}', _TTL['prior_season_stats'])
+    result = {}
+    if data:
+        for row in data.get('standings', []):
+            abbrev = row.get('teamAbbrev', {}).get('default', '')
+            if abbrev:
+                result[abbrev] = row
+    _cache[key] = (result, now_ts)
+    return result
+
+
+def _apply_prior_season_blend(team_info, side, prior_standings):
+    """When a team has played fewer than EARLY_SEASON_GAMES games this
+    season, blend its current-season points%/split%/goals-for-against per
+    game with last season's final numbers, weighted toward current-season
+    data as more of it accumulates. Sets 'blend_*' keys consumed by
+    nhl_model.predict(); leaves the raw wins/losses/gf_pg fields untouched
+    so the game card still displays the team's actual current-season
+    record. Mirrors nfl_api._apply_prior_season_blend, adapted for NHL's
+    points-percentage (an OT loss is a half-win) and home/road-split naming."""
+    cur_games = team_info.get('wins', 0) + team_info.get('losses', 0) + (team_info.get('ot_losses') or 0)
+    if cur_games >= EARLY_SEASON_GAMES:
+        return
+    prior = prior_standings.get(team_info.get('abbrev', ''))
+    if not prior:
+        return
+
+    w = cur_games / EARLY_SEASON_GAMES  # weight given to current-season data
+
+    cur_pp = nhl_model._points_pct(team_info.get('wins', 0), team_info.get('losses', 0),
+                                    team_info.get('ot_losses', 0))
+    prior_gp = prior.get('wins', 0) + prior.get('losses', 0) + prior.get('otLosses', 0)
+    prior_pp = ((prior.get('wins', 0) * 2 + prior.get('otLosses', 0)) / (prior_gp * 2)) if prior_gp else 0.5
+    team_info['blend_points_pct'] = w * cur_pp + (1 - w) * prior_pp
+
+    cur_split_total = team_info.get('split_w', 0) + team_info.get('split_l', 0)
+    cur_split_pct = team_info['split_w'] / cur_split_total if cur_split_total else 0.5
+    if side == 'home':
+        prior_split_w = prior.get('homeWins', 0)
+        prior_split_l = prior.get('homeLosses', 0) + prior.get('homeOtLosses', 0)
+    else:
+        prior_split_w = prior.get('roadWins', 0)
+        prior_split_l = prior.get('roadLosses', 0) + prior.get('roadOtLosses', 0)
+    prior_split_total = prior_split_w + prior_split_l
+    prior_split_pct = prior_split_w / prior_split_total if prior_split_total else 0.5
+    team_info['blend_split_pct'] = w * cur_split_pct + (1 - w) * prior_split_pct
+
+    prior_gp_total = prior.get('gamesPlayed') or 1
+    prior_gf_pg = prior.get('goalFor', 0) / prior_gp_total
+    prior_ga_pg = prior.get('goalAgainst', 0) / prior_gp_total
+    cur_gf = team_info.get('gf_pg')
+    if cur_gf is not None:
+        team_info['blend_gf_pg'] = w * cur_gf + (1 - w) * prior_gf_pg
+    cur_ga = team_info.get('ga_pg')
+    if cur_ga is not None:
+        team_info['blend_ga_pg'] = w * cur_ga + (1 - w) * prior_ga_pg
+
+
 def _get_recent_form_map():
     """Query past 3 weeks of completed games and build team form sequences
     plus each team's most recent game date (for back-to-back detection)."""
@@ -273,7 +371,8 @@ def _get_team_goalie(abbrev):
     }
 
 
-def _build_team_info(team_data, side, standings, form, goalie, rest_days=None, fresh_record=True):
+def _build_team_info(team_data, side, standings, form, goalie, rest_days=None, fresh_record=True,
+                      prior_standings=None):
     abbrev = team_data.get('abbrev', '')
     st     = standings.get(abbrev, {})
     gp     = st.get('gamesPlayed', 1) or 1
@@ -287,7 +386,7 @@ def _build_team_info(team_data, side, standings, form, goalie, rest_days=None, f
         split_l = st.get('roadLosses', 0) + st.get('roadOtLosses', 0)
         split_label = 'Away'
 
-    return {
+    info = {
         'abbrev':      abbrev,
         'logo_url':    f'https://assets.nhle.com/logos/nhl/svg/{abbrev}_light.svg',
         'name':        st.get('teamName', {}).get('default', abbrev),
@@ -311,6 +410,9 @@ def _build_team_info(team_data, side, standings, form, goalie, rest_days=None, f
         'l10':         f"{st.get('l10Wins',0)}-{st.get('l10Losses',0)}-{st.get('l10OtLosses',0)}",
         'rest_days':   rest_days,
     }
+    if prior_standings:
+        _apply_prior_season_blend(info, side, prior_standings)
+    return info
 
 
 def get_today_game_count():
@@ -380,6 +482,7 @@ def build_schedule_context(target_date=None):
     from odds_api import _normalize
     raw        = _get_schedule_raw(target_date)
     standings  = _get_standings_map()
+    prior_standings = _get_prior_season_standings(_get_nhl_season_start_year())
     form, last_game_date = _get_recent_form_map()
     odds_map   = odds_api.get_odds_map('nhl')
     injury_map = injuries_api.get_injury_map('nhl')
@@ -438,9 +541,9 @@ def build_schedule_context(target_date=None):
             sid = standings.get(ab, {}).get('seasonId')
             return not (sid and game_season and str(sid) != str(game_season))
         away = _build_team_info(a_data, 'away', standings, form, goalies.get(a_ab),
-                                 _rest_days(last_game_date, a_ab, today_str), _fresh(a_ab))
+                                 _rest_days(last_game_date, a_ab, today_str), _fresh(a_ab), prior_standings)
         home = _build_team_info(h_data, 'home', standings, form, goalies.get(h_ab),
-                                 _rest_days(last_game_date, h_ab, today_str), _fresh(h_ab))
+                                 _rest_days(last_game_date, h_ab, today_str), _fresh(h_ab), prior_standings)
 
         # Inject injury status onto goalie info
         for team in (away, home):
@@ -461,15 +564,23 @@ def build_schedule_context(target_date=None):
 
         # Opponent-adjusted goals total — see hockey_total_model.py. No new
         # fetch needed, GF/GA-per-game are already computed above for the
-        # win-prob model. total_inputs is stashed alongside the projection
-        # so a future total-model recalibration can replay this exact game.
+        # win-prob model. Uses blend_gf_pg/blend_ga_pg the same way
+        # nhl_model.predict() does (falls back to raw gf_pg/ga_pg once a
+        # team has played EARLY_SEASON_GAMES) — same fix as the other
+        # sports' total_inputs blocks. total_inputs is stashed alongside
+        # the projection so a future total-model recalibration can replay
+        # this exact game.
+        home_gf_pg = home.get('blend_gf_pg', home.get('gf_pg'))
+        home_ga_pg = home.get('blend_ga_pg', home.get('ga_pg'))
+        away_gf_pg = away.get('blend_gf_pg', away.get('gf_pg'))
+        away_ga_pg = away.get('blend_ga_pg', away.get('ga_pg'))
         total_inputs = {
-            'home_gf_pg': home.get('gf_pg'), 'home_ga_pg': home.get('ga_pg'),
-            'away_gf_pg': away.get('gf_pg'), 'away_ga_pg': away.get('ga_pg'),
+            'home_gf_pg': home_gf_pg, 'home_ga_pg': home_ga_pg,
+            'away_gf_pg': away_gf_pg, 'away_ga_pg': away_ga_pg,
         }
         try:
             total_model = hockey_total_model.predict_total(
-                home.get('gf_pg'), home.get('ga_pg'), away.get('gf_pg'), away.get('ga_pg'))
+                home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg)
         except Exception:
             total_model = None
         try:
