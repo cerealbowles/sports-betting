@@ -24,7 +24,25 @@
    that sport's predict_total() found the inputs it needs (pace data for
    NBA/WNBA/NFL/CFB; team RPG + probable starter ERA for MLB; GF/GA for
    NHL). #}
-{% if game.model and game.status != 'Final' %}
+{% if game.status == 'Final' and game.graded %}
+<div class="mc-wrap">
+    <div class="mc-chips">
+        {% for key, label in [('ml', 'ML'), ('spread', 'SPREAD'), ('total', 'TOTAL')] %}
+        {% set g = game.graded.get(key) %}
+        <div class="mc-chip mc-result{{ '' if not g else (' mc-result-push' if g.won is none else (' mc-result-win' if g.won else ' mc-result-loss')) }}">
+            <span class="mc-t">{{ label }}</span>
+            {% if g %}
+            <span class="mc-side">{{ g.side }}</span>
+            <span class="mc-result-tag">{{ 'Push' if g.won is none else ('Hit' if g.won else 'Miss') }}</span>
+            {% else %}
+            <span class="mc-big mc-dash">—</span>
+            <span class="mc-side mc-side-muted">no pick</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% elif game.model and game.status != 'Final' %}
 {% set mc_home_team = game.home.abbrev or game.home.abbr %}
 {% set mc_away_team = game.away.abbrev or game.away.abbr %}
 {% set mc_model_home_prob = game.model.final_home_prob if game.model.final_home_prob is defined else game.model.home_prob %}

@@ -1,6 +1,14 @@
 import warnings
 warnings.filterwarnings('ignore', message='.*timezone.*')
 
+# Load .env before any other import — odds_history.py and this module both
+# read os.environ.get(...) at import time (DB_PATH), and odds_api.py reads
+# ODDS_API_KEY per-request. Without this, .env silently does nothing (no
+# error, just an empty odds map) unless the parent shell happened to export
+# the same vars itself.
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, request, redirect, url_for, render_template, abort, jsonify, make_response, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect, text
@@ -1309,6 +1317,59 @@ def _upsert_predictions(schedule, sport='MLB'):
       db.session.commit()
     except Exception:
       db.session.rollback()
+
+
+def _attach_graded_results(schedule, sport):
+  """For each Final game, attach game['graded'] with the ML/spread/total
+  pick + win/loss so the schedule page can show tinted result chips instead
+  of the pre-game market-vs-model chips. Reads the already-graded
+  GamePrediction row (written by _upsert_predictions) rather than
+  recomputing win/cover/over from scratch here, so this always agrees with
+  the Model Performance page's numbers."""
+  for day in (schedule or []):
+    for game in day.get('games', []):
+      if game.get('status') != 'Final':
+        continue
+      game_date = _et_date(game.get('game_time_utc') or '')
+      home_obj  = game.get('home') or {}
+      away_obj  = game.get('away') or {}
+      home_name = home_obj.get('name', '')
+      away_name = away_obj.get('name', '')
+      if not game_date or not home_name or not away_name:
+        continue
+      pred = GamePrediction.query.filter_by(
+          sport=sport, game_date=game_date,
+          home_team=home_name, away_team=away_name,
+      ).first()
+      if pred is None or pred.home_won is None:
+        continue
+      home_ab = home_obj.get('abbrev') or home_obj.get('abbr') or ''
+      away_ab = away_obj.get('abbrev') or away_obj.get('abbr') or ''
+      graded = {}
+
+      if pred.home_prob is not None:
+        fav_home = pred.home_prob >= 0.5
+        graded['ml'] = {
+            'side': home_ab if fav_home else away_ab,
+            'won':  bool(pred.pick_roi is not None and pred.pick_roi > 0),
+        }
+
+      if pred.spread_pick_line is not None and pred.spread_pick_roi is not None:
+        pick_home = (pred.spread_cover_prob or 0.5) >= 0.5
+        line_val  = pred.spread_pick_line if pick_home else -pred.spread_pick_line
+        graded['spread'] = {
+            'side': f"{home_ab if pick_home else away_ab} {'+' if line_val > 0 else ''}{line_val:g}",
+            'won':  None if pred.spread_pick_roi == 0.0 else (pred.spread_pick_roi > 0),
+        }
+
+      if pred.total_pick_line is not None and pred.total_pick_roi is not None:
+        pick_over = (pred.total_over_prob or 0.5) >= 0.5
+        graded['total'] = {
+            'side': f"{'Over' if pick_over else 'Under'} {pred.total_pick_line:g}",
+            'won':  None if pred.total_pick_roi == 0.0 else (pred.total_pick_roi > 0),
+        }
+
+      game['graded'] = graded
 
 
 # Kelly calculation function with space to tweak using closed bets history
@@ -2804,6 +2865,7 @@ def mlb_schedule():
       game['open_bets'] = matched
 
   _upsert_predictions(schedule, 'MLB')
+  _attach_graded_results(schedule, 'MLB')
   _mark_favorites(schedule, 'MLB')
 
   # Build candidate list.
@@ -4083,6 +4145,7 @@ def nhl_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NHL')
+  _attach_graded_results(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
   recommended = _edge_recommendations(schedule, 'NHL')
@@ -4095,6 +4158,7 @@ def nba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NBA')
+  _attach_graded_results(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
   recommended = _edge_recommendations(schedule, 'NBA')
@@ -4107,6 +4171,7 @@ def wnba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
   schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'WNBA')
+  _attach_graded_results(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
   recommended = _edge_recommendations(schedule, 'WNBA')
@@ -4119,6 +4184,7 @@ def nfl_schedule():
   week = request.args.get('week', type=int)
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
+  _attach_graded_results(week_ctx['days'], 'NFL')
   _mark_favorites(week_ctx['days'], 'NFL')
   _match_open_bets_to_games(week_ctx['days'], sport='NFL')
 
@@ -4156,6 +4222,7 @@ def cfb_schedule():
   week = request.args.get('week', type=int)
   week_ctx = cfb_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'CFB')
+  _attach_graded_results(week_ctx['days'], 'CFB')
   _mark_favorites(week_ctx['days'], 'CFB')
   _match_open_bets_to_games(week_ctx['days'], sport='CFB')
 
