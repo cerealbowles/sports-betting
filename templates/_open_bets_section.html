@@ -113,8 +113,16 @@
         {% set eb_hi = ([chip_track_pos(eb_mkt_pct), chip_track_pos(eb_mdl_pct)] | max) %}
         {% set eb_hot = eb_edge is not none and eb_edge | abs >= 3.0 %}
         {% set eb_conf = ([eb_mdl_pct, 100 - eb_mdl_pct] | max) %}
-        {% set eb_conf_level = 'high' if eb_conf >= 65 else ('medium' if eb_conf >= 55 else 'low') %}
-        {% set eb_conf_pips = 6 if eb_conf >= 75 else (5 if eb_conf >= 68 else (4 if eb_conf >= 62 else (3 if eb_conf >= 58 else (2 if eb_conf >= 54 else 1)))) %}
+        {# Same per-sport tier calibration the schedule pages use (app.py) instead
+           of a flat 65/55 guess — confidence_tiers() for ML, total_confidence_tiers()
+           for Spread/Total (both read as a 0-100% distance-from-50 the same way
+           total_over_prob does; there's no separate points-based spread tier here
+           since this card's eb_conf is always a probability, never raw margin
+           points — spread_confidence_tiers() is in a different unit and would be
+           a unit-mismatch bug if applied directly to eb_conf). #}
+        {% set eb_ct = confidence_tiers(b.sport) if eb_type_class == 'ml' else total_confidence_tiers(b.sport) %}
+        {% set eb_conf_level = 'high' if eb_conf >= eb_ct.high else ('medium' if eb_conf >= eb_ct.medium else 'low') %}
+        {% set eb_conf_pips = 6 if eb_conf >= eb_ct.pips[4] else (5 if eb_conf >= eb_ct.pips[3] else (4 if eb_conf >= eb_ct.pips[2] else (3 if eb_conf >= eb_ct.pips[1] else (2 if eb_conf >= eb_ct.pips[0] else 1)))) %}
         <div class="mc-wrap eb-typerow">
             <div class="mc-chips" style="grid-template-columns:1fr;">
                 <div class="mc-chip mc-confidence-{{ eb_conf_level }}{{ ' mc-hot' if eb_hot }}">
@@ -154,19 +162,19 @@
                             {% endif %}
                         </div>
                     </div>
-                    <div class="mc-legend"><span class="mc-m">Market (no-vig)</span><span class="mc-o">Model</span><span class="mc-g">Edge ≥ 3.0 pts</span></div>
+                    <div class="mc-legend">
+                        <span class="mc-m">Market (no-vig)</span><span class="mc-o">Model</span><span class="mc-g">Edge ≥ 3.0 pts</span>
+                        {% if b.ev_pct is not none %}<span class="{{ 'mc-g' if b.ev_pct > 0 else 'mc-m' }}">EV {{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%</span>{% endif %}
+                    </div>
                 </div>
             </details>
         </div>
-        {% endif %}
-
-        <!-- Analytics row -->
+        {% else %}
+        {# No stored model prob for this bet (older record, or a bet type the
+           model doesn't cover) — fall back to the plain Market/Edge box since
+           there's no probability to build a chip from. #}
         {% if b.book_implied is not none %}
         <div class="bc-analytics">
-            <div class="bc-ana-item">
-                <span class="bc-ana-label">Model</span>
-                <span class="bc-ana-val">{{ (b.prob * 100) | round(1) }}%</span>
-            </div>
             <div class="bc-ana-item">
                 <span class="bc-ana-label">Book</span>
                 <span class="bc-ana-val">{{ b.book_implied }}%</span>
@@ -180,6 +188,7 @@
                 <span class="bc-ana-val {{ 'status-win' if b.ev_pct and b.ev_pct > 0 else ('status-loss' if b.ev_pct and b.ev_pct < 0 else '') }}">{% if b.ev_pct is not none %}{{ '+' if b.ev_pct > 0 }}{{ b.ev_pct }}%{% else %}—{% endif %}</span>
             </div>
         </div>
+        {% endif %}
         {% endif %}
 
         <!-- Line movement bobber: green (in your favor, more negative) <-> red (against you) —
