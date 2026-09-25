@@ -5175,6 +5175,39 @@ def _warm_all_caches_noon():
     _warm_all_caches(send_daily=True)
 
 
+def _prewarm_total_model_pace():
+    """Lightweight, frequent pre-warm for just the total-model pace-stats
+    cache (bball_total_model/football_total_model's in-memory 6h cache) —
+    decoupled from the heavier _warm_all_caches (full schedule + DB writes
+    + Discord checks, every 2h/6x-day) so a cold or expired pace cache
+    doesn't sit there until the next full cycle.
+
+    Just calls each sport's schedule builder — none of NBA/WNBA/NFL/CFB's
+    build_schedule_context()/build_week_schedule_context() touch the DB,
+    they're pure network-fetch-and-compute, so running this every 20
+    minutes adds no DB load anywhere. Fetching pace as a side effect of
+    building every game's total_model (predict_total) is the whole point;
+    the built schedule itself is thrown away.
+
+    Added directly for the intermittent WNBA "Today page hangs" report —
+    ESPN's WNBA team-stats endpoint measured at ~45s cold for a full
+    slate, worst of the four sports here, so it's first in line. Combined
+    with the negative-caching backoff in bball_total_model._fetch_pace_
+    components (a failed fetch used to never get cached at all, so a
+    slow/erroring team retried the full 15s timeout on every single
+    request), this should make cold-cache page loads rare rather than
+    just faster.
+    """
+    for name, fn in [('NBA', nba_api.build_schedule_context),
+                      ('WNBA', wnba_api.build_schedule_context),
+                      ('NFL', nfl_api.build_week_schedule_context),
+                      ('CFB', cfb_api.build_week_schedule_context)]:
+        try:
+            fn()
+        except Exception:
+            pass
+
+
 # ── Nightly outcome resolver ──────────────────────────────────────────────────
 # Fills in home_won / scores for GamePrediction rows that are still pending.
 # Runs at 5 am ET — after the latest West Coast games (~midnight PT) are Final.
@@ -5305,6 +5338,11 @@ def _start_cache_warmer():
                       hour=5, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='resolve_outcomes')
+    # Pace-stats-only pre-warm — every 20 min, much more often than the full
+    # warmer above since it's cheap (no DB writes) and the whole point is
+    # shrinking the window a cold/expired pace cache can sit in.
+    scheduler.add_job(_prewarm_total_model_pace, 'interval',
+                      minutes=20, id='prewarm_pace_cache')
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
 

@@ -51,6 +51,11 @@ LEAGUE_AVG = {
 _BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 _cache = {}
 _TTL = 6 * 3600  # season-aggregate play counts move slowly — cache long
+_fail_ts = {}
+_FAIL_BACKOFF = 300  # 5 min — see bball_total_model._FAIL_BACKOFF, same fix:
+                     # a failed fetch used to never get cached at all, so a
+                     # slow/erroring team retried the full 15s timeout on
+                     # every single request until the endpoint recovered.
 
 
 def _fetch_pace(sport, team_id):
@@ -63,6 +68,8 @@ def _fetch_pace(sport, team_id):
         data, ts = _cache[key]
         if now - ts < _TTL:
             return data
+    if now - _fail_ts.get(key, 0) < _FAIL_BACKOFF:
+        return _cache.get(key, (None, 0))[0]
 
     slug = SPORT_SLUGS.get(sport)
     if not slug:
@@ -72,6 +79,7 @@ def _fetch_pace(sport, team_id):
         r.raise_for_status()
         cats = r.json().get('results', {}).get('stats', {}).get('categories', [])
     except Exception:
+        _fail_ts[key] = now
         return _cache.get(key, (None, 0))[0]
 
     flat = {}

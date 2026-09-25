@@ -53,6 +53,13 @@ LEAGUE_AVG = {
 _BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 _cache = {}
 _TTL = 6 * 3600  # pace components are season aggregates — move slowly, cache long
+_fail_ts = {}
+_FAIL_BACKOFF = 300  # 5 min — a team whose fetch just failed/timed out doesn't
+                     # get retried on every single subsequent request until this
+                     # elapses. Without this, a slow/erroring ESPN endpoint (this
+                     # app's WNBA stats calls in particular) meant EVERY page
+                     # load ate the full 15s timeout again, forever, since a
+                     # failure was never cached at all before this.
 
 
 def _fetch_pace_components(sport, team_id):
@@ -65,6 +72,8 @@ def _fetch_pace_components(sport, team_id):
         data, ts = _cache[key]
         if now - ts < _TTL:
             return data
+    if now - _fail_ts.get(key, 0) < _FAIL_BACKOFF:
+        return _cache.get(key, (None, 0))[0]
 
     slug = SPORT_SLUGS.get(sport)
     if not slug:
@@ -74,6 +83,7 @@ def _fetch_pace_components(sport, team_id):
         r.raise_for_status()
         cats = r.json().get('results', {}).get('stats', {}).get('categories', [])
     except Exception:
+        _fail_ts[key] = now
         return _cache.get(key, (None, 0))[0]
 
     flat = {}
