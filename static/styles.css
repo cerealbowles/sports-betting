@@ -2129,20 +2129,6 @@ body.embed-mode .container { padding-bottom: 0; }
   transition: left 0.3s ease;
 }
 
-/* Base-runner diamond — rendered by refreshScores() as a plain sibling of
-   .sb-score inside .sb-center (a flex column), so it just stacks below the
-   score there. (Previously position:absolute, anchored to a .bc-score
-   .score-live/.score-final wrapper that no longer exists in the current
-   scoreboard markup — with no positioned ancestor at that level it escaped
-   up to .bet-card's transform-created containing block and rendered pinned
-   to the card's right edge, overlapping the analytics row below.) */
-.bc-diamond-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-}
-
 .bc-score-status {
   font-size: 0.65rem;
   font-weight: 700;
@@ -2548,14 +2534,6 @@ body.embed-mode .container { padding-bottom: 0; }
     color: #ef4444; background: rgba(239,68,68,0.09); border-color: rgba(239,68,68,0.25);
 }
 .poss-ico { font-size: 0.7rem; }
-/* MLB base-runner diamond — its own section below the score/inning line on
-   the /mlb schedule page's live game cards, set off with a divider so it
-   doesn't read as part of the score itself. */
-.live-bases-row {
-    display: flex; justify-content: center;
-    margin-top: 8px; padding-top: 8px;
-    border-top: 1px solid var(--border);
-}
 .timeout-dots { display: flex; gap: 3px; margin-top: 3px; }
 .fg-home .timeout-dots, .sb-home .timeout-dots { justify-content: flex-end; }
 .to-dot {

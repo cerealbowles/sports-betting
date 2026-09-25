@@ -164,8 +164,6 @@ function closeDeleteBetModal() {
 
 
 // ── Live score polling ────────────────────────────────────────────────────────
-// (The base-runner diamond used to render here too — it now only shows on
-// the /mlb schedule page, see _schedule_live_poll.html's renderDiamond.)
 (function () {
   function refreshScores() {
     fetch('/api/live-scores')

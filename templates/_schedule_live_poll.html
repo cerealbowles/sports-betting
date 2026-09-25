@@ -24,34 +24,6 @@
     return null; // Preview — leave the kickoff-time text alone
   }
 
-  // Base-runner diamond — same widget the open-bet card used to render
-  // inline, now scoped to the /mlb schedule page instead (see live-bases-row
-  // below for why it's its own section rather than crammed next to the score).
-  function renderDiamond(b) {
-    var on  = '#FB4F14', off = 'rgba(148,163,184,0.18)';
-    var so  = '#FB4F14', sof = 'rgba(148,163,184,0.35)';
-    function sq(cx, cy, occ) {
-      return '<rect x="' + (cx - 4) + '" y="' + (cy - 4) + '" width="8" height="8"'
-        + ' transform="rotate(45 ' + cx + ' ' + cy + ')"'
-        + ' fill="' + (occ ? on : off) + '"'
-        + ' stroke="' + (occ ? so : sof) + '" stroke-width="1.2" rx="1"/>';
-    }
-    var svg = '<svg width="36" height="28" viewBox="0 0 36 28" style="display:block;">'
-      + sq(18,  7, b.second)
-      + sq(30, 19, b.first)
-      + sq(6,  19, b.third)
-      + '</svg>';
-    var dots = '<div style="display:flex;gap:3px;justify-content:center;">';
-    for (var i = 0; i < 2; i++) {
-      var filled = i < (b.outs || 0);
-      dots += '<div style="width:5px;height:5px;border-radius:50%;'
-        + 'background:' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.22)') + ';'
-        + 'border:1px solid ' + (filled ? '#FB4F14' : 'rgba(148,163,184,0.35)') + ';"></div>';
-    }
-    dots += '</div>';
-    return '<div class="bc-diamond-wrap">' + svg + dots + '</div>';
-  }
-
   function renderSbCenter(info) {
     var away = info.away_score, home = info.home_score;
     var html = '';
@@ -77,11 +49,6 @@
         html += '<span class="live-down-distance">' + ls.clock_text + '</span>';
       }
       html += '</div>';
-    }
-    // Base-runner diamond — its own section below the score/inning line,
-    // instead of crowding into either of those.
-    if (info.status === 'Live' && ls && ls.bases) {
-      html += '<div class="live-bases-row">' + renderDiamond(ls.bases) + '</div>';
     }
     return html;
   }
