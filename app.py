@@ -3223,6 +3223,50 @@ def _recommended_bets_history(resolved, sport):
   }
 
 
+def _pip_bucket_stats(rows, prob_attr, outcome_attr, roi_attr):
+  """Break down win rate / ROI by the 1-6 confidence pip scale shown on the
+  game card chips (_market_chips.html mc_*_conf_pips), so 'is a 5-pip
+  Moneyline pick actually beating a 2-pip one' can be answered directly in
+  the same units the user sees on the card."""
+  buckets = {i: {'wins': 0, 'total': 0, 'roi': []} for i in range(1, 7)}
+  for p in rows:
+    outcome = getattr(p, outcome_attr)
+    if outcome is None:
+      continue
+    prob = getattr(p, prob_attr)
+    if prob is None:
+      continue
+    conf = max(prob, 1 - prob) * 100
+    if   conf >= 75: pip = 6
+    elif conf >= 68: pip = 5
+    elif conf >= 62: pip = 4
+    elif conf >= 58: pip = 3
+    elif conf >= 54: pip = 2
+    else:            pip = 1
+    correct = (prob >= 0.5) == bool(outcome)
+    bkt = buckets[pip]
+    bkt['total'] += 1
+    if correct:
+      bkt['wins'] += 1
+    r = getattr(p, roi_attr)
+    if r is not None:
+      bkt['roi'].append(r)
+
+  stats = []
+  for pip in range(1, 7):
+    bkt = buckets[pip]
+    if bkt['total'] == 0:
+      continue
+    roi_vals = bkt['roi']
+    stats.append({
+        'pips':     pip,
+        'count':    bkt['total'],
+        'win_rate': round(bkt['wins'] / bkt['total'] * 100, 1),
+        'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
+    })
+  return stats
+
+
 def _bet_type_accuracy_stats(resolved, prob_attr, outcome_attr, roi_attr):
   """Accuracy/Brier/log-loss/calibration engine for a non-moneyline bet type
   (Spread or Total), mirroring the moneyline computation below but generic
@@ -3286,6 +3330,7 @@ def _bet_type_accuracy_stats(resolved, prob_attr, outcome_attr, roi_attr):
         'avg_roi': round(sum(roi_vals_b) / len(roi_vals_b) * 100, 1) if roi_vals_b else None,
     })
   stats['buckets'] = buckets
+  stats['pip_buckets'] = _pip_bucket_stats(rows, prob_attr, outcome_attr, roi_attr)
   return stats
 
 
@@ -3364,6 +3409,8 @@ def model_performance():
         'error':   round((actual - mid) * 100, 1) if actual is not None else None,
         'avg_roi': round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
     })
+
+  ml_pip_stats = _pip_bucket_stats(resolved, 'home_prob', 'home_won', 'pick_roi')
 
   _team_prefix = re.compile(r'^(?:[A-Z]{2,4}|Hm|Aw) ')
   factor_data = _dd(list)
@@ -4048,6 +4095,7 @@ def model_performance():
       accuracy=accuracy,
       log_loss=log_loss_val,
       buckets=buckets,
+      ml_pip_stats=ml_pip_stats,
       bet_type=bet_type,
       spread_stats=spread_stats,
       total_stats=total_stats,

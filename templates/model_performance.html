@@ -293,6 +293,37 @@
     </div>
     <p class="section-note">Each row shows picks where the model's confidence in its picked side fell in that range. Error = actual − predicted. Near zero is well-calibrated.</p>
 </div>
+
+{% if bt_stats.pip_buckets %}
+<div class="card" style="margin-bottom: 14px;">
+    <div class="section-header" style="margin-bottom: 12px;">
+        <h2>Win Rate by Confidence Pips</h2>
+        <span class="small">same 1-6 pip scale shown on the game card chip</span>
+    </div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr><th>Pips</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
+        </thead>
+        <tbody>
+        {% for b in bt_stats.pip_buckets %}
+        <tr>
+            <td>{{ b.pips }}/6</td>
+            <td>{{ b.count }}</td>
+            <td><span class="{{ 'calib-err-ok' if b.win_rate >= 55 else ('calib-err-pos' if b.win_rate >= 50 else 'calib-err-neg') }}">{{ b.win_rate }}%</span></td>
+            <td>
+                {% if b.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">Higher pips should show higher win rate if confidence tracks reality. A flat or inverted line means the pip scale isn't adding signal for this bet type.</p>
+</div>
+{% endif %}
 {% endif %}
 
 {% else %}
@@ -491,6 +522,37 @@
     </div>
     <p class="section-note">Each row shows games where the model's favored team had that confidence range. Error = actual − predicted. Near zero is well-calibrated. Positive = model underestimated win rate. Negative = overestimated.</p>
 </div>
+
+{% if ml_pip_stats %}
+<div class="card" style="margin-bottom: 14px;">
+    <div class="section-header" style="margin-bottom: 12px;">
+        <h2>Win Rate by Confidence Pips</h2>
+        <span class="small">same 1-6 pip scale shown on the game card chip</span>
+    </div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr><th>Pips</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
+        </thead>
+        <tbody>
+        {% for b in ml_pip_stats %}
+        <tr>
+            <td>{{ b.pips }}/6</td>
+            <td>{{ b.count }}</td>
+            <td><span class="{{ 'calib-err-ok' if b.win_rate >= 55 else ('calib-err-pos' if b.win_rate >= 50 else 'calib-err-neg') }}">{{ b.win_rate }}%</span></td>
+            <td>
+                {% if b.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">Higher pips should show higher win rate if confidence tracks reality. A flat or inverted line means the pip scale isn't adding signal for Moneyline.</p>
+</div>
+{% endif %}
 
 {% endif %}
 
