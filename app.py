@@ -2794,11 +2794,129 @@ def add_closed():
   db.session.commit()
   return redirect(url_for('history'))
 
+def _market_qualifies(pick_prob, mkt_implied, amer_odds):
+  """Shared bet-worthiness gate for every market (ML/Spread/Total): positive
+  Kelly, edge >= 4pts, and a payout floor (b >= 0.25, i.e. no worse than
+  roughly -400) so a 'recommendation' never means 'pay through the nose for
+  a coin flip'. Returns (edge_pct, kelly, b) or None."""
+  if pick_prob is None or mkt_implied is None or amer_odds is None:
+    return None
+  amer_odds = float(amer_odds)
+  b = (amer_odds / 100.0) if amer_odds > 0 else (-100.0 / amer_odds if amer_odds < 0 else 0.0)
+  if b < 0.25:
+    return None
+  kelly = (b * pick_prob - (1 - pick_prob)) / b
+  edge = round((pick_prob - mkt_implied) * 100, 1)
+  if kelly <= 0 or edge < 4:
+    return None
+  return edge, kelly, b
+
+
+def _best_market_pick(game):
+  """Single source of truth for the site's ★ recommendation, across all three
+  markets (ML/Spread/Total) instead of ML alone. A game can only earn a star
+  from a market the model has actually been shown to have edge in:
+    - ML: every sport (the original win-prob model).
+    - Spread: only spread_model.VALIDATED_SPORTS (MLB, NHL) — spread_model's
+      independent regression hasn't beaten break-even out-of-sample anywhere
+      else (see spread_model.py).
+    - Total: only sports _TOTAL_CONFIDENCE_CAP doesn't flag 'unproven' (NFL,
+      CFB, NBA, WNBA) — MLB/NHL's total fits are weak pre-ship R² with no
+      live-graded track record yet (see _total_confidence_tier).
+  Of whichever markets clear the bar (Kelly>0, edge>=4pts, payout b>=0.25),
+  the one with the largest edge wins — a game earns at most one star.
+  Returns None, or {market, side, abbr, label, edge, kelly, amer_odds, ev_pct,
+  pick_rank}."""
+  if not game or game.get('status') in ('Final', 'Live'):
+    return None
+  model = game.get('model') or {}
+  odds  = game.get('odds') or {}
+  sport = game.get('sport')
+  home  = game.get('home') or {}
+  away  = game.get('away') or {}
+  home_abbr = home.get('abbrev') or home.get('abbr') or ''
+  away_abbr = away.get('abbrev') or away.get('abbr') or ''
+  candidates = []
+
+  # ── Moneyline ──
+  h_imp, a_imp = odds.get('home_implied'), odds.get('away_implied')
+  if model and h_imp is not None and a_imp is not None:
+    favors_home = h_imp >= a_imp
+    if 'final_home_prob' in model:
+      pick_prob = model.get('final_home_prob') if favors_home else model.get('final_away_prob')
+    else:
+      pick_prob = model.get('home_prob') if favors_home else model.get('away_prob')
+    mkt_implied = h_imp if favors_home else a_imp
+    amer_odds   = odds.get('home_best') if favors_home else odds.get('away_best')
+    q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
+    if q:
+      edge, kelly, b = q
+      abbr = home_abbr if favors_home else away_abbr
+      candidates.append({'market': 'ml', 'side': 'home' if favors_home else 'away',
+                          'abbr': abbr, 'label': f'{abbr} ML', 'edge': edge, 'kelly': kelly,
+                          'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
+                          'pick_rank': (home if favors_home else away).get('rank_display')})
+
+  # ── Spread ──
+  factors     = model.get('factors')
+  home_spread = odds.get('home_spread')
+  if spread_model.is_validated(sport) and factors and home_spread is not None:
+    home_cover = spread_model.cover_prob(sport, factors, home_spread)
+    hp_price, ap_price = odds.get('home_spread_price'), odds.get('away_spread_price')
+    if home_cover is not None and hp_price is not None and ap_price is not None:
+      vf_h, vf_a = _vig_free_implied(hp_price, ap_price)
+      if vf_h is not None:
+        favors_home = home_cover >= 0.5
+        pick_prob   = home_cover if favors_home else (1 - home_cover)
+        mkt_implied = vf_h if favors_home else vf_a
+        amer_odds   = hp_price if favors_home else ap_price
+        q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
+        if q:
+          edge, kelly, b = q
+          abbr = home_abbr if favors_home else away_abbr
+          val  = home_spread if favors_home else -home_spread
+          label = f"{abbr} {'+' if val > 0 else ''}{val:g}"
+          candidates.append({'market': 'spread', 'side': 'home' if favors_home else 'away',
+                              'abbr': abbr, 'label': label, 'edge': edge, 'kelly': kelly,
+                              'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
+                              'pick_rank': (home if favors_home else away).get('rank_display')})
+
+  # ── Total ──
+  total_model = game.get('total_model')
+  total_line  = odds.get('total_line')
+  if total_model and total_line is not None and _total_confidence_tier(sport, 'high') != 'unproven':
+    proj = total_model.get('total_projection')
+    over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
+    over_price, under_price = odds.get('over_odds'), odds.get('under_odds')
+    if over_prob is not None and over_price is not None and under_price is not None:
+      vf_o, vf_u = _vig_free_implied(over_price, under_price)
+      if vf_o is not None:
+        favors_over = over_prob >= 0.5
+        pick_prob   = over_prob if favors_over else (1 - over_prob)
+        mkt_implied = vf_o if favors_over else vf_u
+        amer_odds   = over_price if favors_over else under_price
+        q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
+        if q:
+          edge, kelly, b = q
+          label = f"{'O' if favors_over else 'U'} {total_line:g}"
+          candidates.append({'market': 'total', 'side': 'over' if favors_over else 'under',
+                              'abbr': label, 'label': label, 'edge': edge, 'kelly': kelly,
+                              'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
+                              'pick_rank': None})
+
+  if not candidates:
+    return None
+  return max(candidates, key=lambda c: c['edge'])
+
+
 def _mlb_star_pick(game):
-  """Python mirror of _edge_star.html's edge_pick macro — kept in sync by hand
-  so the top 'Today's Recommendations' table can be filtered to exactly the
-  games that render a ★ on their own card below. Returns the picked team's
-  abbrev, or None if this game doesn't earn a star."""
+  """Backward-compatible ML-only wrapper around _best_market_pick, kept for
+  the 'Today's Recommendations' Trust Score table (all_candidates/best_bets
+  above), which is built entirely from ML win-prob/Kelly data — a spread or
+  total star would have nothing meaningful to show in those columns. Use
+  _best_market_pick directly wherever the recommendation can be any market
+  (the ★ badge on the card header, and the non-MLB Recommendations list).
+  Returns the picked team's abbrev, or None if ML alone doesn't earn a star."""
   model, odds = game.get('model'), game.get('odds')
   if not model or game.get('status') in ('Final', 'Live') or not odds:
     return None
@@ -2827,6 +2945,9 @@ def _mlb_star_pick(game):
     away = game.get('away') or {}
     return (home.get('abbrev') or home.get('abbr')) if favors_home else (away.get('abbrev') or away.get('abbr'))
   return None
+
+
+app.jinja_env.globals['best_market_pick'] = _best_market_pick
 
 
 @app.route('/mlb')
@@ -4143,57 +4264,35 @@ def model_performance():
 
 def _edge_recommendations(days, sport, limit=15):
   """Edge-ranked recommendation list for the non-MLB sports (MLB has its own
-  full Trust Score table, filtered the equivalent way by _mlb_star_pick).
-  `days` is the schedule list of {'games': [...]}.
+  full Trust Score table, filtered separately by _mlb_star_pick since that
+  table's columns are ML-specific). `days` is the schedule list of
+  {'games': [...]}.
 
-  Picks and thresholds are a Python mirror of _edge_star.html's edge_pick
-  macro (always the market favorite; kelly > 0, edge >= 4pt, payout b >= 0.25)
-  so this list is exactly the set of games that render a ★ on their own card
-  below — kept in sync by hand with that macro."""
+  Built directly from _best_market_pick — the same single source of truth
+  that decides the ★ on each game's card — so this list is exactly the set
+  of games that render a star below, whichever market (ML/Spread/Total)
+  earned it, with no separate mirrored threshold logic to keep in sync."""
   recommended = []
   for day in (days or []):
     for game in day.get('games', []):
-      if game.get('status') in ('Final', 'Live'):
+      pick = _best_market_pick(game)
+      if not pick:
         continue
-      home_t, away_t = game.get('home') or {}, game.get('away') or {}
-      model, odds = game.get('model'), game.get('odds')
-      if not model or not odds:
-        continue
-      h_imp, a_imp = odds.get('home_implied'), odds.get('away_implied')
-      if h_imp is None or a_imp is None:
-        continue
-
-      favors_home = (h_imp * 100) >= 50
-      if favors_home:
-        pick_side, pick_team, mkt_implied, amer_odds = 'home', home_t, h_imp, odds.get('home_best')
-        pick_prob = model.get('home_prob')
-      else:
-        pick_side, pick_team, mkt_implied, amer_odds = 'away', away_t, a_imp, odds.get('away_best')
-        pick_prob = model.get('away_prob')
-      if amer_odds is None or pick_prob is None:
-        continue
-
-      k_b = (amer_odds / 100.0) if amer_odds > 0 else (-100.0 / amer_odds if amer_odds < 0 else 0)
-      if k_b < 0.25:
-        continue
-      k_f = (k_b * pick_prob - (1 - pick_prob)) / k_b
-      edge = round((pick_prob - mkt_implied) * 100, 1)
-      if k_f <= 0 or edge < 4:
-        continue
-      ev_pct = round((k_b * pick_prob - (1 - pick_prob)) * 100, 1)
-
+      k_f = pick['kelly']
       if k_f >= 0.10:   k_label, k_cls = 'Strong', 'edge-pos'
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
       else:             k_label, k_cls = 'Lean',   'edge-neutral'
 
       recommended.append({
           'game':         game,
-          'pick_side':    pick_side,
-          'pick_abbr':    pick_team.get('abbrev', ''),
-          'pick_rank':    pick_team.get('rank_display'),
-          'amer_odds':    amer_odds,
-          'edge':         edge,
-          'ev_pct':       ev_pct,
+          'market':       pick['market'],
+          'pick_side':    pick['side'],
+          'pick_abbr':    pick['abbr'],
+          'pick_label':   pick['label'],
+          'pick_rank':    pick['pick_rank'],
+          'amer_odds':    pick['amer_odds'],
+          'edge':         pick['edge'],
+          'ev_pct':       pick['ev_pct'],
           'k_label':      k_label,
           'k_cls':        k_cls,
       })

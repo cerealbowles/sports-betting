@@ -28,7 +28,8 @@
         style="border-bottom:1px solid var(--border);">
       <td style="padding:6px 8px;color:var(--text-muted);">{{ loop.index }}</td>
       <td style="padding:6px 8px;font-weight:800;color:var(--orange);">
-        {% if r.pick_rank %}<span class="rank-badge">#{{ r.pick_rank }}</span>{% endif %}{{ r.pick_abbr }}
+        {% if r.pick_rank %}<span class="rank-badge">#{{ r.pick_rank }}</span>{% endif %}{{ r.pick_label }}
+        <span style="font-size:0.62rem;font-weight:700;color:var(--text-muted);margin-left:4px;text-transform:uppercase;">{{ r.market }}</span>
       </td>
       <td style="padding:6px 8px;">{{ g.away.abbrev }} @ {{ g.home.abbrev }}
         {% if g.game_time_utc %}<span class="game-time" data-utc="{{ g.game_time_utc }}" style="font-size:0.7rem;color:var(--text-muted);margin-left:6px;">—</span>{% endif %}
@@ -37,7 +38,7 @@
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
       <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
-      <td style="padding:6px 8px;text-align:right;"><button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}')">Bet</button></td>
+      <td style="padding:6px 8px;text-align:right;"><button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}', '{{ {'ml': 'Moneyline', 'spread': 'Spread', 'total': 'Over/Under'}[r.market] }}')">Bet</button></td>
     </tr>
     {% endfor %}
     </tbody>

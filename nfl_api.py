@@ -705,16 +705,25 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
     # Pace-adjusted total (O/U) projection — separate from the win-prob
     # model above, needs its own plays-per-game fetch per team (see
     # football_total_model.py for why this can't reuse the win-prob factors).
+    # Uses blend_ppg/blend_ppg_allowed the same way nfl_model.predict() does
+    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
+    # without it, early-season totals were built off 2-3 raw games per team,
+    # which swings PPG/PPG-allowed wildly and produces projections 20+
+    # points off the market total.
     # total_inputs is stashed alongside the projection so a future
     # total-model recalibration can replay this exact game.
+    home_ppg         = home.get('blend_ppg', home.get('ppg'))
+    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+    away_ppg         = away.get('blend_ppg', away.get('ppg'))
+    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
     total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home.get('ppg'), 'home_ppg_allowed': home.get('ppg_allowed'),
-        'away_id': away.get('id'), 'away_ppg': away.get('ppg'), 'away_ppg_allowed': away.get('ppg_allowed'),
+        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
+        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
     }
     try:
         total_model = football_total_model.predict_total(
-            'NFL', home.get('id'), home.get('ppg'), home.get('ppg_allowed'),
-            away.get('id'), away.get('ppg'), away.get('ppg_allowed'))
+            'NFL', home.get('id'), home_ppg, home_ppg_allowed,
+            away.get('id'), away_ppg, away_ppg_allowed)
     except Exception:
         total_model = None
     try:
