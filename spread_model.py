@@ -164,6 +164,21 @@ def _looks_like_team_code(token):
     return token.isalpha() and token.isupper() and 2 <= len(token) <= 4
 
 
+# mlb_model.py's _era_estimator falls back through SIERA -> xFIP -> xERA ->
+# ERA depending on data availability, labeling the SP+BP blend factor with
+# whichever metric it used (era_label = f'{ha} SP+BP {h_era_lbl}'), and
+# groups xFIP with SIERA and xERA with ERA for its own coefficient (era_coeff
+# = 0.37 for SIERA/xFIP, 0.63 for xERA/ERA — mlb_model.py's _era_estimator
+# call site). COEFFS only has fitted weights for "SP+BP SIERA" and "SP+BP
+# ERA" (spread_model_fit.py's training data only ever saw those two labels),
+# so this alias maps a live xFIP/xERA game onto the weight for whichever of
+# the two it's grouped with above, instead of silently dropping the factor.
+_LABEL_ALIASES = {
+    'SP+BP xFIP': 'SP+BP SIERA',
+    'SP+BP xERA': 'SP+BP ERA',
+}
+
+
 def _canonicalize(factors):
     """Strip team-abbreviation prefixes from a live factors list so its
     labels match COEFFS' sport-level (not team-level) keys."""
@@ -172,9 +187,8 @@ def _canonicalize(factors):
         if ' ' in label:
             first, suffix = label.split(' ', 1)
             if _looks_like_team_code(first):
-                canon.append((suffix, contrib))
-                continue
-        canon.append((label, contrib))
+                label = suffix
+        canon.append((_LABEL_ALIASES.get(label, label), contrib))
     return canon
 
 
