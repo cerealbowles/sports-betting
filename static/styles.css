@@ -1233,6 +1233,7 @@ body.embed-mode .container { padding-bottom: 0; }
 .mc-track .mc-mid { position: absolute; left: 50%; top: 5px; width: 1px; height: 11px; background: var(--border-strong); }
 .mc-track .mc-gap { position: absolute; top: 8px; height: 5px; border-radius: 3px; background: rgba(148,163,184,0.35); }
 .mc-track .mc-gap.mc-hot { background: rgba(34,197,94,0.4); }
+.mc-track .mc-gap.mc-bad { background: rgba(239,68,68,0.4); } /* line-movement track only — "against you", same --loss red as everywhere else */
 .mc-track .mc-dot { position: absolute; top: 4px; width: 12px; height: 12px; border-radius: 50%; transform: translateX(-50%); }
 .mc-track .mc-dot-m { background: var(--mc-market); box-shadow: 0 0 0 2px var(--bg-card-2); }
 .mc-track .mc-dot-o { background: var(--bg-card-2); border: 2.5px solid var(--mc-model); }

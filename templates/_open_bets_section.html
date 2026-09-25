@@ -99,11 +99,18 @@
 
     <div class="bc-front-body bc-flip" role="button" tabindex="0" data-game-url="{{ eb_game_url or '' }}" aria-label="View game card for {{ b.name }}">
 
-        <!-- Market-vs-model: same mc-chip box + mc-fold look as the schedule
-             card's ML/Spread/Total row (_market_chips.html) — a single
-             colored chip (border/number tint by confidence tier) for this
-             bet's own type, plus the same collapsible track underneath,
-             instead of the old flat mc-table row. #}
+        {# Market-vs-model: same mc-chip box + mc-fold look as the schedule
+           card's ML/Spread/Total row (_market_chips.html) — a single
+           colored chip (border/number tint by confidence tier) for this
+           bet's own type, plus the same collapsible track underneath,
+           instead of the old flat mc-table row.
+
+           This comment used to be opened as an HTML comment but closed
+           with Jinja's own comment-close token, so it was never actually
+           terminated as HTML — every browser silently swallowed the
+           entire mc-chip block, and everything after it up to the next
+           real HTML comment close, into one invisible comment. The chip
+           has never rendered in production until this fix. #}
         {% if b.prob is not none %}
         {% set eb_mkt_pct = b.book_implied if b.book_implied is not none else 0 %}
         {% set eb_mdl_pct = b.prob * 100 %}
@@ -191,13 +198,22 @@
         {% endif %}
         {% endif %}
 
-        <!-- Line movement bobber: green (in your favor, more negative) <-> red (against you) —
-             the actual odds/movement values sit right above the track (moved here from the
-             Financials row below so the numbers read together with the visual). -->
+        <!-- Line movement — same mc-track dot/gap visual as the market-vs-model
+             tracks above (and every schedule-page chip's fold) instead of the
+             old single-bobber-on-a-gradient style, so this reads as "one more
+             track on this card" rather than a different visual language.
+             OPEN sits fixed at center (50%); NOW is positioned the same
+             distance away as the old bobber was, capped at ±40 points so one
+             huge swing doesn't flatten every other card's movement to a
+             sliver. Green gap = moved in your favor, red = against — same
+             --win/--loss colors used everywhere else on the site for that. -->
         {% if b.line_move is not none %}
-        {% set clamped = b.line_move | abs %}
-        {% set clamped = 40 if clamped > 40 else clamped %}
-        {% set pct = 50 + (clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
+        {% set lm_clamped = b.line_move | abs %}
+        {% set lm_clamped = 40 if lm_clamped > 40 else lm_clamped %}
+        {% set lm_pct = 50 + (lm_clamped / 40 * 50 * (1 if b.line_move > 0 else -1)) %}
+        {% set lm_lo = ([50, lm_pct] | min) %}
+        {% set lm_hi = ([50, lm_pct] | max) %}
+        {% set lm_favor = b.line_move < 0 %}
         <div class="bc-linemove" title="Line moved {{ 'in your favor' if b.line_move < 0 else ('against you' if b.line_move > 0 else 'no change') }} since you bet ({{ b.original_american }} → {{ b.current_american }})">
             <div class="bc-linemove-head">
                 <span class="bc-fin-label">Line</span>
@@ -212,9 +228,14 @@
                     {% endif %}
                 </span>
             </div>
-            <div class="bc-linemove-track">
-                <div class="bc-linemove-bobber" style="left: {{ pct }}%;"></div>
+            <div class="mc-track" style="margin-top:6px;">
+                <div class="mc-bar"></div>
+                <div class="mc-mid"></div>
+                <div class="mc-gap {{ 'mc-hot' if lm_favor else 'mc-bad' }}" style="left:{{ lm_lo }}%;width:{{ lm_hi - lm_lo }}%"></div>
+                <div class="mc-dot mc-dot-m" style="left:50%"></div>
+                <div class="mc-dot mc-dot-o" style="left:{{ lm_pct }}%"></div>
             </div>
+            <div class="mc-ends"><span>OPEN</span><span>NOW</span></div>
         </div>
         {% endif %}
 
