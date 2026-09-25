@@ -173,9 +173,23 @@ def _looks_like_team_code(token):
 # ERA" (spread_model_fit.py's training data only ever saw those two labels),
 # so this alias maps a live xFIP/xERA game onto the weight for whichever of
 # the two it's grouped with above, instead of silently dropping the factor.
+#
+# Same reasoning applies to team offense: mlb_model.py's section 7 prefers
+# handedness-split xwOBA, falling back to overall xwOBA, falling back to
+# OPS, labeling whichever tier it used ("xwOBA Split" / "xwOBA" / "OPS") —
+# but spread_model_fit.py's training data only ever saw "OPS" (the other
+# two tiers are newer/rarer), so COEFFS has no fitted weight for them. All
+# three tiers measure the same offense-differential concept at comparable
+# contribution scale (mlb_model.py's per-tier coefficients — 2.5 for
+# xwOBA[-split], 0.22 for OPS — are chosen so the logit contribution is
+# similar-sized regardless of which data tier was available), so aliasing
+# onto OPS's weight is a reasonable stopgap rather than dropping the whole
+# offense factor whenever the higher-quality xwOBA data happens to be there.
 _LABEL_ALIASES = {
     'SP+BP xFIP': 'SP+BP SIERA',
     'SP+BP xERA': 'SP+BP ERA',
+    'xwOBA Split': 'OPS',
+    'xwOBA': 'OPS',
 }
 
 
