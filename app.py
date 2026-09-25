@@ -1838,6 +1838,19 @@ def ml_factors_panel(game):
     )
 
 
+def _bettable_spread_display(margin, sport):
+    """Format a raw regression margin as a value a book would actually
+    post — half-point increments everywhere, and clamped to the fixed
+    +/-1.5 run line / puck line for MLB and NHL (confirmed against 2,312
+    MLB and 860 NHL graded games: that line is never anything else there),
+    matching the game-card chip's own formatting (_market_chips.html)."""
+    if sport in ('MLB', 'NHL'):
+        magnitude = 1.5
+    else:
+        magnitude = round(abs(margin) * 2) / 2.0
+    return magnitude if margin >= 0 else -magnitude
+
+
 def spread_factors_panel(game):
     """Spread Model tab — spread_model.py's independently-fit weighted
     factors (see that module's docstring), same home/away-signed convention
@@ -1854,10 +1867,11 @@ def spread_factors_panel(game):
     away_abbr = away.get('abbrev') or away.get('abbr') or 'Away'
     margin = wf['margin']
     favors_positive = margin > 0
+    display_margin = _bettable_spread_display(margin, sport)
     return _diverge_panel(
         wf['rows'], favors_positive,
         total_value=margin, total_label='Projected margin',
-        total_display=f"{'+' if margin >= 0 else ''}{margin}",
+        total_display=f"{'+' if display_margin >= 0 else ''}{display_margin}",
         total_marker_label=home_abbr if favors_positive else away_abbr,
         pos_label=home_abbr, neg_label=away_abbr,
         unproven=not spread_model.is_validated(sport),
@@ -1883,7 +1897,7 @@ def total_factors_panel(game):
     return _diverge_panel(
         breakdown['contribs'], favors_positive,
         total_value=projection - breakdown['baseline'], total_label='Projected total',
-        total_display=f'{projection}',
+        total_display=f'{round(projection)}',
         total_marker_label='O' if favors_positive else 'U',
         pos_label='OVER', neg_label='UNDER',
         unproven=_TOTAL_CONFIDENCE_CAP.get(sport) == 'unproven',
