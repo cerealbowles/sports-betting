@@ -60,20 +60,22 @@
 {% if mc_ml_has %}
 {% set mc_ml_mkt_home = game.odds.home_implied * 100 %}
 {% set mc_ml_mdl_home = mc_model_home_prob * 100 %}
-{% set mc_ml_edge = mc_ml_mdl_home - mc_ml_mkt_home %}
-{% if mc_ml_edge >= 0 %}
+{# Side shown is always the market favorite (not whichever side the model
+   happens to like better) — if the model actually likes the market
+   favorite less than the market does, that shows up as a negative number
+   rather than quietly swapping to the underdog to keep the chip positive. #}
+{% if mc_ml_mkt_home >= 50 %}
 {% set mc_ml_side = mc_home_team %}
-{% set mc_ml_pts = mc_ml_edge %}
 {% set mc_ml_mkt_pct = mc_ml_mkt_home %}
 {% set mc_ml_mdl_pct = mc_ml_mdl_home %}
 {% set mc_ml_amer = game.odds.home_best %}
 {% else %}
 {% set mc_ml_side = mc_away_team %}
-{% set mc_ml_pts = -mc_ml_edge %}
 {% set mc_ml_mkt_pct = 100 - mc_ml_mkt_home %}
 {% set mc_ml_mdl_pct = 100 - mc_ml_mdl_home %}
 {% set mc_ml_amer = game.odds.away_best %}
 {% endif %}
+{% set mc_ml_pts = mc_ml_mdl_pct - mc_ml_mkt_pct %}
 {% set mc_ml_amer_disp = ('+' ~ mc_ml_amer|round(0)|int) if mc_ml_amer and mc_ml_amer > 0 else (mc_ml_amer|round(0)|int if mc_ml_amer is not none) %}
 {% endif %}
 
@@ -86,7 +88,6 @@
 {% if mc_sp_ok %}
 {% set mc_sp_mkt_home = mc_sp_vf[0] * 100 %}
 {% set mc_sp_mdl_home = mc_sp_mdl_raw * 100 %}
-{% set mc_sp_edge = mc_sp_mdl_home - mc_sp_mkt_home %}
 {% set mc_sp_home_val = game.odds.home_spread %}
 {% set mc_sp_away_val = -game.odds.home_spread %}
 {% set mc_sp_home_label = mc_home_team ~ ' ' ~ ('+' if mc_sp_home_val > 0) ~ mc_sp_home_val %}
@@ -99,17 +100,19 @@
 {% set mc_sp_validated = spread_model_validated(game.sport) %}
 {% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_conf >= 65 else ('medium' if mc_sp_conf >= 55 else 'low')) %}
 {% set mc_sp_conf_pips = 6 if mc_sp_conf >= 75 else (5 if mc_sp_conf >= 68 else (4 if mc_sp_conf >= 62 else (3 if mc_sp_conf >= 58 else (2 if mc_sp_conf >= 54 else 1)))) %}
-{% if mc_sp_edge >= 0 %}
+{# Side shown is the market's favorite to cover, not whichever side the
+   model likes better — a model that likes the favorite less than the
+   market does shows up as negative points, not a quiet swap to the dog. #}
+{% if mc_sp_mkt_home >= 50 %}
 {% set mc_sp_side = mc_sp_home_label %}
-{% set mc_sp_pts = mc_sp_edge %}
 {% set mc_sp_mkt_pct = mc_sp_mkt_home %}
 {% set mc_sp_mdl_pct = mc_sp_mdl_home %}
 {% else %}
 {% set mc_sp_side = mc_sp_away_label %}
-{% set mc_sp_pts = -mc_sp_edge %}
 {% set mc_sp_mkt_pct = 100 - mc_sp_mkt_home %}
 {% set mc_sp_mdl_pct = 100 - mc_sp_mdl_home %}
 {% endif %}
+{% set mc_sp_pts = mc_sp_mdl_pct - mc_sp_mkt_pct %}
 {% endif %}
 {% endif %}
 
@@ -135,18 +138,19 @@
 {% set mc_tot_conf_level = total_confidence_tier(game.sport, mc_tot_conf_raw) %}
 {% set mc_tot_validated = mc_tot_conf_level != 'unproven' %}
 {% set mc_tot_conf_pips = 6 if mc_tot_conf >= 75 else (5 if mc_tot_conf >= 68 else (4 if mc_tot_conf >= 62 else (3 if mc_tot_conf >= 58 else (2 if mc_tot_conf >= 54 else 1)))) %}
-{% set mc_tot_edge = mc_tot_model_over_pct - mc_tot_over_pct %}
-{% if mc_tot_edge >= 0 %}
+{# Side shown is whichever way the market currently leans, not whichever
+   way the model likes better — a model that likes the market's side less
+   shows up as negative points instead of quietly flipping to the other side. #}
+{% if mc_tot_over_pct >= 50 %}
 {% set mc_tot_side_over = true %}
-{% set mc_tot_pts = mc_tot_edge %}
 {% set mc_tot_mkt_pct = mc_tot_over_pct %}
 {% set mc_tot_mdl_pct = mc_tot_model_over_pct %}
 {% else %}
 {% set mc_tot_side_over = false %}
-{% set mc_tot_pts = -mc_tot_edge %}
 {% set mc_tot_mkt_pct = 100 - mc_tot_over_pct %}
 {% set mc_tot_mdl_pct = 100 - mc_tot_model_over_pct %}
 {% endif %}
+{% set mc_tot_pts = mc_tot_mdl_pct - mc_tot_mkt_pct %}
 {% else %}
 {# No model for this sport — tap target just follows whichever side the
    market itself currently favors, same honesty as the "no model yet" label. #}
