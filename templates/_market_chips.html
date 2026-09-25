@@ -89,15 +89,27 @@
    VALIDATED_SPORTS) shouldn't read as confident just because a given game's
    margin lands far from 0. #}
 {% set mc_sp_validated = spread_model_validated(game.sport) %}
-{# The chip headline is now the model's own predicted spread (spread_model.
-   predict_margin — a real regression fit against actual margins), not a
-   probability-edge derived from the market's posted line. Favorite is
-   whoever the model's margin points to, shown with the standard
-   favorite-gets-the-minus-sign convention. #}
-{% set mc_sp_margin = spread_model_margin(game.sport, game.model.factors) if game.model and game.model.factors else none %}
+{# The chip's magnitude comes from spread_model's own regression fit
+   against actual margins where it's validated (MLB, NHL); for unvalidated
+   sports it falls back to spread_proxy's win-prob-derived margin, since
+   spread_model's independent Ridge fit doesn't beat break-even there
+   either (see spread_model.py's docstring) and spread_proxy's number is at
+   least derived from the same win-prob signal the ML chip already shows. #}
+{% set mc_sp_margin = (spread_model_margin(game.sport, game.model.factors) if game.model and game.model.factors else none) if mc_sp_validated else spread_implied_margin(game.sport, mc_model_home_prob) %}
 {% set mc_sp_model_ok = mc_sp_margin is not none %}
 {% if mc_sp_model_ok %}
-{% set mc_sp_model_fav_team = mc_home_team if mc_sp_margin >= 0 else mc_away_team %}
+{# Favorite is always whichever team the win-prob model favors (same
+   mc_model_home_prob the ML chip is built from) — NOT whichever side
+   spread_margin's sign happens to point to. Both spread_model's regression
+   and spread_proxy's historical intercept can independently disagree with
+   the win-prob favorite (collinear Ridge coefficients don't each carry an
+   intuitive sign; spread_proxy's fitted home-field intercept doesn't
+   exactly cancel at the same home_prob threshold the win-prob model uses).
+   Letting that show up as "ML picks A, Spread picks B" reads as the site
+   being broken; forcing the spread favorite to track the ML favorite means
+   the two chips can only ever disagree on the model's confidence in that
+   team, never on which team it likes. #}
+{% set mc_sp_model_fav_team = mc_home_team if mc_model_home_prob >= 0.5 else mc_away_team %}
 {# Real spread lines are always posted in half-point increments — a raw
    regression output like "-5.2" isn't a value any book would ever offer. #}
 {% set mc_sp_model_fav_val = ((-(mc_sp_margin | abs) * 2) | round | int) / 2.0 %}
@@ -190,7 +202,7 @@
             <span class="mc-t">ML</span>
             {% if mc_ml_has %}
             <span class="mc-big">{{ mc_ml_model_side }}</span>
-            <span class="mc-side">FD {{ mc_ml_side }} {{ mc_ml_amer_disp }}</span>
+            <span class="mc-side">{{ mc_ml_side }} {{ mc_ml_amer_disp }}</span>
             <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_ml_conf_pips }}"></i>{% endfor %}</span>
             <span class="mc-foot"><b class="mc-b">{{ mc_ml_conf | round(1) }}% model</b></span>
             {% else %}
@@ -209,7 +221,7 @@
             <span class="mc-side">{{ mc_sp_model_fav_team }}</span>
             <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_sp_conf_pips }}"></i>{% endfor %}</span>
             {% if mc_sp_fd_label %}
-            <span class="mc-foot">FD {{ mc_sp_fd_label }}</span>
+            <span class="mc-foot">{{ mc_sp_fd_label }}</span>
             {% endif %}
             {% else %}
             <span class="mc-big mc-dash">—</span>
@@ -230,7 +242,7 @@
             <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_conf_pips }}"></i>{% endfor %}</span>
             {% endif %}
             {% if mc_tot_has %}
-            <span class="mc-foot">FD {{ game.odds.total_line }}</span>
+            <span class="mc-foot">{{ game.odds.total_line }}</span>
             {% endif %}
             {% elif mc_tot_has %}
             <span class="mc-big mc-big-plain">{{ game.odds.total_line }}</span>
