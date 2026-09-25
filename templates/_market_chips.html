@@ -98,7 +98,9 @@
 {% set mc_sp_model_ok = mc_sp_margin is not none %}
 {% if mc_sp_model_ok %}
 {% set mc_sp_model_fav_team = mc_home_team if mc_sp_margin >= 0 else mc_away_team %}
-{% set mc_sp_model_fav_val = -(mc_sp_margin | abs) %}
+{# Real spread lines are always posted in half-point increments — a raw
+   regression output like "-5.2" isn't a value any book would ever offer. #}
+{% set mc_sp_model_fav_val = ((-(mc_sp_margin | abs) * 2) | round | int) / 2.0 %}
 {% set mc_sp_model_conf = mc_sp_margin | abs %}
 {% set mc_sp_conf_level = 'unproven' if not mc_sp_validated else ('high' if mc_sp_model_conf >= 6 else ('medium' if mc_sp_model_conf >= 3 else 'low')) %}
 {% set mc_sp_conf_pips = 6 if mc_sp_model_conf >= 9 else (5 if mc_sp_model_conf >= 7 else (4 if mc_sp_model_conf >= 5 else (3 if mc_sp_model_conf >= 3 else (2 if mc_sp_model_conf >= 1.5 else 1)))) %}
@@ -222,7 +224,7 @@
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
             <span class="mc-t">TOTAL</span>
             {% if mc_tot_model_ok %}
-            <span class="mc-big">{{ game.total_model.total_projection }}</span>
+            <span class="mc-big">{{ game.total_model.total_projection | round | int }}</span>
             <span class="mc-side">Model proj</span>
             {% if mc_tot_ok %}
             <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_conf_pips }}"></i>{% endfor %}</span>
@@ -300,7 +302,7 @@
                 <span class="mc-lbl">TOTAL</span>
                 {% if mc_tot_ok %}
                 <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{{ mc_tot_over_pct | round(1) }}% over</div></div>
-                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection }} proj</div><div class="mc-sub{{ ' mc-unproven' if not mc_tot_validated }}">{% if not mc_tot_validated %}model (unproven){% elif game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
+                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection | round | int }} proj</div><div class="mc-sub{{ ' mc-unproven' if not mc_tot_validated }}">{% if not mc_tot_validated %}model (unproven){% elif game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
                 <span class="mc-edge{{ ' mc-hot' if mc_tot_validated and mc_tot_pts >= MC_HOT }}">{{ 'O' if mc_tot_side_over else 'U' }} {{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
                 {% elif mc_tot_has %}
                 <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{% if mc_tot_over_pct is not none %}{{ mc_tot_over_pct | round(1) }}% over{% endif %}</div></div>
