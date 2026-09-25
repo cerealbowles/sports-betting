@@ -1,0 +1,51 @@
+{# Shared inline Total (Over/Under) bet-type-row — used by every sport's
+   schedule/game-card template (MLB/NBA/NHL/WNBA/NFL/CFB) so Total opens the
+   same inline .bet-slip (openBetSlip() in main.js) that Moneyline/Spread
+   already use. Model probability comes from total_over_prob() (app.py) —
+   the same number _market_chips.html's Total chip already uses for its
+   edge, just computed here per-button instead of only for the
+   "recommended" side.
+
+   Before this partial existed, each sport's Over/Under buttons were missing
+   data-model-prob/data-implied-prob entirely (unlike Moneyline/Spread,
+   which always had them) — the bet slip silently showed Model/Edge as 0
+   for every total bet placed, since openBetSlip() in main.js just reads
+   whatever's in the dataset with no fallback.
+
+   Expects `game` in context (with game.sport, game.odds.total_line/
+   .over_odds/.under_odds, game.total_model.total_projection, game.home/
+   .away .name/.abbr or .abbrev/.logo_url). #}
+{% if game.odds and game.odds.total_line is not none %}
+{% set tb_away_abbr = game.away.abbrev or game.away.abbr %}
+{% set tb_home_abbr = game.home.abbrev or game.home.abbr %}
+{% set tb_over_prob = total_over_prob(game.sport, game.total_model.total_projection, game.odds.total_line) if game.total_model else none %}
+{% set tb_under_prob = (1 - tb_over_prob) if tb_over_prob is not none else none %}
+{% set tb_vf = vig_free_pair(game.odds.over_odds, game.odds.under_odds) if (game.odds.over_odds is not none and game.odds.under_odds is not none) else (none, none) %}
+<div class="bet-type-row">
+    <span class="bet-type-label">Over/Under</span>
+    <div class="bet-type-chips">
+        <button type="button" class="btn-bet-team"
+                data-name="Over {{ game.odds.total_line }}" data-sub="{{ tb_away_abbr }} @ {{ tb_home_abbr }}"
+                data-bet-side="over"
+                data-odds="{{ game.odds.over_odds or '' }}" data-odds-display="{{ '+' if game.odds.over_odds and game.odds.over_odds > 0 }}{{ game.odds.over_odds or '' }}"
+                data-model-prob="{{ tb_over_prob if tb_over_prob is not none else '' }}"
+                data-implied-prob="{{ tb_vf[0] if tb_vf[0] is not none else '' }}"
+                data-sport="{{ game.sport }}" data-bet-type="Over/Under"
+                data-eventstartutc="{{ game.game_time_utc }}"
+                data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                data-game-key="{{ game.game_key }}"
+                onclick="openBetSlip(this)">O {{ game.odds.total_line }}</button>
+        <button type="button" class="btn-bet-team"
+                data-name="Under {{ game.odds.total_line }}" data-sub="{{ tb_away_abbr }} @ {{ tb_home_abbr }}"
+                data-bet-side="under"
+                data-odds="{{ game.odds.under_odds or '' }}" data-odds-display="{{ '+' if game.odds.under_odds and game.odds.under_odds > 0 }}{{ game.odds.under_odds or '' }}"
+                data-model-prob="{{ tb_under_prob if tb_under_prob is not none else '' }}"
+                data-implied-prob="{{ tb_vf[1] if tb_vf[1] is not none else '' }}"
+                data-sport="{{ game.sport }}" data-bet-type="Over/Under"
+                data-eventstartutc="{{ game.game_time_utc }}"
+                data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                data-game-key="{{ game.game_key }}"
+                onclick="openBetSlip(this)">U {{ game.odds.total_line }}</button>
+    </div>
+</div>
+{% endif %}
