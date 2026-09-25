@@ -5152,6 +5152,32 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
         except Exception:
             pass
 
+    # Catch-up pass for the single-day sports (NHL/NBA/WNBA): build_schedule_
+    # context() with no target_date always means "today" in ET, so a game
+    # that goes Final after the last cron run of the day but before midnight
+    # ET never gets seen again once the calendar flips — "today" becomes the
+    # next date and the still-pending prediction from yesterday is orphaned.
+    # Re-check the last 2 days explicitly so those get recorded on the very
+    # next warm cycle instead of sitting pending indefinitely.
+    from datetime import timedelta as _timedelta
+    for name, fn in [('NHL', nhl_api.build_schedule_context),
+                      ('NBA', nba_api.build_schedule_context),
+                      ('WNBA', wnba_api.build_schedule_context)]:
+        with app.app_context():
+            has_pending = db.session.query(GamePrediction.id).filter_by(
+                sport=name, home_won=None).first() is not None
+        if not has_pending:
+            continue
+        for delta in (1, 2):
+            day_str = (datetime.now(_ET).date() - _timedelta(days=delta)).isoformat()
+            try:
+                schedule = fn(target_date=day_str)
+                if schedule:
+                    with app.app_context():
+                        _upsert_predictions(schedule, name)
+            except Exception:
+                pass
+
     # Resolve MLB outcomes on every warm cycle (not just the 5am cron) so a
     # game that finalizes mid-day shows up in Recent Predictions right away
     # instead of sitting pending until the nightly resolver run.
@@ -5204,6 +5230,28 @@ def _prewarm_total_model_pace():
                       ('CFB', cfb_api.build_week_schedule_context)]:
         try:
             fn()
+        except Exception:
+            pass
+
+
+def _check_finalized_games():
+    """Runs every 20 min across every sport: fetch the current live
+    schedule and feed it through _upsert_predictions() so a game that
+    goes Final gets recorded within ~20 min instead of waiting for the
+    2-hourly _warm_all_caches cron. Cheap — same schedule-builder calls
+    the page routes already make, just on a tighter interval."""
+    for name, fn, is_week in [('MLB',  mlb_api.build_schedule_context, False),
+                               ('NHL',  nhl_api.build_schedule_context, False),
+                               ('NBA',  nba_api.build_schedule_context, False),
+                               ('WNBA', wnba_api.build_schedule_context, False),
+                               ('NFL',  nfl_api.build_week_schedule_context, True),
+                               ('CFB',  cfb_api.build_week_schedule_context, True)]:
+        try:
+            result = fn()
+            schedule = result.get('days') if is_week else result
+            if schedule:
+                with app.app_context():
+                    _upsert_predictions(schedule, name)
         except Exception:
             pass
 
@@ -5343,6 +5391,11 @@ def _start_cache_warmer():
     # shrinking the window a cold/expired pace cache can sit in.
     scheduler.add_job(_prewarm_total_model_pace, 'interval',
                       minutes=20, id='prewarm_pace_cache')
+    # App-wide finalized-game check — every 20 min across all 6 sports, so a
+    # game that goes Final gets recorded well before the next 2-hourly
+    # _warm_all_caches cron tick.
+    scheduler.add_job(_check_finalized_games, 'interval',
+                      minutes=20, id='check_finalized_games')
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
 
