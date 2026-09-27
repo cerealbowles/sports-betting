@@ -2381,6 +2381,12 @@ def _annotate_open_bets(open_bets):
 
         bet.cashout_value = None  # estimated cashout amount at current market
 
+        # odds_history only ever snapshots moneyline home/away odds — a Total
+        # bet's bet_side is 'over'/'under' (no matching key in that snapshot),
+        # so CLV/line-move tracking only applies to home/away sides.
+        if bet.bet_side not in ('home', 'away'):
+            continue
+
         if not game_started:
             # Pre-game: show live pre-game line movement
             latest = _oh.get_latest(sk, bet.game_key, game_start=es)
