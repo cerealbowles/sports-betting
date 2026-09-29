@@ -287,29 +287,33 @@
         </div>
     </div>
 
-    {# Movement — pre-game odds-movement category (odds_history.classify_
-       movement, moneyline only — there's no snapshot history for spread/
-       total lines, so this can't yet say anything about those markets)
-       plus this category's real historical win-rate/N (movement_stat(),
-       app.py) once enough resolved games exist to trust it. _for means the
-       market moved toward the pick over time; _against means it moved
-       away — colored green/red the same way the chips above color an edge.
-       A thin full-width strip rather than a 4th grid chip (the chip grid
-       is a fixed 3 columns — a 4th item there wraps to its own row and
-       leaves 2 empty slots beside it). Skipped entirely for no_data/static
-       (nothing informative to show) or when this game has no profile yet
+    {# Movement — pre-game odds-movement category per market (odds_history.
+       classify_movement/classify_spread_movement/classify_total_movement)
+       plus that category's real historical win-rate/N (movement_stat()/
+       spread_movement_stat()/total_movement_stat(), app.py) once enough
+       resolved games exist to trust it. _for means the market moved toward
+       the pick over time; _against means it moved away — colored green/red
+       the same way the chips above color an edge. A thin full-width strip
+       rather than a 4th grid chip (the chip grid is a fixed 3 columns — a
+       4th item there wraps to its own row and leaves empty slots beside
+       it). Up to 3 independent bars — a game can have 0, 1, 2, or 3
+       depending on what's classified for each market. Skipped entirely for
+       no_data/static (nothing informative to show) or no profile yet
        (insufficient snapshot history so far today). #}
-    {% set mv_profile = game.movement_profile %}
-    {% if mv_profile and mv_profile not in ('no_data', 'static') %}
-    {% set mv_shape = mv_profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
-    {% set mv_dir = 'for' if mv_profile.endswith('_for') else ('against' if mv_profile.endswith('_against') else none) %}
-    {% set mv_stat = movement_stat(mv_profile, game.sport) %}
-    <div class="mc-move-bar" title="Line movement (moneyline only): {{ mv_shape }}{{ ' (' ~ mv_dir ~ ' the pick)' if mv_dir }}{% if mv_stat.n %} — {{ mv_stat.win_rate }}% win rate over {{ mv_stat.n }} resolved game{{ 's' if mv_stat.n != 1 }}{% else %} — not enough history yet to trust{% endif %}">
-        <span class="mc-move-t">MOVE</span>
-        <span class="mc-move-shape{{ ' edge-pos' if mv_dir == 'for' else (' edge-neg' if mv_dir == 'against' else '') }}">{{ mv_shape }}{{ ' · ' ~ mv_dir if mv_dir }}</span>
-        <span class="mc-move-stat{{ '' if mv_stat.n else ' mc-side-muted' }}">{% if mv_stat.n %}{{ mv_stat.win_rate }}% win rate ({{ mv_stat.n }}){% else %}new · no history yet{% endif %}</span>
+    {% macro movement_bar(profile, stat, label) %}
+    {% if profile and profile not in ('no_data', 'static') %}
+    {% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
+    {% set dir = 'for' if profile.endswith('_for') else ('against' if profile.endswith('_against') else none) %}
+    <div class="mc-move-bar" title="{{ label }}: {{ shape }}{{ ' (' ~ dir ~ ' the pick)' if dir }}{% if stat.n %} — {{ stat.win_rate }}% win rate over {{ stat.n }} resolved game{{ 's' if stat.n != 1 }}{% else %} — not enough history yet to trust{% endif %}">
+        <span class="mc-move-t">{{ label }}</span>
+        <span class="mc-move-shape{{ ' edge-pos' if dir == 'for' else (' edge-neg' if dir == 'against' else '') }}">{{ shape }}{{ ' · ' ~ dir if dir }}</span>
+        <span class="mc-move-stat{{ '' if stat.n else ' mc-side-muted' }}">{% if stat.n %}{{ stat.win_rate }}% win rate ({{ stat.n }}){% else %}new · no history yet{% endif %}</span>
     </div>
     {% endif %}
+    {% endmacro %}
+    {{ movement_bar(game.movement_profile, movement_stat(game.movement_profile, game.sport), 'ML MOVE') }}
+    {{ movement_bar(game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport), 'SPREAD MOVE') }}
+    {{ movement_bar(game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport), 'TOTAL MOVE') }}
 
     <details class="mc-fold" onclick="event.stopPropagation()">
         <summary class="mc-toggle">Market vs model</summary>

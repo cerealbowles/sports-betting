@@ -413,7 +413,10 @@ def get_odds_map(sport):
             except Exception:
                 is_preview = True
         if is_preview:
-            odds_history.record(sport_key, hist_key, home_price, away_price)
+            odds_history.record(sport_key, hist_key, home_price, away_price,
+                                 home_spread=home_spread, home_spread_price=home_spread_price,
+                                 away_spread_price=away_spread_price, total_line=total_line,
+                                 over_odds=over_odds, under_odds=under_odds)
         else:
             odds_history.save_live(sport_key, hist_key, home_price, away_price)
         movement = odds_history.get_movement(sport_key, hist_key)

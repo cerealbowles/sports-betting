@@ -93,28 +93,55 @@ CREATE TABLE IF NOT EXISTS live_odds (
 '''
 
 
+# Columns added after odds_snapshot's original ML-only launch — CREATE TABLE
+# IF NOT EXISTS above never alters an existing table, so an explicit
+# ADD COLUMN migration is needed for a production DB that already has rows.
+_SNAPSHOT_MIGRATED_COLS = {
+    'home_spread':       'REAL',
+    'home_spread_price': 'INTEGER',
+    'away_spread_price': 'INTEGER',
+    'total_line':        'REAL',
+    'over_odds':         'INTEGER',
+    'under_odds':        'INTEGER',
+}
+
+
+def _migrate(c):
+    existing = {row[1] for row in c.execute('PRAGMA table_info(odds_snapshot)').fetchall()}
+    for col, col_type in _SNAPSHOT_MIGRATED_COLS.items():
+        if col not in existing:
+            c.execute(f'ALTER TABLE odds_snapshot ADD COLUMN {col} {col_type}')
+
+
 def _conn():
     c = sqlite3.connect(_DB_PATH, check_same_thread=False)
     c.executescript(_CREATE)
+    _migrate(c)
     return c
 
 
-def record(sport, game_key, home_odds, away_odds):
-    """Write a snapshot only if odds changed since the last observation."""
+def record(sport, game_key, home_odds, away_odds, home_spread=None,
+           home_spread_price=None, away_spread_price=None, total_line=None,
+           over_odds=None, under_odds=None):
+    """Write a snapshot only if any tracked value changed since the last
+    observation — moneyline, spread line/price, or total line/price."""
     try:
         with _conn() as c:
             last = c.execute(
-                'SELECT home_odds, away_odds FROM odds_snapshot '
-                'WHERE sport=? AND game_key=? ORDER BY id DESC LIMIT 1',
+                'SELECT home_odds, away_odds, home_spread, home_spread_price, '
+                'away_spread_price, total_line, over_odds, under_odds '
+                'FROM odds_snapshot WHERE sport=? AND game_key=? ORDER BY id DESC LIMIT 1',
                 (sport, game_key),
             ).fetchone()
-            if last and last[0] == home_odds and last[1] == away_odds:
+            new_vals = (home_odds, away_odds, home_spread, home_spread_price,
+                        away_spread_price, total_line, over_odds, under_odds)
+            if last and tuple(last) == new_vals:
                 return  # unchanged — skip
             c.execute(
-                'INSERT INTO odds_snapshot (sport, game_key, home_odds, away_odds, recorded_at) '
-                'VALUES (?,?,?,?,?)',
-                (sport, game_key, home_odds, away_odds,
-                 datetime.now(timezone.utc).isoformat()),
+                'INSERT INTO odds_snapshot (sport, game_key, home_odds, away_odds, '
+                'home_spread, home_spread_price, away_spread_price, total_line, '
+                'over_odds, under_odds, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (sport, game_key, *new_vals, datetime.now(timezone.utc).isoformat()),
             )
     except Exception:
         pass
@@ -285,85 +312,18 @@ def get_closing_line(sport, game_key, before_dt):
         return None
 
 
-def classify_movement(sport, home_name, away_name, fav_home, game_start=None):
-    """Classify the pre-game moneyline movement profile on the model-pick side.
+def _classify_series(series, game_start):
+    """Shared shape-classification core, extracted from the original ML-only
+    classify_movement so Spread/Total can reuse the exact same logic against
+    their own implied-probability series instead of duplicating it.
 
-    Matches the EXACT hour-bucketed game_key odds_api.py wrote at record time
-    (derived from game_start, the same way odds_api builds it from commence_time).
-    A loose LIKE match on just team names would blend together snapshots from
-    a team's other games against the same opponent on different dates — common
-    in MLB, which plays 3-4 game series — so this requires game_start.
-
-    Returns (profile, total_move_pct) where profile is one of:
-      'early_sharp_for'/'early_sharp_against' — most of the move happened in
-                      the first half of the observed pre-game window, then flat
-      'late_sharp_for'/'late_sharp_against'   — flat early, most of the move
-                      happened closer to game time
-      'sustained_for'/'sustained_against'     — steady drift across the whole
-                      window, no early/late skew
-      'reversal_for'/'reversal_against'       — moved one way then retraced
-                      more than half of that move; direction = where it net
-                      ended up at game time
-      'minimal_for'/'minimal_against' — game started/finished, only 2 pre-game
-                      snapshots exist — a real move happened but too few points
-                      to tell its shape, though direction is still known
-      'flat'        — 3+ snapshots, but net move under 0.5 percentage points
-                      (drifted and came back — not the same as never moving;
-                      not direction-split since the net move is too small to
-                      call a direction meaningful)
-      'static'      — game has started/finished and only 1 pre-game snapshot
-                      was ever recorded — the line genuinely never changed
-                      (record() only writes a row when odds actually change)
-      'no_data'     — game has started/finished and zero pre-game snapshots
-                      were ever recorded for it
-
-    '_for' means the line moved toward the model's pick (the pick's implied
-    probability rose); '_against' means it moved toward the opponent. This is
-    the whole point of tracking movement at all — "Late Sharp against our
-    pick" and "Late Sharp for our pick" are very different signals and were
-    previously being lumped into one undifferentiated 'late_sharp' bucket.
-
-    Returns (None, None) if game_start is missing, or if the game hasn't
-    started yet and fewer than 3 snapshots exist — still pending, not final.
-
-    fav_home: True if the model's pick is the home side (selects which
-    column's implied probability to track).
-    game_start: datetime — required; also used as the cutoff (snapshots at/after
-    this are excluded as in-game odds).
+    `series` is a list of (datetime, implied_prob 0-1) tuples for the picked
+    side, already filtered to pre-game snapshots. Returns (profile,
+    total_move_pct) — see classify_movement's docstring for what each
+    profile label means; this is the same taxonomy for every market.
     """
     def _dir(label, move):
         return f"{label}_{'for' if (move or 0) >= 0 else 'against'}"
-
-    if not game_start:
-        return None, None
-    h_norm = _normalize(home_name)
-    a_norm = _normalize(away_name)
-    event_hour_key = game_start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H')
-    game_key = f'{h_norm}_{a_norm}_{event_hour_key}'
-    try:
-        with _conn() as c:
-            rows = c.execute(
-                'SELECT home_odds, away_odds, recorded_at FROM odds_snapshot '
-                'WHERE sport=? AND game_key=? ORDER BY id ASC',
-                (sport, game_key),
-            ).fetchall()
-    except Exception:
-        return None, None
-
-    series = []
-    for h, a, ts in rows:
-        if abs(h) > 1000 or abs(a) > 1000:
-            continue  # implausible odds — data artifact
-        try:
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        except Exception:
-            continue
-        if game_start and dt >= game_start:
-            continue
-        vf_h, vf_a = _vig_free(h, a)
-        if vf_h is None:
-            continue
-        series.append((dt, vf_h if fav_home else vf_a))
 
     if len(series) < 3:
         game_over = datetime.now(timezone.utc) >= game_start
@@ -415,6 +375,168 @@ def classify_movement(sport, home_name, away_name, fav_home, game_start=None):
     if frac_by_mid is not None and frac_by_mid <= 0.30:
         return _dir('late_sharp', total_move), round(total_move, 2)
     return _dir('sustained', total_move), round(total_move, 2)
+
+
+def _movement_game_key(home_name, away_name, game_start):
+    h_norm = _normalize(home_name)
+    a_norm = _normalize(away_name)
+    event_hour_key = game_start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H')
+    return f'{h_norm}_{a_norm}_{event_hour_key}'
+
+
+def classify_movement(sport, home_name, away_name, fav_home, game_start=None):
+    """Classify the pre-game moneyline movement profile on the model-pick side.
+
+    Matches the EXACT hour-bucketed game_key odds_api.py wrote at record time
+    (derived from game_start, the same way odds_api builds it from commence_time).
+    A loose LIKE match on just team names would blend together snapshots from
+    a team's other games against the same opponent on different dates — common
+    in MLB, which plays 3-4 game series — so this requires game_start.
+
+    Returns (profile, total_move_pct) where profile is one of:
+      'early_sharp_for'/'early_sharp_against' — most of the move happened in
+                      the first half of the observed pre-game window, then flat
+      'late_sharp_for'/'late_sharp_against'   — flat early, most of the move
+                      happened closer to game time
+      'sustained_for'/'sustained_against'     — steady drift across the whole
+                      window, no early/late skew
+      'reversal_for'/'reversal_against'       — moved one way then retraced
+                      more than half of that move; direction = where it net
+                      ended up at game time
+      'minimal_for'/'minimal_against' — game started/finished, only 2 pre-game
+                      snapshots exist — a real move happened but too few points
+                      to tell its shape, though direction is still known
+      'flat'        — 3+ snapshots, but net move under 0.5 percentage points
+                      (drifted and came back — not the same as never moving;
+                      not direction-split since the net move is too small to
+                      call a direction meaningful)
+      'static'      — game has started/finished and only 1 pre-game snapshot
+                      was ever recorded — the line genuinely never changed
+                      (record() only writes a row when odds actually change)
+      'no_data'     — game has started/finished and zero pre-game snapshots
+                      were ever recorded for it
+
+    '_for' means the line moved toward the model's pick (the pick's implied
+    probability rose); '_against' means it moved toward the opponent. This is
+    the whole point of tracking movement at all — "Late Sharp against our
+    pick" and "Late Sharp for our pick" are very different signals and were
+    previously being lumped into one undifferentiated 'late_sharp' bucket.
+
+    Returns (None, None) if game_start is missing, or if the game hasn't
+    started yet and fewer than 3 snapshots exist — still pending, not final.
+
+    fav_home: True if the model's pick is the home side (selects which
+    column's implied probability to track).
+    game_start: datetime — required; also used as the cutoff (snapshots at/after
+    this are excluded as in-game odds).
+    """
+    if not game_start:
+        return None, None
+    game_key = _movement_game_key(home_name, away_name, game_start)
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                'SELECT home_odds, away_odds, recorded_at FROM odds_snapshot '
+                'WHERE sport=? AND game_key=? ORDER BY id ASC',
+                (sport, game_key),
+            ).fetchall()
+    except Exception:
+        return None, None
+
+    series = []
+    for h, a, ts in rows:
+        if abs(h) > 1000 or abs(a) > 1000:
+            continue  # implausible odds — data artifact
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except Exception:
+            continue
+        if dt >= game_start:
+            continue
+        vf_h, vf_a = _vig_free(h, a)
+        if vf_h is None:
+            continue
+        series.append((dt, vf_h if fav_home else vf_a))
+
+    return _classify_series(series, game_start)
+
+
+def classify_spread_movement(sport, home_name, away_name, pick_is_home, game_start=None):
+    """Same taxonomy as classify_movement, applied to the spread market: at
+    each snapshot, the picked side's vig-free implied probability of
+    covering (derived from that moment's home_spread_price/away_spread_price
+    — the line value itself isn't held fixed across the series, only the
+    market's confidence in the pick's side at whatever number was posted
+    at that time). See classify_movement's docstring for the profile
+    taxonomy and return shape; identical here."""
+    if not game_start:
+        return None, None
+    game_key = _movement_game_key(home_name, away_name, game_start)
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                'SELECT home_spread_price, away_spread_price, recorded_at FROM odds_snapshot '
+                'WHERE sport=? AND game_key=? AND home_spread_price IS NOT NULL '
+                'AND away_spread_price IS NOT NULL ORDER BY id ASC',
+                (sport, game_key),
+            ).fetchall()
+    except Exception:
+        return None, None
+
+    series = []
+    for h, a, ts in rows:
+        if abs(h) > 1000 or abs(a) > 1000:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except Exception:
+            continue
+        if dt >= game_start:
+            continue
+        vf_h, vf_a = _vig_free(h, a)
+        if vf_h is None:
+            continue
+        series.append((dt, vf_h if pick_is_home else vf_a))
+
+    return _classify_series(series, game_start)
+
+
+def classify_total_movement(sport, home_name, away_name, pick_is_over, game_start=None):
+    """Same taxonomy as classify_movement, applied to the total market: at
+    each snapshot, the picked side's (over/under) vig-free implied
+    probability from that moment's over_odds/under_odds. See
+    classify_movement's docstring for the profile taxonomy and return
+    shape; identical here."""
+    if not game_start:
+        return None, None
+    game_key = _movement_game_key(home_name, away_name, game_start)
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                'SELECT over_odds, under_odds, recorded_at FROM odds_snapshot '
+                'WHERE sport=? AND game_key=? AND over_odds IS NOT NULL '
+                'AND under_odds IS NOT NULL ORDER BY id ASC',
+                (sport, game_key),
+            ).fetchall()
+    except Exception:
+        return None, None
+
+    series = []
+    for o, u, ts in rows:
+        if abs(o) > 1000 or abs(u) > 1000:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        except Exception:
+            continue
+        if dt >= game_start:
+            continue
+        vf_o, vf_u = _vig_free(o, u)
+        if vf_o is None:
+            continue
+        series.append((dt, vf_o if pick_is_over else vf_u))
+
+    return _classify_series(series, game_start)
 
 
 def get_storage_stats():

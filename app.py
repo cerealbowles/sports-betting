@@ -163,6 +163,10 @@ class GamePrediction(db.Model):
   daily_rank        = db.Column(db.Integer)                   # recommendation rank on game day (1 = top pick)
   movement_profile  = db.Column(db.String(20))                 # early_sharp/late_sharp/sustained/reversal/flat
   movement_pct      = db.Column(db.Float)                      # total pre-game move on pick side, percentage points
+  spread_movement_profile = db.Column(db.String(20))           # same taxonomy, spread market
+  spread_movement_pct     = db.Column(db.Float)
+  total_movement_profile  = db.Column(db.String(20))           # same taxonomy, total market
+  total_movement_pct      = db.Column(db.Float)
   wind_mph       = db.Column(db.Float)                        # at game time, null for domes
   wind_dir       = db.Column(db.String(4))
   spread_open    = db.Column(db.Float)                        # ESPN pickcenter, home-team spread (negative = home favored)
@@ -231,6 +235,10 @@ def ensure_column_exists():
     _add('game_predictions', 'daily_rank',        'INTEGER DEFAULT NULL')
     _add('game_predictions', 'movement_profile',  'TEXT DEFAULT NULL')
     _add('game_predictions', 'movement_pct',      'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'spread_movement_profile', 'TEXT DEFAULT NULL')
+    _add('game_predictions', 'spread_movement_pct',     'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'total_movement_profile',  'TEXT DEFAULT NULL')
+    _add('game_predictions', 'total_movement_pct',      'FLOAT DEFAULT NULL')
     _add('game_predictions', 'spread_open',       'FLOAT DEFAULT NULL')
     _add('game_predictions', 'spread_close',      'FLOAT DEFAULT NULL')
     _add('game_predictions', 'total_open',        'FLOAT DEFAULT NULL')
@@ -516,19 +524,29 @@ def _stamp_confidence_blend(schedule, sport):
 
 
 def _stamp_movement(schedule, sport):
-    """MLB's _mlb_candidates classifies+applies line movement inline itself
+    """Classifies and stamps all three markets' line-movement categories
+    onto each game for display and for _best_market_pick to read.
+
+    ML: MLB's _mlb_candidates classifies+applies line movement inline itself
     (it builds its own candidate probability from scratch); every other
     sport instead goes through _best_market_pick, which — like the ML chip
     in _market_chips.html — already prefers game['model']['final_home_prob']
-    over the raw model prob when present. So the integration point here is
-    simple: classify the game's live movement category, stamp it for
-    display (game['movement_profile']/'movement_pct'), and if it carries a
-    calibrated correction (see _movement_adjusted_prob), fold it into
+    over the raw model prob when present. So the ML integration here stamps
+    game['movement_profile']/'movement_pct' for display, and if it carries a
+    calibrated correction (see _movement_adjusted_prob), folds it into
     final_home_prob/final_away_prob the same way _stamp_confidence_blend
     does — no changes needed to _best_market_pick or the chip template
-    itself, they pick this up automatically. Call after
+    itself for ML, they pick this up automatically. Call after
     _stamp_confidence_blend so the correction chains onto its blended prob,
-    the same order MLB applies consensus-then-movement in _mlb_candidates."""
+    the same order MLB applies consensus-then-movement in _mlb_candidates.
+
+    Spread/Total: called for every sport including MLB (unlike ML, MLB has
+    no separate spread/total pick engine — _best_market_pick handles spread/
+    total for all 6 sports). These have no final_*-style indirection, so
+    this only classifies+stores game['spread_movement_profile']/
+    'total_movement_profile' for display; _best_market_pick applies the
+    actual correction itself, inline, where it computes pick_prob for each
+    market (see _spread_movement_adjusted_prob/_total_movement_adjusted_prob)."""
     import odds_history as _oh_mv
     import odds_api as _oa
     odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
@@ -553,14 +571,44 @@ def _stamp_movement(schedule, sport):
             profile, pct = _oh_mv.classify_movement(odds_sport_key, home_name, away_name, fav_home, game_start)
             game['movement_profile'] = profile
             game['movement_pct'] = pct
-            if not profile:
-                continue
-            pick_prob = hp if fav_home else 1.0 - hp
-            adj_prob  = _movement_adjusted_prob(pick_prob, profile, sport)
-            if adj_prob == pick_prob:
-                continue
-            model['final_home_prob'] = round(adj_prob if fav_home else 1.0 - adj_prob, 4)
-            model['final_away_prob'] = round(adj_prob if not fav_home else 1.0 - adj_prob, 4)
+            if profile:
+                pick_prob = hp if fav_home else 1.0 - hp
+                adj_prob  = _movement_adjusted_prob(pick_prob, profile, sport)
+                if adj_prob != pick_prob:
+                    model['final_home_prob'] = round(adj_prob if fav_home else 1.0 - adj_prob, 4)
+                    model['final_away_prob'] = round(adj_prob if not fav_home else 1.0 - adj_prob, 4)
+
+            # Spread/total have no final_*-style indirection for
+            # _best_market_pick to pick up automatically (it computes their
+            # pick_prob itself, inline, from spread_model/total_model at
+            # call time) — so this only classifies+stores the profile for
+            # display and for _best_market_pick to read; the actual
+            # probability correction is applied there, not here. Pick side
+            # is recomputed the same way _best_market_pick derives it
+            # (spread_model.cover_prob / _total_over_prob >= 0.5) so the
+            # classified direction ('_for'/'_against') matches whichever
+            # side actually gets bet.
+            odds = game.get('odds') or {}
+            factors = model.get('factors')
+            home_spread = odds.get('home_spread')
+            if spread_model.is_validated(sport) and factors and home_spread is not None:
+                home_cover = spread_model.cover_prob(sport, factors, home_spread)
+                if home_cover is not None:
+                    sp_profile, sp_pct = _oh_mv.classify_spread_movement(
+                        odds_sport_key, home_name, away_name, home_cover >= 0.5, game_start)
+                    game['spread_movement_profile'] = sp_profile
+                    game['spread_movement_pct'] = sp_pct
+
+            total_model = game.get('total_model')
+            total_line  = odds.get('total_line')
+            if total_model and total_line is not None:
+                proj = total_model.get('total_projection')
+                over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
+                if over_prob is not None:
+                    tot_profile, tot_pct = _oh_mv.classify_total_movement(
+                        odds_sport_key, home_name, away_name, over_prob >= 0.5, game_start)
+                    game['total_movement_profile'] = tot_profile
+                    game['total_movement_pct'] = tot_pct
 
 
 def _historical_confidence_values(sport):
@@ -1636,6 +1684,205 @@ def _movement_stat(movement_profile, sport='MLB'):
 
 
 app.jinja_env.globals['movement_stat'] = _movement_stat
+
+
+# ── Spread/Total movement — same taxonomy and machinery as ML movement
+# above, kept in separate namespaced dicts/functions rather than
+# generalizing the ML ones, so the already-shipped ML path can't be
+# affected by this addition. ──────────────────────────────────────────────
+
+def _recompute_spread_movement_profiles(sport='MLB'):
+    """Same as _recompute_movement_profiles, for the spread market —
+    classifies from odds_snapshot's home_spread_price/away_spread_price
+    columns instead of home_odds/away_odds. Only meaningful for games that
+    got a spread pick at all (spread_cover_prob set)."""
+    import odds_history
+    with app.app_context():
+        preds = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.spread_cover_prob.isnot(None),
+            GamePrediction.spread_movement_profile.is_(None),
+        ).all()
+        import odds_api as _oa
+        odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
+        n_classified = 0
+        for p in preds:
+            pick_is_home = (p.spread_cover_prob or 0.5) >= 0.5
+            game_start = None
+            if p.game_time_utc:
+                try:
+                    game_start = datetime.fromisoformat(p.game_time_utc.replace('Z', '+00:00'))
+                except Exception:
+                    game_start = None
+            profile, move_pct = odds_history.classify_spread_movement(
+                odds_sport_key, p.home_team, p.away_team, pick_is_home, game_start)
+            if profile:
+                p.spread_movement_profile = profile
+                p.spread_movement_pct = move_pct
+                n_classified += 1
+        if n_classified:
+            db.session.commit()
+    print(f'[spread-movement-profiles] classified {n_classified} new {sport} games '
+          f'(of {len(preds)} missing a profile)', flush=True)
+
+
+def _recompute_total_movement_profiles(sport='MLB'):
+    """Same as _recompute_movement_profiles, for the total market —
+    classifies from odds_snapshot's over_odds/under_odds columns. Only
+    meaningful for games that got a total pick at all (total_over_prob set)."""
+    import odds_history
+    with app.app_context():
+        preds = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.total_over_prob.isnot(None),
+            GamePrediction.total_movement_profile.is_(None),
+        ).all()
+        import odds_api as _oa
+        odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
+        n_classified = 0
+        for p in preds:
+            pick_is_over = (p.total_over_prob or 0.5) >= 0.5
+            game_start = None
+            if p.game_time_utc:
+                try:
+                    game_start = datetime.fromisoformat(p.game_time_utc.replace('Z', '+00:00'))
+                except Exception:
+                    game_start = None
+            profile, move_pct = odds_history.classify_total_movement(
+                odds_sport_key, p.home_team, p.away_team, pick_is_over, game_start)
+            if profile:
+                p.total_movement_profile = profile
+                p.total_movement_pct = move_pct
+                n_classified += 1
+        if n_classified:
+            db.session.commit()
+    print(f'[total-movement-profiles] classified {n_classified} new {sport} games '
+          f'(of {len(preds)} missing a profile)', flush=True)
+
+
+_SPREAD_MOVEMENT_STATS = {}
+_TOTAL_MOVEMENT_STATS = {}
+
+
+def _recompute_spread_movement_stats(sport='MLB'):
+    """Same method as _recompute_movement_stats, graded against
+    spread_covered/spread_cover_prob instead of home_won/home_prob. Pushes
+    (spread_covered is None) are excluded from both the resolved set and n,
+    same as they're excluded from spread_pick_roi."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.spread_covered.isnot(None),
+            GamePrediction.spread_movement_profile.isnot(None),
+            GamePrediction.spread_cover_prob.isnot(None),
+        ).all()
+
+    SHRINKAGE = 0.60
+    MIN_N     = 5
+    new_stats = {}
+    for label in _MOVEMENT_PROFILES:
+        bkt = [p for p in resolved if p.spread_movement_profile == label]
+        n = len(bkt)
+        if n == 0:
+            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            continue
+        pick_home = [(p.spread_cover_prob or 0.5) >= 0.5 for p in bkt]
+        wins = sum(1 for p, ph in zip(bkt, pick_home) if ph == bool(p.spread_covered))
+        win_rate = wins / n
+        if n < MIN_N:
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            continue
+        avg_model = sum((p.spread_cover_prob if ph else 1.0 - p.spread_cover_prob) for p, ph in zip(bkt, pick_home)) / n
+        raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
+        alpha      = min(n / 50.0, 1.0)
+        correction = round(raw_corr * SHRINKAGE * alpha, 5)
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+
+    with _MOVEMENT_LOCK:
+        _SPREAD_MOVEMENT_STATS[sport] = new_stats
+    _nonzero = {k: v for k, v in new_stats.items() if v['n']}
+    print(f'[spread-movement-stats] {sport} recomputed: {_nonzero}', flush=True)
+
+
+def _recompute_total_movement_stats(sport='MLB'):
+    """Same method as _recompute_movement_stats, graded against
+    total_went_over/total_over_prob instead of home_won/home_prob. Pushes
+    (total_went_over is None) are excluded, same as total_pick_roi."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.total_went_over.isnot(None),
+            GamePrediction.total_movement_profile.isnot(None),
+            GamePrediction.total_over_prob.isnot(None),
+        ).all()
+
+    SHRINKAGE = 0.60
+    MIN_N     = 5
+    new_stats = {}
+    for label in _MOVEMENT_PROFILES:
+        bkt = [p for p in resolved if p.total_movement_profile == label]
+        n = len(bkt)
+        if n == 0:
+            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            continue
+        pick_over = [(p.total_over_prob or 0.5) >= 0.5 for p in bkt]
+        wins = sum(1 for p, po in zip(bkt, pick_over) if po == bool(p.total_went_over))
+        win_rate = wins / n
+        if n < MIN_N:
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            continue
+        avg_model = sum((p.total_over_prob if po else 1.0 - p.total_over_prob) for p, po in zip(bkt, pick_over)) / n
+        raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
+        alpha      = min(n / 50.0, 1.0)
+        correction = round(raw_corr * SHRINKAGE * alpha, 5)
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+
+    with _MOVEMENT_LOCK:
+        _TOTAL_MOVEMENT_STATS[sport] = new_stats
+    _nonzero = {k: v for k, v in new_stats.items() if v['n']}
+    print(f'[total-movement-stats] {sport} recomputed: {_nonzero}', flush=True)
+
+
+def _spread_movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
+    """Mirrors _movement_adjusted_prob, reading _SPREAD_MOVEMENT_STATS."""
+    if not movement_profile:
+        return pick_prob
+    with _MOVEMENT_LOCK:
+        stat = (_SPREAD_MOVEMENT_STATS.get(sport) or {}).get(movement_profile)
+    correction = (stat or {}).get('correction') or 0.0
+    if not correction:
+        return pick_prob
+    return _sigmoid(_safe_logit(pick_prob) + correction)
+
+
+def _total_movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
+    """Mirrors _movement_adjusted_prob, reading _TOTAL_MOVEMENT_STATS."""
+    if not movement_profile:
+        return pick_prob
+    with _MOVEMENT_LOCK:
+        stat = (_TOTAL_MOVEMENT_STATS.get(sport) or {}).get(movement_profile)
+    correction = (stat or {}).get('correction') or 0.0
+    if not correction:
+        return pick_prob
+    return _sigmoid(_safe_logit(pick_prob) + correction)
+
+
+def _spread_movement_stat(movement_profile, sport='MLB'):
+    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the Spread MOVE bar."""
+    with _MOVEMENT_LOCK:
+        stat = (_SPREAD_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+
+
+def _total_movement_stat(movement_profile, sport='MLB'):
+    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the Total MOVE bar."""
+    with _MOVEMENT_LOCK:
+        stat = (_TOTAL_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+
+
+app.jinja_env.globals['spread_movement_stat'] = _spread_movement_stat
+app.jinja_env.globals['total_movement_stat'] = _total_movement_stat
 
 
 def _et_date(utc_str):
@@ -3659,6 +3906,7 @@ def _best_market_pick(game):
       if vf_h is not None:
         favors_home = home_cover >= 0.5
         pick_prob   = home_cover if favors_home else (1 - home_cover)
+        pick_prob   = _spread_movement_adjusted_prob(pick_prob, game.get('spread_movement_profile'), sport)
         mkt_implied = vf_h if favors_home else vf_a
         amer_odds   = hp_price if favors_home else ap_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
@@ -3684,6 +3932,7 @@ def _best_market_pick(game):
       if vf_o is not None:
         favors_over = over_prob >= 0.5
         pick_prob   = over_prob if favors_over else (1 - over_prob)
+        pick_prob   = _total_movement_adjusted_prob(pick_prob, game.get('total_movement_profile'), sport)
         mkt_implied = vf_o if favors_over else vf_u
         amer_odds   = over_price if favors_over else under_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
@@ -3984,6 +4233,12 @@ def mlb_schedule():
   _upsert_predictions(schedule, 'MLB')
   _attach_graded_results(schedule, 'MLB')
   _mark_favorites(schedule, 'MLB')
+  # ML movement is handled inline by _mlb_candidates below (its own
+  # trust-score pipeline, not model.final_home_prob), but spread/total
+  # movement isn't — MLB's spread/total ★ picks and chips go through the
+  # same shared _best_market_pick every other sport uses, so MLB needs this
+  # stamping too for those two markets.
+  _stamp_movement(schedule, 'MLB')
   all_candidates = _mlb_candidates(schedule)
 
   # Persist ranks: pre-game ranks update on every load (shift as games start);
@@ -6418,6 +6673,10 @@ def _recompute_all_calibration(sport):
     _recompute_movement_profiles(sport)
     _recompute_movement_weights(sport)
     _recompute_movement_stats(sport)
+    _recompute_spread_movement_profiles(sport)
+    _recompute_spread_movement_stats(sport)
+    _recompute_total_movement_profiles(sport)
+    _recompute_total_movement_stats(sport)
     _recompute_consensus_calibration(sport)
     _recompute_prob_calibration(sport)
     # Must run after _recompute_unified_rank_stats/_recompute_prob_calibration
