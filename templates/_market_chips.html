@@ -285,6 +285,26 @@
             <span class="mc-side mc-side-muted">no line</span>
             {% endif %}
         </div>
+        {# Movement — pre-game odds-movement category (odds_history.classify_
+           movement, moneyline-only) plus this category's real historical
+           win-rate/N (movement_stat(), app.py) once enough resolved games
+           exist to trust it. _for means the market moved toward the pick
+           over time; _against means it moved away — colored green/red the
+           same way the ML/Spread/Total chips already color an edge.
+           Skipped entirely for no_data/static (nothing informative to show)
+           or when this game has no profile yet (insufficient snapshot
+           history so far today). #}
+        {% set mv_profile = game.movement_profile %}
+        {% if mv_profile and mv_profile not in ('no_data', 'static') %}
+        {% set mv_shape = mv_profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
+        {% set mv_dir = 'for' if mv_profile.endswith('_for') else ('against' if mv_profile.endswith('_against') else none) %}
+        {% set mv_stat = movement_stat(mv_profile, game.sport) %}
+        <div class="mc-chip" title="Line movement: {{ mv_shape }}{{ ' (' ~ mv_dir ~ ' the pick)' if mv_dir }}{% if mv_stat.n %} — {{ mv_stat.win_rate }}% win rate over {{ mv_stat.n }} resolved game{{ 's' if mv_stat.n != 1 }}{% else %} — not enough history yet to trust{% endif %}">
+            <span class="mc-t">MOVE</span>
+            <span class="mc-big{{ ' edge-pos' if mv_dir == 'for' else (' edge-neg' if mv_dir == 'against' else '') }}">{{ mv_shape }}</span>
+            <span class="mc-side{{ '' if mv_stat.n else ' mc-side-muted' }}">{% if mv_stat.n %}{{ mv_stat.win_rate }}% ({{ mv_stat.n }}){% else %}new · no history{% endif %}</span>
+        </div>
+        {% endif %}
     </div>
 
     <details class="mc-fold" onclick="event.stopPropagation()">

@@ -515,6 +515,54 @@ def _stamp_confidence_blend(schedule, sport):
             model['final_away_prob'] = round(final if not fav_home else 1 - final, 4)
 
 
+def _stamp_movement(schedule, sport):
+    """MLB's _mlb_candidates classifies+applies line movement inline itself
+    (it builds its own candidate probability from scratch); every other
+    sport instead goes through _best_market_pick, which — like the ML chip
+    in _market_chips.html — already prefers game['model']['final_home_prob']
+    over the raw model prob when present. So the integration point here is
+    simple: classify the game's live movement category, stamp it for
+    display (game['movement_profile']/'movement_pct'), and if it carries a
+    calibrated correction (see _movement_adjusted_prob), fold it into
+    final_home_prob/final_away_prob the same way _stamp_confidence_blend
+    does — no changes needed to _best_market_pick or the chip template
+    itself, they pick this up automatically. Call after
+    _stamp_confidence_blend so the correction chains onto its blended prob,
+    the same order MLB applies consensus-then-movement in _mlb_candidates."""
+    import odds_history as _oh_mv
+    import odds_api as _oa
+    odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
+    for day in (schedule or []):
+        for game in day.get('games', []):
+            if game.get('status') == 'Final':
+                continue
+            home_name = (game.get('home') or {}).get('name', '')
+            away_name = (game.get('away') or {}).get('name', '')
+            model = game.get('model')
+            if not model or model.get('home_prob') is None or not home_name or not away_name:
+                continue
+            hp = model['final_home_prob'] if 'final_home_prob' in model else model['home_prob']
+            fav_home = hp >= 0.5
+            game_start = None
+            utc_raw = game.get('game_time_utc', '')
+            if utc_raw:
+                try:
+                    game_start = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
+                except Exception:
+                    pass
+            profile, pct = _oh_mv.classify_movement(odds_sport_key, home_name, away_name, fav_home, game_start)
+            game['movement_profile'] = profile
+            game['movement_pct'] = pct
+            if not profile:
+                continue
+            pick_prob = hp if fav_home else 1.0 - hp
+            adj_prob  = _movement_adjusted_prob(pick_prob, profile, sport)
+            if adj_prob == pick_prob:
+                continue
+            model['final_home_prob'] = round(adj_prob if fav_home else 1.0 - adj_prob, 4)
+            model['final_away_prob'] = round(adj_prob if not fav_home else 1.0 - adj_prob, 4)
+
+
 def _historical_confidence_values(sport):
     """Every resolved game's blended confidence value (0-100), using
     whichever blend that sport's schedule route actually applies at render
@@ -1508,6 +1556,86 @@ def _movement_value(profile, sport='MLB'):
     with _MOVEMENT_LOCK:
         w = _MOVEMENT_WEIGHTS.get(sport) or _default_movement_weights()
         return w.get(profile, 0.5)
+
+
+# {sport: {profile: {'win_rate': pct|None, 'n': int, 'correction': logit_delta}}}
+# The literal per-category win-rate + sample size (for display), plus a
+# shrunk logit-space probability correction (for actually affecting the
+# model) — same shape/shrinkage pattern as _CONS_CALIB/_recompute_
+# consensus_calibration, just keyed by movement_profile instead of a
+# consensus bucket. Separate from _MOVEMENT_WEIGHTS above (an ROI-blend
+# still used by the Model Performance page's backtest table) since win-rate
+# and ROI answer different questions and both are worth keeping.
+_MOVEMENT_STATS = {}
+
+
+def _recompute_movement_stats(sport='MLB'):
+    """Real per-category win-rate + N, and the logit correction derived from
+    it, from resolved GamePrediction rows. Mirrors _recompute_consensus_
+    calibration's method exactly: correction = shrunk gap between the
+    model's own average pick-probability and the bucket's actual win rate,
+    isolating what the movement category adds beyond what the model already
+    believed. n < MIN_N buckets still show a win-rate (for the chip) but
+    keep correction at 0 (not enough history to trust adjusting live bets)."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.home_won.isnot(None),
+            GamePrediction.movement_profile.isnot(None),
+            GamePrediction.home_prob.isnot(None),
+        ).all()
+
+    SHRINKAGE = 0.60
+    MIN_N     = 5
+    new_stats = {}
+    for label in _MOVEMENT_PROFILES:
+        bkt = [p for p in resolved if p.movement_profile == label]
+        n = len(bkt)
+        if n == 0:
+            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            continue
+        fav_home = [(p.home_prob or 0.5) >= 0.5 for p in bkt]
+        wins = sum(1 for p, fh in zip(bkt, fav_home) if fh == bool(p.home_won))
+        win_rate = wins / n
+        if n < MIN_N:
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            continue
+        avg_model = sum((p.home_prob if fh else 1.0 - p.home_prob) for p, fh in zip(bkt, fav_home)) / n
+        raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
+        alpha      = min(n / 50.0, 1.0)
+        correction = round(raw_corr * SHRINKAGE * alpha, 5)
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+
+    with _MOVEMENT_LOCK:
+        _MOVEMENT_STATS[sport] = new_stats
+
+    _nonzero = {k: v for k, v in new_stats.items() if v['n']}
+    print(f'[movement-stats] {sport} recomputed: {_nonzero}', flush=True)
+
+
+def _movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
+    """Applies the movement category's logit correction to a pick
+    probability — no-op (returns pick_prob unchanged) if the category has
+    no profile, no stats yet, or hasn't cleared MIN_N. Mirrors
+    _consensus_adjusted_prob's shape exactly."""
+    if not movement_profile:
+        return pick_prob
+    with _MOVEMENT_LOCK:
+        stat = (_MOVEMENT_STATS.get(sport) or {}).get(movement_profile)
+    correction = (stat or {}).get('correction') or 0.0
+    if not correction:
+        return pick_prob
+    return _sigmoid(_safe_logit(pick_prob) + correction)
+
+
+def _movement_stat(movement_profile, sport='MLB'):
+    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the MOVE chip."""
+    with _MOVEMENT_LOCK:
+        stat = (_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+
+
+app.jinja_env.globals['movement_stat'] = _movement_stat
 
 
 def _et_date(utc_str):
@@ -2687,6 +2815,7 @@ def _hub_sport_data(sport, icon, href, today_str):
 
         # See the MLB branch above re: no _upsert_predictions here.
         _stamp_confidence_blend(schedule, sport)
+        _stamp_movement(schedule, sport)
         _attach_graded_results(schedule, sport)
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
         recommended = _edge_recommendations(schedule, sport, limit=5)
@@ -3676,7 +3805,24 @@ def _mlb_candidates(schedule):
         bet_side    = 'away'
       edge = round((pick_prob - mkt_implied) * 100, 1)
 
+      # Movement profile — computed live (not read from GamePrediction) so it
+      # reflects partial-day snapshot history as it accumulates. Classified
+      # before adj_prob so its logit correction (see _movement_adjusted_prob)
+      # actually feeds adj_edge/EV%/Kelly below, instead of being computed
+      # too late to matter (as it used to be, feeding only the no-op
+      # _unified_score call).
+      game_start = None
+      _utc_raw = game.get('game_time_utc', '')
+      if _utc_raw:
+        try:
+          game_start = datetime.fromisoformat(_utc_raw.replace('Z', '+00:00'))
+        except Exception:
+          game_start = None
+      movement_profile, movement_pct = _oh_mv.classify_movement(
+          'baseball_mlb', home_name, away_name, bet_side == 'home', game_start)
+
       adj_prob = _consensus_adjusted_prob(pick_prob, factors_json, hp >= ap, sport='MLB')
+      adj_prob = _movement_adjusted_prob(adj_prob, movement_profile, sport='MLB')
       adj_edge = round((adj_prob - mkt_implied) * 100, 1)
 
       k_b  = (amer_odds / 100.0) if amer_odds > 0 else ((-100.0 / amer_odds) if amer_odds < 0 else 0)
@@ -3708,20 +3854,11 @@ def _mlb_candidates(schedule):
       ts_detail = _trust_score(hp, h_odds, a_odds, factors_json, sport='MLB', detail=True)
       trust = ts_detail.get('score', 0)
 
-      # Movement profile — computed live so it reflects partial-day snapshot
-      # history as it accumulates; feeds into the Trust Score at a fixed 10%.
-      game_start = None
-      _utc_raw = game.get('game_time_utc', '')
-      if _utc_raw:
-        try:
-          game_start = datetime.fromisoformat(_utc_raw.replace('Z', '+00:00'))
-        except Exception:
-          game_start = None
-      movement_profile, movement_pct = _oh_mv.classify_movement(
-          'baseball_mlb', home_name, away_name, bet_side == 'home', game_start)
-      movement_val = _movement_value(movement_profile, sport='MLB')
-
-      unified = _unified_score(ts_detail, line_move_val, movement_val, amer_odds)
+      # movement_profile/movement_pct were already classified above (before
+      # adj_prob, so the correction could actually apply). unified_score is
+      # display-only (sorting keys off trust_score) but kept for the schedule
+      # page's existing columns.
+      unified = _unified_score(ts_detail, line_move_val, _movement_value(movement_profile, sport='MLB'), amer_odds)
 
       # Both probable starters must be officially announced. Until then, the
       # model is filling SP-dependent factors (SIERA, K%, BB%, Barrel%, Whiff%)
@@ -3884,6 +4021,11 @@ def mlb_schedule():
             'adj_edge':    b['adj_edge'],
             'trust_score': b['trust_score'],
         }
+        # So the shared MOVE chip in _market_chips.html (game.movement_profile)
+        # works on MLB cards too — the other 5 sports get this from
+        # _stamp_movement instead, since MLB builds its own candidates inline.
+        game['movement_profile'] = b['movement_profile']
+        game['movement_pct']     = b['movement_pct']
         # Inject adj_prob into the model dict so bet URLs can use it
         if game.get('model'):
           fav_home = b['bet_side'] == 'home'
@@ -4990,6 +5132,7 @@ def nhl_schedule():
   schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NHL')
   _stamp_confidence_blend(schedule, 'NHL')
+  _stamp_movement(schedule, 'NHL')
   _attach_graded_results(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
@@ -5004,6 +5147,7 @@ def nba_schedule():
   schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'NBA')
   _stamp_confidence_blend(schedule, 'NBA')
+  _stamp_movement(schedule, 'NBA')
   _attach_graded_results(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
@@ -5018,6 +5162,7 @@ def wnba_schedule():
   schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
   _upsert_predictions(schedule, 'WNBA')
   _stamp_confidence_blend(schedule, 'WNBA')
+  _stamp_movement(schedule, 'WNBA')
   _attach_graded_results(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
@@ -5032,6 +5177,7 @@ def nfl_schedule():
   week_ctx = nfl_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'NFL')
   _stamp_confidence_blend(week_ctx['days'], 'NFL')
+  _stamp_movement(week_ctx['days'], 'NFL')
   _attach_graded_results(week_ctx['days'], 'NFL')
   _mark_favorites(week_ctx['days'], 'NFL')
   _match_open_bets_to_games(week_ctx['days'], sport='NFL')
@@ -5071,6 +5217,7 @@ def cfb_schedule():
   week_ctx = cfb_api.build_week_schedule_context(week)
   _upsert_predictions(week_ctx['days'], 'CFB')
   _stamp_confidence_blend(week_ctx['days'], 'CFB')
+  _stamp_movement(week_ctx['days'], 'CFB')
   _attach_graded_results(week_ctx['days'], 'CFB')
   _mark_favorites(week_ctx['days'], 'CFB')
   _match_open_bets_to_games(week_ctx['days'], sport='CFB')
@@ -6270,6 +6417,7 @@ def _recompute_all_calibration(sport):
     _recompute_unified_rank_stats(sport)
     _recompute_movement_profiles(sport)
     _recompute_movement_weights(sport)
+    _recompute_movement_stats(sport)
     _recompute_consensus_calibration(sport)
     _recompute_prob_calibration(sport)
     # Must run after _recompute_unified_rank_stats/_recompute_prob_calibration
