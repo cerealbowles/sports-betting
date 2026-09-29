@@ -943,7 +943,10 @@ def build_schedule_context(target_date=None):
                 'games':        games,
             })
 
-    refreshed_at = datetime.now(_ET).strftime('%-I:%M %p ET')
+    try:
+        refreshed_at = datetime.now(_ET).strftime('%-I:%M %p ET')
+    except ValueError:
+        refreshed_at = datetime.now(_ET).strftime('%I:%M %p ET').lstrip('0')
     for day in result:
         day['refreshed_at'] = refreshed_at
     return result

@@ -2530,6 +2530,35 @@ body.embed-mode .container { padding-bottom: 0; }
     white-space: nowrap; text-transform: uppercase; letter-spacing: 0.3px;
 }
 
+/* ── Today hub — per-sport summary cards ── */
+.hub-sport-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+.hub-sport-card {
+    display: flex; flex-direction: column; gap: 8px;
+    text-decoration: none; color: inherit;
+    transition: border-color 0.15s ease;
+}
+.hub-sport-card:hover { border-color: var(--border-strong); }
+.hub-sport-card-head { display: flex; align-items: center; gap: 8px; }
+.hub-sport-icon { font-size: 1.2rem; }
+.hub-sport-name { font-weight: 800; font-size: 0.95rem; }
+.hub-sport-card-head .game-count { margin-left: auto; }
+.hub-sport-empty { color: var(--text-muted); font-size: 0.78rem; margin: 0; }
+.hub-sport-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.hub-sport-picks li {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.76rem; white-space: nowrap; overflow: hidden;
+}
+.hub-pick-label { font-weight: 700; color: var(--orange); flex-shrink: 0; }
+.hub-pick-matchup { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+.hub-sport-view {
+    margin-top: auto; padding-top: 6px;
+    font-size: 0.76rem; font-weight: 700; color: var(--orange);
+}
+
 /* ── Live game state — quarter/clock, down/distance, possession, timeouts ── */
 .live-qtr-clock {
     font-size: 0.72rem; font-weight: 700; color: var(--text-muted);

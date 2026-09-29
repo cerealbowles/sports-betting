@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Today — Spooky Sports{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+<div class="day-header">
+    <h2>{{ today_display }}</h2>
+</div>
+
+{% include "_today_best_bets.html" %}
+
+<div class="hub-sport-grid">
+{% for s in sport_summaries %}
+<a class="card hub-sport-card" href="{{ s.href }}">
+    <div class="hub-sport-card-head">
+        <span class="hub-sport-icon">{{ s.icon }}</span>
+        <span class="hub-sport-name">{{ s.sport }}</span>
+        <span class="game-count">{{ s.games_today }} game{{ 's' if s.games_today != 1 }}</span>
+    </div>
+    {% if not s.top_picks %}
+    <p class="hub-sport-empty">{{ 'No games today' if s.games_today == 0 else 'No positive-edge picks right now' }}</p>
+    {% else %}
+    <ul class="hub-sport-picks">
+    {% for p in s.top_picks %}
+        <li>
+            <span class="hub-pick-label">{{ p.pick_label }}</span>
+            <span class="hub-pick-matchup">{{ p.matchup }}</span>
+            <span class="kelly-verdict {{ p.k_cls }}">{{ '+' if p.edge > 0 }}{{ p.edge }}%</span>
+        </li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    <span class="hub-sport-view">View {{ s.sport }} →</span>
+</a>
+{% endfor %}
+</div>
+
+</div>
+{% endblock %}

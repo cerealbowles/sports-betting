@@ -2589,21 +2589,115 @@ def _set_last_sport_cookie(resp, sport):
     return resp
 
 
+_HUB_SPORTS = [
+    ('MLB', '⚾', 'mlb_schedule'),
+    ('NFL', '🏈', 'nfl_schedule'),
+    ('CFB', '🎓', 'cfb_schedule'),
+    ('NBA', '🏀', 'nba_schedule'),
+    ('WNBA', '🏀', 'wnba_schedule'),
+    ('NHL', '🏒', 'nhl_schedule'),
+]
+
+
 @app.route('/')
 def index():
-  """Retired as a distinct cross-sport Dashboard — MLB is the effective
-  landing page now. Kept as a redirect (not deleted) rather than renamed,
-  since a lot of other routes call redirect(url_for('index')) as their
-  generic "go home" behavior after a bet action; changing the destination
-  here is far less invasive than updating every one of those call sites.
-  The old all-sports bet list this used to render is gone — the persistent
-  bankroll/exposure strip (see _inject_global_exposure) covers the
-  cross-sport visibility it provided. Known gap: NHL/NFL open bets have no
-  dedicated view now (their schedule pages don't have a live-bets section
-  yet, unlike /mlb) — fine for now since neither has real betting volume,
-  worth revisiting once either does.
-  """
-  return redirect(url_for('mlb_schedule'))
+  """Today — a cross-sport hub. Pulls each sport's own recommendation list
+  (MLB's trust-score _mlb_candidates/_mlb_best_bets, everyone else's shared
+  _edge_recommendations) scoped to just today's games, merges them into one
+  edge-ranked list, and shows a per-sport summary card linking to that
+  sport's full schedule page for the detailed view. Read-only display: it
+  doesn't persist daily_rank/game_key stamping the way visiting a sport's
+  own page does — those still happen only on /mlb, /nfl, etc."""
+  today = datetime.now(_ET).date()
+  today_str = today.strftime('%Y-%m-%d')
+
+  sport_summaries = []
+  unified_picks = []
+
+  for sport, icon, endpoint in _HUB_SPORTS:
+    href = url_for(endpoint)
+    games_today = 0
+    top_picks = []
+
+    if sport == 'MLB':
+      schedule = mlb_api.build_schedule_context(target_date=today_str)
+      _upsert_predictions(schedule, 'MLB')
+      _attach_graded_results(schedule, 'MLB')
+      games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+      all_candidates = _mlb_candidates(schedule)
+      best_bets = _mlb_best_bets(schedule, all_candidates)
+      ranked = sorted(best_bets or all_candidates[:5], key=lambda b: -b['adj_edge'])
+      for b in ranked[:5]:
+        top_picks.append({
+            'sport':         'MLB', 'icon': icon, 'href': href,
+            'matchup':       f"{b['away_abbr']} @ {b['home_abbr']}",
+            'pick_label':    b['pick_abbr'],
+            'market':        'ml',
+            'edge':          b['adj_edge'],
+            'ev_pct':        b['ev_pct'],
+            'amer_odds':     b['amer_odds'],
+            # Normalized to the shared edge-pos/edge-neutral palette (the
+            # other sports' _edge_recommendations already use it) rather
+            # than MLB schedule page's own kelly-strong/value/lean classes,
+            # which are scoped to mlb_schedule.html's own <style> block.
+            'k_label':       b['k_label'],
+            'k_cls':         'edge-pos' if b['adj_edge'] > 0 else 'edge-neutral',
+            'game_time_utc': b['game_time_utc'],
+        })
+    else:
+      if sport == 'NHL':
+        day_nav = _build_day_nav(0)
+        schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
+      elif sport == 'NBA':
+        day_nav = _build_day_nav(0)
+        schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
+      elif sport == 'WNBA':
+        day_nav = _build_day_nav(0)
+        schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
+      elif sport == 'NFL':
+        week_ctx = nfl_api.build_week_schedule_context()
+        schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
+      else:  # CFB
+        week_ctx = cfb_api.build_week_schedule_context()
+        schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
+
+      _upsert_predictions(schedule, sport)
+      _stamp_confidence_blend(schedule, sport)
+      _attach_graded_results(schedule, sport)
+      games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+      recommended = _edge_recommendations(schedule, sport, limit=5)
+      for r in recommended:
+        g = r['game']
+        top_picks.append({
+            'sport':         sport, 'icon': icon, 'href': href,
+            'matchup':       f"{g['away'].get('abbrev') or g['away'].get('abbr')} @ {g['home'].get('abbrev') or g['home'].get('abbr')}",
+            'pick_label':    r['pick_label'],
+            'market':        r['market'],
+            'edge':          r['edge'],
+            'ev_pct':        r['ev_pct'],
+            'amer_odds':     r['amer_odds'],
+            'k_label':       r['k_label'],
+            'k_cls':         r['k_cls'],
+            'game_time_utc': g.get('game_time_utc', ''),
+        })
+
+    sport_summaries.append({
+        'sport': sport, 'icon': icon, 'href': href,
+        'games_today': games_today, 'top_picks': top_picks[:3],
+    })
+    unified_picks.extend(top_picks)
+
+  unified_picks = [p for p in unified_picks if p['edge'] > 0]
+  unified_picks.sort(key=lambda p: -p['edge'])
+  unified_picks = unified_picks[:12]
+
+  try:
+    today_display = today.strftime('%A, %B %-d')
+  except Exception:
+    today_display = today.strftime('%A, %B %d')
+
+  return render_template('today.html', today_display=today_display,
+                         sport_summaries=sport_summaries, top_picks=unified_picks)
 
 @app.route('/history')
 def history():
@@ -3373,58 +3467,14 @@ def _mlb_star_pick(game):
 app.jinja_env.globals['best_market_pick'] = _best_market_pick
 
 
-@app.route('/mlb')
-def mlb_schedule():
-  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
-  schedule = mlb_api.build_schedule_context(target_date=day_nav['date'])
-  from odds_api import _normalize
+def _mlb_candidates(schedule):
+  """Pure MLB trust-score candidate list, built from a schedule (list of
+  {'games': [...]}) with no DB writes — shared by mlb_schedule() (which
+  persists daily_rank / stamps game['rec'] itself afterward, then filters
+  this list down to best_bets via _mlb_star_pick once that stamping has
+  happened) and the cross-sport Today hub (which just needs the ranking
+  for display, unstamped). Returns all_candidates, sorted and ranked."""
   import odds_history as _oh_mv
-  import re as _re
-
-  all_open = OpenBet.query.all()
-
-  # Primary index: game_key (set when bet was placed from schedule page)
-  by_key = {}
-  for bet in all_open:
-    if bet.game_key:
-      by_key.setdefault(bet.game_key, []).append(bet)
-
-  # Fallback index: leading team abbreviation in the bet name
-  # Matches bets like "PIT ML", "CWS ML" placed manually or pre-game_key
-  by_abbr = {}
-  for bet in all_open:
-    if bet.game_key:
-      continue  # already covered above
-    m = _re.match(r'^([A-Z]{2,4})\b', bet.name or '')
-    if m:
-      by_abbr.setdefault(m.group(1).upper(), []).append(bet)
-
-  for day in schedule:
-    for game in day['games']:
-      gk = f"{_normalize(game['home']['name'])}_{_normalize(game['away']['name'])}"
-      matched = list(by_key.get(gk, []))
-      # Also try the hour-precision timestamped key that add_open stores
-      _utc_raw = game.get('game_time_utc', '')
-      if _utc_raw:
-        try:
-          from datetime import datetime as _dt
-          _utc = _dt.fromisoformat(_utc_raw.replace('Z', '+00:00'))
-          gk_ts = f"{gk}_{_utc.strftime('%Y-%m-%dT%H')}"
-          for bet in by_key.get(gk_ts, []):
-            if bet not in matched:
-              matched.append(bet)
-        except Exception:
-          pass
-      # Add any fallback matches for either team abbreviation
-      for abbr in (game['away']['abbr'], game['home']['abbr']):
-        for bet in by_abbr.get(abbr.upper(), []):
-          if bet not in matched:
-            matched.append(bet)
-      game['open_bets'] = matched
-
-  _upsert_predictions(schedule, 'MLB')
-  _attach_graded_results(schedule, 'MLB')
-  _mark_favorites(schedule, 'MLB')
 
   # Build candidate list.
   # Preview games: use live schedule data (model + odds) for a fresh trust score.
@@ -3584,6 +3634,76 @@ def mlb_schedule():
   for i, b in enumerate(all_candidates):
     b['rank'] = i + 1
 
+  return all_candidates
+
+
+def _mlb_best_bets(schedule, all_candidates):
+  """Filters all_candidates down to the games that earn a ★ per
+  _mlb_star_pick — call this AFTER game['model'].final_*_prob has been
+  stamped (mlb_schedule does that; the Today hub calls this unstamped,
+  which falls back to raw model.home_prob/away_prob — see _mlb_star_pick)."""
+  _star_keys = set()
+  for day in (schedule or []):
+    for game in day.get('games', []):
+      if _mlb_star_pick(game):
+        _star_keys.add(f"{game['away']['abbr']}@{game['home']['abbr']}")
+  return [b for b in all_candidates if f"{b['away_abbr']}@{b['home_abbr']}" in _star_keys]
+
+
+@app.route('/mlb')
+def mlb_schedule():
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = mlb_api.build_schedule_context(target_date=day_nav['date'])
+  from odds_api import _normalize
+  import odds_history as _oh_mv
+  import re as _re
+
+  all_open = OpenBet.query.all()
+
+  # Primary index: game_key (set when bet was placed from schedule page)
+  by_key = {}
+  for bet in all_open:
+    if bet.game_key:
+      by_key.setdefault(bet.game_key, []).append(bet)
+
+  # Fallback index: leading team abbreviation in the bet name
+  # Matches bets like "PIT ML", "CWS ML" placed manually or pre-game_key
+  by_abbr = {}
+  for bet in all_open:
+    if bet.game_key:
+      continue  # already covered above
+    m = _re.match(r'^([A-Z]{2,4})\b', bet.name or '')
+    if m:
+      by_abbr.setdefault(m.group(1).upper(), []).append(bet)
+
+  for day in schedule:
+    for game in day['games']:
+      gk = f"{_normalize(game['home']['name'])}_{_normalize(game['away']['name'])}"
+      matched = list(by_key.get(gk, []))
+      # Also try the hour-precision timestamped key that add_open stores
+      _utc_raw = game.get('game_time_utc', '')
+      if _utc_raw:
+        try:
+          from datetime import datetime as _dt
+          _utc = _dt.fromisoformat(_utc_raw.replace('Z', '+00:00'))
+          gk_ts = f"{gk}_{_utc.strftime('%Y-%m-%dT%H')}"
+          for bet in by_key.get(gk_ts, []):
+            if bet not in matched:
+              matched.append(bet)
+        except Exception:
+          pass
+      # Add any fallback matches for either team abbreviation
+      for abbr in (game['away']['abbr'], game['home']['abbr']):
+        for bet in by_abbr.get(abbr.upper(), []):
+          if bet not in matched:
+            matched.append(bet)
+      game['open_bets'] = matched
+
+  _upsert_predictions(schedule, 'MLB')
+  _attach_graded_results(schedule, 'MLB')
+  _mark_favorites(schedule, 'MLB')
+  all_candidates = _mlb_candidates(schedule)
+
   # Persist ranks: pre-game ranks update on every load (shift as games start);
   # Live games get their rank-at-start captured once and never overwritten.
   # Final games are skipped — their outcome is already recorded by _upsert_predictions.
@@ -3639,12 +3759,7 @@ def mlb_schedule():
   # on their own card below — computed with _mlb_star_pick, the same
   # kelly/edge/payout-floor rule as _edge_star.html's edge_pick macro, now
   # that every game's model.final_*_prob has been stamped above.
-  _star_keys = set()
-  for day in (schedule or []):
-    for game in day.get('games', []):
-      if _mlb_star_pick(game):
-        _star_keys.add(f"{game['away']['abbr']}@{game['home']['abbr']}")
-  best_bets = [b for b in all_candidates if f"{b['away_abbr']}@{b['home_abbr']}" in _star_keys]
+  best_bets = _mlb_best_bets(schedule, all_candidates)
 
   settings = Setting.query.first()
   kelly_cap = settings.percent_bankroll if settings else 0.05
