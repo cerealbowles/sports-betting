@@ -1587,6 +1587,17 @@ body.embed-mode .container { padding-bottom: 0; }
 .btn-place-bet:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .btn-place-bet:active { transform: translateY(0); }
 .btn-place-bet:disabled { opacity: 0.6; cursor: default; transform: none; }
+.bet-slip-btn-row { display: flex; gap: 8px; }
+.bet-slip-btn-row .btn-place-bet { flex: 2; }
+.btn-add-sheet {
+  flex: 1; padding: 13px 10px; font-size: 0.85rem; font-weight: 800;
+  background: transparent; color: var(--orange); border: 1px solid var(--orange);
+  border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap;
+  transition: var(--transition);
+}
+.btn-add-sheet:hover { background: var(--orange-dim); }
+.btn-add-sheet:active { transform: translateY(0); }
+.btn-add-sheet:disabled { opacity: 0.6; cursor: default; }
 .bet-slip-confirm {
   display: none; text-align: center; padding: 10px 0 2px; color: var(--win);
   font-size: 0.85rem; font-weight: 700;

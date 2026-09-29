@@ -380,3 +380,53 @@ fetch('/add_open', { method: 'POST', body: fd })
     }
     });
 }
+
+/* Stages the current bet slip onto the Bet Sheet instead of placing it —
+   same FormData shape as placeBet(), posted to /bet_sheet/add, which has
+   no unsettled-bet guard and doesn't touch the bankroll. */
+function addToBetSheet(btnEl) {
+var slip = btnEl.closest('.bet-slip');
+if (!slip) return;
+var input = slip.querySelector('.stake-input-wrap input');
+var stake = parseFloat(input && input.value) || 0;
+var err   = slip.querySelector('.bet-slip-error');
+if (err) err.classList.remove('show');
+if (!stake || stake <= 0) {
+    if (err) { err.textContent = 'Enter a stake amount.'; err.classList.add('show'); }
+    return;
+}
+
+btnEl.disabled = true;
+var d = slip.dataset;
+var fd = new FormData();
+fd.append('name',          d.name || (d.team + ' ' + (d.betType || 'Moneyline')));
+fd.append('odds',          d.odds);
+fd.append('prob',          d.modelProb);
+fd.append('stake',         stake.toFixed(2));
+fd.append('sport',         d.sport || '');
+fd.append('bet_type',      d.betType || 'Moneyline');
+fd.append('home_name',     d.homeName || '');
+fd.append('away_name',     d.awayName || '');
+fd.append('bet_side',      d.betSide || '');
+fd.append('eventstartutc', d.eventstartutc || '');
+
+fetch('/bet_sheet/add', { method: 'POST', body: fd })
+    .then(function () {
+    var confirm = slip.querySelector('.bet-slip-confirm');
+    if (confirm) {
+        confirm.textContent = '✓ Added to Bet Sheet — $' + stake.toFixed(2) + ' on ' + d.name;
+        confirm.classList.add('show');
+    }
+    setTimeout(function () {
+        closeGameDetails();
+        window.location.reload();
+    }, 900);
+    })
+    .catch(function () {
+    btnEl.disabled = false;
+    if (err) {
+        err.textContent = 'Could not add to Bet Sheet — try again.';
+        err.classList.add('show');
+    }
+    });
+}

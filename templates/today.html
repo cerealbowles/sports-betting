@@ -37,4 +37,16 @@
 </div>
 
 </div>
+
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+</script>
 {% endblock %}

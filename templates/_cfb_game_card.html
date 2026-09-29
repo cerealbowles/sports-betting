@@ -292,7 +292,10 @@
                 <span>Recommended: <b class="bet-slip-recommended">$0.00</b></span>
                 <span>To win: <b class="bet-slip-to-win">$0.00</b></span>
             </div>
-            <button type="button" class="btn-place-bet" onclick="placeBet(this)">Bet</button>
+            <div class="bet-slip-btn-row">
+                <button type="button" class="btn-place-bet" onclick="placeBet(this)">Bet</button>
+                <button type="button" class="btn-add-sheet" onclick="addToBetSheet(this)">+ Sheet</button>
+            </div>
             <div class="bet-slip-confirm"></div>
         </div>
         {% endif %}

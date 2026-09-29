@@ -88,6 +88,27 @@ class OpenBet(db.Model):
   game_key = db.Column(db.String(300), default='')  # odds_history lookup key
   bet_side = db.Column(db.String(10), default='')   # 'home' or 'away'
 
+class DraftBet(db.Model):
+  """A staged bet on the Bet Sheet — same shape as OpenBet, minus anything
+  tied to an actual placed wager (no bankroll effect until committed via
+  /bet_sheet/place, which converts a DraftBet into a real OpenBet and
+  deletes this row). ev_pct is computed once at stage-time from odds/prob
+  (see _parse_bet_form's caller) so the sheet can sort by best expected
+  return without recomputing edge from scratch."""
+  id = db.Column(db.Integer, primary_key=True)
+  name = db.Column(db.String(200))
+  odds = db.Column(db.Float)  # decimal odds
+  prob = db.Column(db.Float)  # model win probability (0-1)
+  stake = db.Column(db.Float)
+  sport = db.Column(db.String(100), default='')
+  bet_type = db.Column(db.String(50), default='Moneyline')
+  created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+  eventstart = db.Column(db.DateTime, default=None)
+  notes = db.Column(db.Text, default='')
+  game_key = db.Column(db.String(300), default='')
+  bet_side = db.Column(db.String(10), default='')
+  ev_pct = db.Column(db.Float, default=0.0)
+
 class ClosedBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
@@ -2567,17 +2588,19 @@ def _inject_nav_context():
     filter rather than its own nav destination and other pages need to
     remember where you last were.
 
-    Also exposes nav_open_bet_count (open bet count, for the
-    Bets nav badge)."""
+    Also exposes nav_open_bet_count (open bet count, for the Bets nav
+    badge) and nav_sheet_count (staged-bet count, for the Bet Sheet badge)."""
     sport = (request.cookies.get('last_sport') or 'MLB').upper()
     if sport not in _SPORT_SCHEDULE_ENDPOINTS:
         sport = 'MLB'
 
     nav_open_bet_count = OpenBet.query.count()
+    nav_sheet_count = DraftBet.query.count()
 
     return {
         'nav_last_sport': sport,
         'nav_open_bet_count': nav_open_bet_count,
+        'nav_sheet_count': nav_sheet_count,
     }
 
 
@@ -3080,6 +3103,62 @@ def empirical_info():
       "source": "personal_history",
   })
 
+def _parse_bet_form(form):
+  """Shared field-parsing for a submitted bet-slip form (name/odds/prob/
+  stake/sport/bet_type/eventstart/notes/bet_side/home_name/away_name),
+  including the game_key construction (normalized home/away names + an
+  hour-precision UTC timestamp so same teams playing consecutive days each
+  get a distinct key matching the odds snapshot exactly). Used by both
+  /add_open (places immediately) and /bet_sheet/add (stages a DraftBet).
+  Returns None if the required numeric fields don't parse."""
+  try:
+    name     = form.get('name', 'Bet')
+    odds     = _as_decimal_odds(form.get('odds'))
+    prob     = float(form.get('prob'))
+    stake    = float(form.get('stake'))
+    sport    = form.get('sport', '')
+    bet_type = form.get('bet_type', 'Moneyline')
+  except Exception:
+    return None
+  eventstart = None
+  # Prefer eventstartutc (ISO UTC string from schedule page) — unambiguous timezone.
+  # Fall back to eventstart (datetime-local, browser local time, treated as naive).
+  utc_raw = form.get('eventstartutc', '').strip()
+  if utc_raw:
+    try:
+      eventstart = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
+      if not eventstart.tzinfo:
+        eventstart = eventstart.replace(tzinfo=timezone.utc)
+    except Exception:
+      pass
+  if eventstart is None:
+    eventstart_raw = form.get('eventstart', '')
+    if eventstart_raw:
+      try:
+        eventstart = datetime.strptime(eventstart_raw, "%Y-%m-%dT%H:%M")
+      except Exception:
+        pass
+  notes     = form.get('notes', '')
+  bet_side  = form.get('bet_side', '')
+  home_name = form.get('home_name', '')
+  away_name = form.get('away_name', '')
+  game_key  = ''
+  if home_name and away_name:
+    from odds_api import _normalize
+    h_norm = _normalize(home_name)
+    a_norm = _normalize(away_name)
+    if eventstart:
+      utc_dt = eventstart if getattr(eventstart, 'tzinfo', None) else eventstart.replace(tzinfo=timezone.utc)
+      game_key = f"{h_norm}_{a_norm}_{utc_dt.strftime('%Y-%m-%dT%H')}"
+    else:
+      game_key = f"{h_norm}_{a_norm}"
+  return {
+      'name': name, 'odds': odds, 'prob': prob, 'stake': stake, 'sport': sport,
+      'bet_type': bet_type, 'eventstart': eventstart, 'notes': notes,
+      'bet_side': bet_side, 'game_key': game_key,
+  }
+
+
 @app.route('/add_open', methods=['POST'])
 def add_open():
   unsettled = _unsettled_finished_bets()
@@ -3092,60 +3171,81 @@ def add_open():
       f"<p><a href='{back_url}'>Back to open bets</a></p>",
       409,
     )
-  try:
-    name     = request.form.get('name', 'Bet')
-    odds     = _as_decimal_odds(request.form.get('odds'))
-    prob     = float(request.form.get('prob'))
-    stake    = float(request.form.get('stake'))
-    sport    = request.form.get('sport', '')
-    bet_type = request.form.get('bet_type', 'Moneyline')
-  except Exception:
+  fields = _parse_bet_form(request.form)
+  if fields is None:
     return redirect(url_for('index'))
-  eventstart = None
-  # Prefer eventstartutc (ISO UTC string from schedule page) — unambiguous timezone.
-  # Fall back to eventstart (datetime-local, browser local time, treated as naive).
-  utc_raw = request.form.get('eventstartutc', '').strip()
-  if utc_raw:
-    try:
-      eventstart = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
-      if not eventstart.tzinfo:
-        eventstart = eventstart.replace(tzinfo=timezone.utc)
-    except Exception:
-      pass
-  if eventstart is None:
-    eventstart_raw = request.form.get('eventstart', '')
-    if eventstart_raw:
-      try:
-        eventstart = datetime.strptime(eventstart_raw, "%Y-%m-%dT%H:%M")
-      except Exception:
-        pass
-  notes     = request.form.get('notes', '')
-  bet_side  = request.form.get('bet_side', '')
-  home_name = request.form.get('home_name', '')
-  away_name = request.form.get('away_name', '')
-  game_key  = ''
-  if home_name and away_name:
-    from odds_api import _normalize
-    h_norm = _normalize(home_name)
-    a_norm = _normalize(away_name)
-    # Include hour-precision UTC timestamp so same teams playing consecutive days
-    # (e.g. a 3-game series) each get a distinct key that matches the odds snapshot exactly.
-    if eventstart:
-      utc_dt = eventstart if getattr(eventstart, 'tzinfo', None) else eventstart.replace(tzinfo=timezone.utc)
-      game_key = f"{h_norm}_{a_norm}_{utc_dt.strftime('%Y-%m-%dT%H')}"
-    else:
-      game_key = f"{h_norm}_{a_norm}"
-  b = OpenBet(name=name, odds=odds, prob=prob, stake=stake, sport=sport, bet_type=bet_type,
-              eventstart=eventstart, notes=notes, game_key=game_key, bet_side=bet_side)
+  b = OpenBet(**fields)
   db.session.add(b)
   settings = Setting.query.first()
   if settings:
-    settings.bankroll = round(settings.bankroll - stake, 2)
+    settings.bankroll = round(settings.bankroll - fields['stake'], 2)
   db.session.commit()
   next_url = request.form.get('next', '').strip()
   if next_url and next_url.startswith('/') and not next_url.startswith('//'):
     return redirect(next_url)
   return redirect(url_for('index'))
+
+
+def _ev_pct(odds, prob):
+  """Same EV-percent formula used in _best_market_pick/_mlb_candidates:
+  expected profit per $1 staked, at decimal `odds` and win probability
+  `prob`. Used to rank the Bet Sheet by best expected return."""
+  b = (odds or 0) - 1.0
+  if b <= 0 or prob is None:
+    return 0.0
+  return round((b * prob - (1 - prob)) * 100, 1)
+
+
+@app.route('/bet_sheet/add', methods=['POST'])
+def bet_sheet_add():
+  fields = _parse_bet_form(request.form)
+  if fields is None:
+    return _redirect_next('bet_sheet')
+  fields['ev_pct'] = _ev_pct(fields['odds'], fields['prob'])
+  db.session.add(DraftBet(**fields))
+  db.session.commit()
+  return _redirect_next('bet_sheet')
+
+
+@app.route('/bet_sheet')
+def bet_sheet():
+  drafts = DraftBet.query.order_by(DraftBet.ev_pct.desc()).all()
+  return render_template('bet_sheet.html', drafts=drafts)
+
+
+@app.route('/bet_sheet/remove/<int:draft_id>', methods=['POST'])
+def bet_sheet_remove(draft_id):
+  d = DraftBet.query.get_or_404(draft_id)
+  db.session.delete(d)
+  db.session.commit()
+  return _redirect_next('bet_sheet')
+
+
+@app.route('/bet_sheet/place', methods=['POST'])
+def bet_sheet_place():
+  unsettled = _unsettled_finished_bets()
+  if unsettled:
+    names = ', '.join(b.name for b, _info in unsettled)
+    return (
+      f"<p>Close out finished bet(s) before placing new ones: {names}.</p>"
+      f"<p><a href='{url_for('bet_sheet')}'>Back to Bet Sheet</a></p>",
+      409,
+    )
+  ids = [int(i) for i in request.form.getlist('bet_ids') if i.isdigit()]
+  if ids:
+    drafts = DraftBet.query.filter(DraftBet.id.in_(ids)).all()
+    settings = Setting.query.first()
+    for d in drafts:
+      b = OpenBet(name=d.name, odds=d.odds, prob=d.prob, stake=d.stake, sport=d.sport,
+                  bet_type=d.bet_type, eventstart=d.eventstart, notes=d.notes,
+                  game_key=d.game_key, bet_side=d.bet_side)
+      db.session.add(b)
+      if settings:
+        settings.bankroll = round(settings.bankroll - d.stake, 2)
+      db.session.delete(d)
+    db.session.commit()
+  return redirect(url_for('bet_sheet'))
+
 
 def _redirect_next(default_endpoint='index'):
   """Redirect to the same-site `next` path a form sent along (so acting on a
