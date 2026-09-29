@@ -1913,6 +1913,12 @@ body.embed-mode .container { padding-bottom: 0; }
   background: rgba(148,163,184,0.14); color: var(--text-muted);
   border: 1px solid var(--border);
 }
+.playoffs-badge {
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--orange-dim); color: var(--orange);
+  border: 1px solid rgba(251,79,20,0.30);
+}
 .games-section-hdr-upcoming { margin-top: 28px; padding: 18px 2px 14px; }
 
 /* ── Schedule page — completed games moved to the bottom of the week ─────

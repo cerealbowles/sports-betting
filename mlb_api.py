@@ -319,8 +319,18 @@ def _get_team_era_map():
     return result
 
 
+_DIVISION_ABBR = {
+    'American League East': 'AL East', 'American League Central': 'AL Central',
+    'American League West': 'AL West', 'National League East': 'NL East',
+    'National League Central': 'NL Central', 'National League West': 'NL West',
+}
+
+
 def _get_standings_splits():
-    """Returns {team_id: {'home': (W, L), 'away': (W, L)}} for all MLB teams."""
+    """Returns {team_id: {'home': (W, L), 'away': (W, L), 'rank_display': str}}
+    for all MLB teams. rank_display is a compact "AL East 1st" label built
+    from the same /standings response's division.name + divisionRank — no
+    extra fetch needed."""
     season = datetime.utcnow().year
     data = _cached_get(
         f"{MLB_API}/standings",
@@ -332,6 +342,7 @@ def _get_standings_splits():
     if not data:
         return result
     for division in data.get('records', []):
+        div_name = _DIVISION_ABBR.get((division.get('division') or {}).get('name', ''), '')
         for tr in division.get('teamRecords', []):
             tid = tr['team']['id']
             home_w = home_l = away_w = away_l = 0
@@ -341,7 +352,20 @@ def _get_standings_splits():
                     home_w, home_l = s.get('wins', 0), s.get('losses', 0)
                 elif stype == 'away':
                     away_w, away_l = s.get('wins', 0), s.get('losses', 0)
-            result[tid] = {'home': (home_w, home_l), 'away': (away_w, away_l)}
+            rank_display = None
+            div_rank = tr.get('divisionRank')
+            if div_name and div_rank:
+                try:
+                    n = int(div_rank)
+                    # Divisions max out at 5 teams, so n is always 1-5 in
+                    # practice — no need for the usual 11th/12th/13th "th"
+                    # special case.
+                    suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n, 'th')
+                    rank_display = f"{div_name} {n}{suffix}"
+                except (TypeError, ValueError):
+                    pass
+            result[tid] = {'home': (home_w, home_l), 'away': (away_w, away_l),
+                            'rank_display': rank_display}
     return result
 
 
@@ -650,6 +674,7 @@ def _build_team_info(side_data, side, recent, pitcher_stats, pitcher_logs, team_
         'losses':            rec.get('losses', 0),
         'split_w':           split_rec[0],
         'split_l':           split_rec[1],
+        'rank_display':      team_splits.get('rank_display'),
         'side':              side,
         'form':              recent.get(tid, []),
         'pitcher':           p_info,
@@ -831,6 +856,14 @@ def build_schedule_context(target_date=None):
                     if outs is not None and outs != 3:
                         inning_info += f" · {outs} out{'s' if outs != 1 else ''}"
 
+            # gameType is already in every raw response (_get_schedule_raw
+            # requests 'R,F,D,L,W' — regular season + wild card/division/
+            # league/World Series), just never read until now. seriesDescription
+            # gives a human label ('World Series', 'League Championship Series', …).
+            game_type       = game.get('gameType', 'R')
+            is_playoffs     = game_type != 'R'
+            game_type_label = game.get('seriesDescription') if is_playoffs else None
+
             # Series split (works for regular season and playoffs alike)
             series_num   = game.get('seriesGameNumber', 1)
             series_total = game.get('gamesInSeries', 1)
@@ -924,6 +957,8 @@ def build_schedule_context(target_date=None):
                 'home':          home,
                 'inning_info':   inning_info,
                 'series_info':   series_info,
+                'is_playoffs':   is_playoffs,
+                'game_type_label': game_type_label,
                 'linescore':     linescore,
                 'weather':       weather_api.get_game_weather(venue, 'mlb'),
                 'sport':         'MLB',

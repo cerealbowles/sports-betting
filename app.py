@@ -20,8 +20,10 @@ import json
 import os
 import math
 import re
+import time
 import threading
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 import mlb_api
 import mlb_model
 import nhl_api
@@ -2622,6 +2624,104 @@ _HUB_SPORTS = [
 ]
 
 
+def _hub_sport_data(sport, icon, href, today_str):
+  """One sport's slice of the Today hub: fetch its schedule, run the same
+  prep each sport's own page runs, and rank its recommendations. Runs
+  inside a worker thread (see index() below), so DB access is wrapped in
+  its own app context — Flask-SQLAlchemy's session is scoped per context,
+  not shared with the request thread that spawned this one. `href` is
+  resolved by the caller (url_for needs a request context, which a worker
+  thread doesn't have — only the app context this function pushes itself).
+  Never raises: a single sport's fetch failing (network hiccup, etc.)
+  degrades to an empty card instead of taking the whole hub down."""
+  try:
+    with app.app_context():
+      games_today = 0
+      top_picks = []
+
+      if sport == 'MLB':
+        schedule = mlb_api.build_schedule_context(target_date=today_str)
+        # No _upsert_predictions here — this is a read-only display, and
+        # writing from 6 threads at once against one SQLite file serializes
+        # (and can stall) on the DB's write lock. /mlb's own page, and the
+        # 2-hourly cache warmer, are the ones responsible for persisting
+        # this; the hub only needs to read what's already there.
+        _attach_graded_results(schedule, 'MLB')
+        games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+        all_candidates = _mlb_candidates(schedule)
+        best_bets = _mlb_best_bets(schedule, all_candidates)
+        ranked = sorted(best_bets or all_candidates[:5], key=lambda b: -b['adj_edge'])
+        for b in ranked[:5]:
+          top_picks.append({
+              'sport':         'MLB', 'icon': icon, 'href': href,
+              'matchup':       f"{b['away_abbr']} @ {b['home_abbr']}",
+              'pick_label':    b['pick_abbr'],
+              'market':        'ml',
+              'edge':          b['adj_edge'],
+              'ev_pct':        b['ev_pct'],
+              'amer_odds':     b['amer_odds'],
+              # Normalized to the shared edge-pos/edge-neutral palette (the
+              # other sports' _edge_recommendations already use it) rather
+              # than MLB schedule page's own kelly-strong/value/lean classes,
+              # which are scoped to mlb_schedule.html's own <style> block.
+              'k_label':       b['k_label'],
+              'k_cls':         'edge-pos' if b['adj_edge'] > 0 else 'edge-neutral',
+              'game_time_utc': b['game_time_utc'],
+          })
+      else:
+        if sport == 'NHL':
+          day_nav = _build_day_nav(0)
+          schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
+        elif sport == 'NBA':
+          day_nav = _build_day_nav(0)
+          schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
+        elif sport == 'WNBA':
+          day_nav = _build_day_nav(0)
+          schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
+        elif sport == 'NFL':
+          week_ctx = nfl_api.build_week_schedule_context()
+          schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
+        else:  # CFB
+          week_ctx = cfb_api.build_week_schedule_context()
+          schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
+
+        # See the MLB branch above re: no _upsert_predictions here.
+        _stamp_confidence_blend(schedule, sport)
+        _attach_graded_results(schedule, sport)
+        games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+        recommended = _edge_recommendations(schedule, sport, limit=5)
+        for r in recommended:
+          g = r['game']
+          top_picks.append({
+              'sport':         sport, 'icon': icon, 'href': href,
+              'matchup':       f"{g['away'].get('abbrev') or g['away'].get('abbr')} @ {g['home'].get('abbrev') or g['home'].get('abbr')}",
+              'pick_label':    r['pick_label'],
+              'market':        r['market'],
+              'edge':          r['edge'],
+              'ev_pct':        r['ev_pct'],
+              'amer_odds':     r['amer_odds'],
+              'k_label':       r['k_label'],
+              'k_cls':         r['k_cls'],
+              'game_time_utc': g.get('game_time_utc', ''),
+          })
+  except Exception:
+    games_today, top_picks = 0, []
+
+  summary = {'sport': sport, 'icon': icon, 'href': href,
+             'games_today': games_today, 'top_picks': top_picks[:3]}
+  return summary, top_picks
+
+
+_hub_cache = {'ts': 0.0, 'data': None}
+_HUB_CACHE_TTL = 60  # seconds — long enough to absorb refreshes/back-and-forth
+                     # navigation, short enough that a placed bet or a game
+                     # going live still shows up within a minute. Caches only
+                     # the computed sport data, never the rendered page — the
+                     # nav chrome (bankroll, open-bet/sheet counts) has to
+                     # reflect the current DB state on every request, not
+                     # whatever it was when the cache was last filled.
+
+
 @app.route('/')
 def index():
   """Today — a cross-sport hub. Pulls each sport's own recommendation list
@@ -2630,94 +2730,39 @@ def index():
   edge-ranked list, and shows a per-sport summary card linking to that
   sport's full schedule page for the detailed view. Read-only display: it
   doesn't persist daily_rank/game_key stamping the way visiting a sport's
-  own page does — those still happen only on /mlb, /nfl, etc."""
-  today = datetime.now(_ET).date()
-  today_str = today.strftime('%Y-%m-%d')
+  own page does — those still happen only on /mlb, /nfl, etc.
 
-  sport_summaries = []
-  unified_picks = []
+  The 6 sports' fetches are independent network+DB work, so they run in
+  parallel via a thread pool rather than one after another — sequentially
+  this page was paying the full cold-cache cost of every sport, one at a
+  time, on every visit (schedule data's TTL is only 2 min, well under the
+  cache-warmer's 2-hour cadence). A short-lived result cache on top means
+  repeat visits inside that window don't redo any of it."""
+  now = time.time()
+  if _hub_cache['data'] is not None and (now - _hub_cache['ts']) < _HUB_CACHE_TTL:
+    sport_summaries, unified_picks, today_display = _hub_cache['data']
+  else:
+    today = datetime.now(_ET).date()
+    today_str = today.strftime('%Y-%m-%d')
 
-  for sport, icon, endpoint in _HUB_SPORTS:
-    href = url_for(endpoint)
-    games_today = 0
-    top_picks = []
+    with ThreadPoolExecutor(max_workers=len(_HUB_SPORTS)) as pool:
+      futures = [pool.submit(_hub_sport_data, sport, icon, url_for(endpoint), today_str)
+                 for sport, icon, endpoint in _HUB_SPORTS]
+      results = [f.result() for f in futures]
 
-    if sport == 'MLB':
-      schedule = mlb_api.build_schedule_context(target_date=today_str)
-      _upsert_predictions(schedule, 'MLB')
-      _attach_graded_results(schedule, 'MLB')
-      games_today = sum(len(day.get('games', [])) for day in (schedule or []))
-      all_candidates = _mlb_candidates(schedule)
-      best_bets = _mlb_best_bets(schedule, all_candidates)
-      ranked = sorted(best_bets or all_candidates[:5], key=lambda b: -b['adj_edge'])
-      for b in ranked[:5]:
-        top_picks.append({
-            'sport':         'MLB', 'icon': icon, 'href': href,
-            'matchup':       f"{b['away_abbr']} @ {b['home_abbr']}",
-            'pick_label':    b['pick_abbr'],
-            'market':        'ml',
-            'edge':          b['adj_edge'],
-            'ev_pct':        b['ev_pct'],
-            'amer_odds':     b['amer_odds'],
-            # Normalized to the shared edge-pos/edge-neutral palette (the
-            # other sports' _edge_recommendations already use it) rather
-            # than MLB schedule page's own kelly-strong/value/lean classes,
-            # which are scoped to mlb_schedule.html's own <style> block.
-            'k_label':       b['k_label'],
-            'k_cls':         'edge-pos' if b['adj_edge'] > 0 else 'edge-neutral',
-            'game_time_utc': b['game_time_utc'],
-        })
-    else:
-      if sport == 'NHL':
-        day_nav = _build_day_nav(0)
-        schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
-      elif sport == 'NBA':
-        day_nav = _build_day_nav(0)
-        schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
-      elif sport == 'WNBA':
-        day_nav = _build_day_nav(0)
-        schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
-      elif sport == 'NFL':
-        week_ctx = nfl_api.build_week_schedule_context()
-        schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
-      else:  # CFB
-        week_ctx = cfb_api.build_week_schedule_context()
-        schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
+    sport_summaries = [summary for summary, _picks in results]
+    unified_picks = [p for _summary, picks in results for p in picks]
+    unified_picks = [p for p in unified_picks if p['edge'] > 0]
+    unified_picks.sort(key=lambda p: -p['edge'])
+    unified_picks = unified_picks[:12]
 
-      _upsert_predictions(schedule, sport)
-      _stamp_confidence_blend(schedule, sport)
-      _attach_graded_results(schedule, sport)
-      games_today = sum(len(day.get('games', [])) for day in (schedule or []))
-      recommended = _edge_recommendations(schedule, sport, limit=5)
-      for r in recommended:
-        g = r['game']
-        top_picks.append({
-            'sport':         sport, 'icon': icon, 'href': href,
-            'matchup':       f"{g['away'].get('abbrev') or g['away'].get('abbr')} @ {g['home'].get('abbrev') or g['home'].get('abbr')}",
-            'pick_label':    r['pick_label'],
-            'market':        r['market'],
-            'edge':          r['edge'],
-            'ev_pct':        r['ev_pct'],
-            'amer_odds':     r['amer_odds'],
-            'k_label':       r['k_label'],
-            'k_cls':         r['k_cls'],
-            'game_time_utc': g.get('game_time_utc', ''),
-        })
+    try:
+      today_display = today.strftime('%A, %B %-d')
+    except Exception:
+      today_display = today.strftime('%A, %B %d')
 
-    sport_summaries.append({
-        'sport': sport, 'icon': icon, 'href': href,
-        'games_today': games_today, 'top_picks': top_picks[:3],
-    })
-    unified_picks.extend(top_picks)
-
-  unified_picks = [p for p in unified_picks if p['edge'] > 0]
-  unified_picks.sort(key=lambda p: -p['edge'])
-  unified_picks = unified_picks[:12]
-
-  try:
-    today_display = today.strftime('%A, %B %-d')
-  except Exception:
-    today_display = today.strftime('%A, %B %d')
+    _hub_cache['data'] = (sport_summaries, unified_picks, today_display)
+    _hub_cache['ts'] = now
 
   return render_template('today.html', today_display=today_display,
                          sport_summaries=sport_summaries, top_picks=unified_picks)
