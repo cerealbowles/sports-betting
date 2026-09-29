@@ -1640,19 +1640,19 @@ def _recompute_movement_stats(sport='MLB'):
         bkt = [p for p in resolved if p.movement_profile == label]
         n = len(bkt)
         if n == 0:
-            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
             continue
         fav_home = [(p.home_prob or 0.5) >= 0.5 for p in bkt]
         wins = sum(1 for p, fh in zip(bkt, fav_home) if fh == bool(p.home_won))
         win_rate = wins / n
         if n < MIN_N:
-            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
             continue
         avg_model = sum((p.home_prob if fh else 1.0 - p.home_prob) for p, fh in zip(bkt, fav_home)) / n
         raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
         alpha      = min(n / 50.0, 1.0)
         correction = round(raw_corr * SHRINKAGE * alpha, 5)
-        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
 
     with _MOVEMENT_LOCK:
         _MOVEMENT_STATS[sport] = new_stats
@@ -1677,10 +1677,12 @@ def _movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
 
 
 def _movement_stat(movement_profile, sport='MLB'):
-    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the MOVE chip."""
+    """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int} for the
+    MOVE bar — wins/n gives an exact record (e.g. "9-8") instead of a bare
+    percentage, which reads as more precise than a small sample supports."""
     with _MOVEMENT_LOCK:
         stat = (_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
-    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0)}
 
 
 app.jinja_env.globals['movement_stat'] = _movement_stat
@@ -1784,19 +1786,19 @@ def _recompute_spread_movement_stats(sport='MLB'):
         bkt = [p for p in resolved if p.spread_movement_profile == label]
         n = len(bkt)
         if n == 0:
-            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
             continue
         pick_home = [(p.spread_cover_prob or 0.5) >= 0.5 for p in bkt]
         wins = sum(1 for p, ph in zip(bkt, pick_home) if ph == bool(p.spread_covered))
         win_rate = wins / n
         if n < MIN_N:
-            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
             continue
         avg_model = sum((p.spread_cover_prob if ph else 1.0 - p.spread_cover_prob) for p, ph in zip(bkt, pick_home)) / n
         raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
         alpha      = min(n / 50.0, 1.0)
         correction = round(raw_corr * SHRINKAGE * alpha, 5)
-        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
 
     with _MOVEMENT_LOCK:
         _SPREAD_MOVEMENT_STATS[sport] = new_stats
@@ -1823,19 +1825,19 @@ def _recompute_total_movement_stats(sport='MLB'):
         bkt = [p for p in resolved if p.total_movement_profile == label]
         n = len(bkt)
         if n == 0:
-            new_stats[label] = {'win_rate': None, 'n': 0, 'correction': 0.0}
+            new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
             continue
         pick_over = [(p.total_over_prob or 0.5) >= 0.5 for p in bkt]
         wins = sum(1 for p, po in zip(bkt, pick_over) if po == bool(p.total_went_over))
         win_rate = wins / n
         if n < MIN_N:
-            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': 0.0}
+            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
             continue
         avg_model = sum((p.total_over_prob if po else 1.0 - p.total_over_prob) for p, po in zip(bkt, pick_over)) / n
         raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
         alpha      = min(n / 50.0, 1.0)
         correction = round(raw_corr * SHRINKAGE * alpha, 5)
-        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'correction': correction}
+        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
 
     with _MOVEMENT_LOCK:
         _TOTAL_MOVEMENT_STATS[sport] = new_stats
@@ -1868,17 +1870,19 @@ def _total_movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
 
 
 def _spread_movement_stat(movement_profile, sport='MLB'):
-    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the Spread MOVE bar."""
+    """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int} for the
+    Spread MOVE bar."""
     with _MOVEMENT_LOCK:
         stat = (_SPREAD_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
-    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0)}
 
 
 def _total_movement_stat(movement_profile, sport='MLB'):
-    """Jinja-accessible {'win_rate': pct|None, 'n': int} for the Total MOVE bar."""
+    """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int} for the
+    Total MOVE bar."""
     with _MOVEMENT_LOCK:
         stat = (_TOTAL_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
-    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0)}
+    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0)}
 
 
 app.jinja_env.globals['spread_movement_stat'] = _spread_movement_stat

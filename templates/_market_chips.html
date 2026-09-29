@@ -289,25 +289,36 @@
 
     {# Movement — pre-game odds-movement category per market (odds_history.
        classify_movement/classify_spread_movement/classify_total_movement)
-       plus that category's real historical win-rate/N (movement_stat()/
+       plus that category's real historical win-loss record (movement_stat()/
        spread_movement_stat()/total_movement_stat(), app.py) once enough
-       resolved games exist to trust it. _for means the market moved toward
-       the pick over time; _against means it moved away — colored green/red
-       the same way the chips above color an edge. A thin full-width strip
-       rather than a 4th grid chip (the chip grid is a fixed 3 columns — a
-       4th item there wraps to its own row and leaves empty slots beside
-       it). Up to 3 independent bars — a game can have 0, 1, 2, or 3
-       depending on what's classified for each market. Skipped entirely for
-       no_data/static (nothing informative to show) or no profile yet
-       (insufficient snapshot history so far today). #}
+       resolved games exist to trust it.
+
+       Wording notes (this got confusing in testing, worth keeping explicit):
+       "toward pick"/"away from pick" is relative to whichever side THIS
+       game's pick is — not a fixed team, and the record shown is a
+       league-wide stat across every {sport} pick that ever showed this
+       exact pattern, not specific to either team in this game. Showing an
+       exact W-L record instead of a bare percentage since a decimal like
+       "52.9%" reads as more precise than a small sample (e.g. n=17)
+       actually supports.
+
+       Colored green/red the same way the chips above color an edge. A
+       thin full-width strip rather than a 4th grid chip (the chip grid is
+       a fixed 3 columns — a 4th item there wraps to its own row and leaves
+       empty slots beside it). Up to 3 independent bars — a game can have
+       0, 1, 2, or 3 depending on what's classified for each market.
+       Skipped entirely for no_data/static (nothing informative to show) or
+       no profile yet (insufficient snapshot history so far today). #}
     {% macro movement_bar(profile, stat, label) %}
     {% if profile and profile not in ('no_data', 'static') %}
     {% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
     {% set dir = 'for' if profile.endswith('_for') else ('against' if profile.endswith('_against') else none) %}
-    <div class="mc-move-bar" title="{{ label }}: {{ shape }}{{ ' (' ~ dir ~ ' the pick)' if dir }}{% if stat.n %} — {{ stat.win_rate }}% win rate over {{ stat.n }} resolved game{{ 's' if stat.n != 1 }}{% else %} — not enough history yet to trust{% endif %}">
+    {% set dir_phrase = 'toward the pick' if dir == 'for' else ('away from the pick' if dir == 'against' else none) %}
+    {% set losses = stat.n - stat.wins %}
+    <div class="mc-move-bar" title="{{ label }}: {{ shape }}{{ ' — line moved ' ~ dir_phrase if dir_phrase }}. {% if stat.n %}Every {{ game.sport }} pick with this exact pattern has gone {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%) — league-wide, not specific to either team here.{% else %}Not enough history yet to trust — too new to show a record.{% endif %}">
         <span class="mc-move-t">{{ label }}</span>
-        <span class="mc-move-shape{{ ' edge-pos' if dir == 'for' else (' edge-neg' if dir == 'against' else '') }}">{{ shape }}{{ ' · ' ~ dir if dir }}</span>
-        <span class="mc-move-stat{{ '' if stat.n else ' mc-side-muted' }}">{% if stat.n %}{{ stat.win_rate }}% win rate ({{ stat.n }}){% else %}new · no history yet{% endif %}</span>
+        <span class="mc-move-shape{{ ' edge-pos' if dir == 'for' else (' edge-neg' if dir == 'against' else '') }}">{{ shape }}{{ ' · ' ~ dir_phrase if dir_phrase }}</span>
+        <span class="mc-move-stat{{ '' if stat.n else ' mc-side-muted' }}">{% if stat.n %}Similar picks: {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%){% else %}new · no history yet{% endif %}</span>
     </div>
     {% endif %}
     {% endmacro %}
