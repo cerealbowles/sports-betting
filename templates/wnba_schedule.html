@@ -59,6 +59,7 @@
             {% endif %}
             <div class="game-header-right">
                 {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
+                {% if game.is_playoffs %}<span class="playoffs-badge" title="{{ game.game_type_label or 'Playoffs' }}">{{ game.game_type_label or 'Playoffs' }}</span>{% endif %}
                 {% for bet in game.open_bets or [] %}<span class="open-bet-pill" title="Open bet: {{ bet.name }}">{{ bet.name | bet_pill_label }} · ${{ '%.2f' % bet.stake }} → ${{ '%.2f' % (bet | bet_return) }}</span>{% endfor %}
                 {{ edge_star(game) }}
             </div>
@@ -71,7 +72,7 @@
             <div class="sb-team sb-away">
                 <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
                 <div class="sb-team-info">
-                    <div class="sb-name">{{ game.away.name }}</div>
+                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
                     <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}</div>
                 </div>
             </div>
@@ -90,7 +91,7 @@
             <!-- Home -->
             <div class="sb-team sb-home">
                 <div class="sb-team-info">
-                    <div class="sb-name">{{ game.home.name }}</div>
+                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
                     <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}</div>
                 </div>
                 <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
