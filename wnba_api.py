@@ -25,12 +25,13 @@ def _event_date_et(date_str):
         return ''
 
 ESPN_WNBA = "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard"
+ESPN_WNBA_STANDINGS = "https://site.api.espn.com/apis/v2/sports/basketball/wnba/standings"
 
 _cache = {}
 # scoreboard: 120s matches nfl_api.py/get_live_scores()'s TTL — live-game
 # state (clock/period/score) needs to be fresh on manual refresh.
 # season_log: 1 hour — team season stats don't need live-game freshness.
-_TTL = {'scoreboard': 120, 'season_log': 3600, 'prior_season_stats': 24 * 3600}
+_TTL = {'scoreboard': 120, 'season_log': 3600, 'prior_season_stats': 24 * 3600, 'standings': 3600}
 
 
 def _parse_linescores(comp, regulation_periods=4):
@@ -103,6 +104,24 @@ def _get_wnba_season():
     season. Jan-Apr is the offseason; use the season that just finished."""
     today = datetime.now(_ET).date()
     return today.year if today.month >= 5 else today.year - 1
+
+
+def _get_standings_seeds():
+    """Returns {team_id: playoff_seed} across both conferences. WNBA seeds
+    are league-wide 1-8 (not per-conference) even though ESPN's standings
+    response groups entries under Eastern/Western Conference — 'playoffSeed'
+    on each entry's stats array is already the number that matters."""
+    data = _cached_get(ESPN_WNBA_STANDINGS, {}, 'wnba_standings', _TTL['standings'])
+    seeds = {}
+    if not data:
+        return seeds
+    for conf in data.get('children', []):
+        for entry in (conf.get('standings') or {}).get('entries', []):
+            tid = entry.get('team', {}).get('id')
+            seed = next((s.get('value') for s in entry.get('stats', []) if s.get('name') == 'playoffSeed'), None)
+            if tid and seed:
+                seeds[tid] = int(seed)
+    return seeds
 
 
 # Below this many current-season games played, a team's win%/split/ppg
@@ -410,11 +429,12 @@ def get_live_game_states(date_str=None):
 
 # ── Schedule context ───────────────────────────────────────────────────────────
 
-def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None):
+def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, seeds=None):
     """Builds one game's full display dict — teams, live state, model, odds.
     Shared by build_schedule_context() (the /wnba page and the daily-digest
     cache warmer)."""
     from odds_api import _normalize
+    seeds = seeds or {}
 
     comp = event.get('competitions', [{}])[0]
     venue_obj = comp.get('venue', {})
@@ -462,6 +482,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None):
             'split_w':     split_w,
             'split_l':     split_l,
             'split_label': split_label,
+            'rank_display': str(seeds[team.get('id')]) if team.get('id') in seeds else None,
             'side':        side,
             'form':        [],
             'score':       competitor.get('score'),
@@ -554,6 +575,10 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None):
         # game_predictions — min-effort preseason results would otherwise
         # corrupt the Model Performance page's accuracy/calibration tracking.
         'is_preseason':  event.get('season', {}).get('type') == 1,
+        'is_playoffs':   event.get('season', {}).get('type') == 3,
+        # e.g. "First Round - Game 2" — ESPN's per-event note headline,
+        # same idea as MLB's seriesDescription.
+        'game_type_label': next((n.get('headline') for n in comp.get('notes', []) if n.get('headline')), None),
     }
 
 
@@ -591,8 +616,9 @@ def build_schedule_context(target_date=None):
     team_stats   = _compute_team_season_stats(game_log)
     prior_stats  = _get_prior_season_team_stats(season - 1)
     wnba_odds_map = odds_api.get_odds_map('wnba')
+    seeds = _get_standings_seeds()
 
-    games = [_build_game(event, team_stats, game_log, wnba_odds_map, prior_stats) for event in today_events]
+    games = [_build_game(event, team_stats, game_log, wnba_odds_map, prior_stats, seeds) for event in today_events]
 
     try:
         date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')

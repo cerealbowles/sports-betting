@@ -241,7 +241,19 @@ def get_movement(sport, game_key):
         return {}
 
 
-def get_latest(sport, game_key, game_start=None):
+# Which odds_snapshot columns represent "home_odds"/"away_odds" for a given
+# bet market — get_latest/get_closing_line are used for CLV/line-move on the
+# bet's own price, which for a Spread bet is the spread price, not the
+# moneyline. Passing the wrong market here compares two unrelated prices and
+# produces bogus CLV (e.g. a spread bet's -102 vs the moneyline's -225).
+_MARKET_COLS = {
+    'moneyline': ('home_odds', 'away_odds'),
+    'spread':    ('home_spread_price', 'away_spread_price'),
+    'total':     ('over_odds', 'under_odds'),
+}
+
+
+def get_latest(sport, game_key, game_start=None, market='moneyline'):
     """Most recent pre-game snapshot — used for live CLV/line-move on open bets.
 
     Modern game_keys are hour-bucketed (home_away_YYYY-MM-DDTHH), so an exact
@@ -255,29 +267,37 @@ def get_latest(sport, game_key, game_start=None):
     format existed) are ambiguous across multiple meetings between the same
     teams, so those still fall back to a day-scoped LIKE match against
     game_start (or today, if unknown).
+
+    `market` selects which stored price pair to read ('moneyline', 'spread',
+    or 'total') — see _MARKET_COLS. The result is always keyed 'home_odds'/
+    'away_odds' (or, for 'total', those keys actually hold over/under) so
+    callers keep using f'{bet_side}_odds' unchanged.
     """
+    col_home, col_away = _MARKET_COLS.get(market, _MARKET_COLS['moneyline'])
     try:
         with _conn() as c:
             if _HAS_HOUR_BUCKET.search(game_key or ''):
                 row = c.execute(
-                    'SELECT home_odds, away_odds FROM odds_snapshot '
+                    f'SELECT {col_home}, {col_away} FROM odds_snapshot '
                     'WHERE sport=? AND game_key=? ORDER BY id DESC LIMIT 1',
                     (sport, game_key),
                 ).fetchone()
             else:
                 lower = _et_day_start_utc(game_start) if game_start else _today_et_start_utc()
                 row = c.execute(
-                    'SELECT home_odds, away_odds FROM odds_snapshot '
+                    f'SELECT {col_home}, {col_away} FROM odds_snapshot '
                     'WHERE sport=? AND (game_key=? OR game_key LIKE ?) AND recorded_at >= ? '
                     'ORDER BY id DESC LIMIT 1',
                     (sport, game_key, game_key + '_%', lower),
                 ).fetchone()
-        return {'home_odds': row[0], 'away_odds': row[1]} if row else None
+        if not row or row[0] is None or row[1] is None:
+            return None
+        return {'home_odds': row[0], 'away_odds': row[1]}
     except Exception:
         return None
 
 
-def get_closing_line(sport, game_key, before_dt):
+def get_closing_line(sport, game_key, before_dt, market='moneyline'):
     """Last snapshot before before_dt (game start) for this exact game.
 
     The upper bound (before_dt) always applies, so in-game/post-game odds
@@ -287,13 +307,16 @@ def get_closing_line(sport, game_key, before_dt):
     Legacy bare keys (no hour bucket) are ambiguous across multiple meetings
     between the same teams, so those still get a same-ET-day lower bound:
     a PHI game on 5/20 will never see 5/19 snapshots.
+
+    `market` — see get_latest().
     """
+    col_home, col_away = _MARKET_COLS.get(market, _MARKET_COLS['moneyline'])
     try:
         cutoff = before_dt.isoformat() if hasattr(before_dt, 'isoformat') else str(before_dt)
         with _conn() as c:
             if _HAS_HOUR_BUCKET.search(game_key or ''):
                 row = c.execute(
-                    'SELECT home_odds, away_odds FROM odds_snapshot '
+                    f'SELECT {col_home}, {col_away} FROM odds_snapshot '
                     'WHERE sport=? AND game_key=? AND recorded_at <= ? '
                     'ORDER BY id DESC LIMIT 1',
                     (sport, game_key, cutoff),
@@ -301,13 +324,15 @@ def get_closing_line(sport, game_key, before_dt):
             else:
                 lower = _et_day_start_utc(before_dt)
                 row = c.execute(
-                    'SELECT home_odds, away_odds FROM odds_snapshot '
+                    f'SELECT {col_home}, {col_away} FROM odds_snapshot '
                     'WHERE sport=? AND (game_key=? OR game_key LIKE ?) '
                     'AND recorded_at >= ? AND recorded_at <= ? '
                     'ORDER BY id DESC LIMIT 1',
                     (sport, game_key, game_key + '_%', lower, cutoff),
                 ).fetchone()
-        return {'home_odds': row[0], 'away_odds': row[1]} if row else None
+        if not row or row[0] is None or row[1] is None:
+            return None
+        return {'home_odds': row[0], 'away_odds': row[1]}
     except Exception:
         return None
 

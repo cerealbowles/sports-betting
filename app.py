@@ -2783,15 +2783,20 @@ def _annotate_open_bets(open_bets):
 
         bet.cashout_value = None  # estimated cashout amount at current market
 
-        # odds_history only ever snapshots moneyline home/away odds — a Total
-        # bet's bet_side is 'over'/'under' (no matching key in that snapshot),
-        # so CLV/line-move tracking only applies to home/away sides.
+        # A Total bet's bet_side is 'over'/'under' (no matching column pair
+        # in the snapshot's home/away shape), so CLV/line-move tracking only
+        # applies to home/away sides (Moneyline and Spread bets).
         if bet.bet_side not in ('home', 'away'):
             continue
+        # Compare the bet's own price against the SAME market's snapshot —
+        # a Spread bet's odds (e.g. -102) must be checked against the spread
+        # price history, not the moneyline, or the "current" price is for a
+        # different bet entirely and the resulting CLV is meaningless.
+        market = 'spread' if (bet.bet_type or '').strip().lower() == 'spread' else 'moneyline'
 
         if not game_started:
             # Pre-game: show live pre-game line movement
-            latest = _oh.get_latest(sk, bet.game_key, game_start=es)
+            latest = _oh.get_latest(sk, bet.game_key, game_start=es, market=market)
             if latest:
                 ca  = latest[f'{bet.bet_side}_odds']
                 mkt = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
@@ -2805,7 +2810,7 @@ def _annotate_open_bets(open_bets):
         else:
             # Post-start: show closing line — ignore in-game odds entirely
             if es:
-                snap = _oh.get_closing_line(sk, bet.game_key, es)
+                snap = _oh.get_closing_line(sk, bet.game_key, es, market=market)
                 if snap:
                     ca = snap[f'{bet.bet_side}_odds']
                     closing_suggestions[bet.id] = ca
@@ -3759,7 +3764,8 @@ def close_open(bet_id):
       _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba'}
       sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
       es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
-      snap = _oh.get_closing_line(sk, b.game_key, es)
+      market = 'spread' if (b.bet_type or '').strip().lower() == 'spread' else 'moneyline'
+      snap = _oh.get_closing_line(sk, b.game_key, es, market=market)
       if snap:
         ca = snap[f'{b.bet_side}_odds']
         closing_line = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
