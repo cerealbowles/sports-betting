@@ -134,8 +134,13 @@
             <div class="mc-chips" style="grid-template-columns:1fr;">
                 <div class="mc-chip mc-confidence-{{ eb_conf_level }}{{ ' mc-hot' if eb_hot }}">
                     <span class="mc-t">{{ eb_label }}</span>
-                    <span class="mc-big">{{ '+' if eb_edge >= 0 }}{{ eb_edge | round(1) }}</span>
-                    <span class="mc-side">{{ eb_pill }}</span>
+                    {# Headline is the actual bet placed (e.g. "CWS +1.5") — not
+                       the edge number, which used to sit here and read like a
+                       spread/line value itself, confusing it with the real
+                       market spread (e.g. "CWS +1.5" vs an unrelated "+2.1"
+                       edge score shown at the same size right above it). #}
+                    <span class="mc-big">{{ eb_pill }}</span>
+                    <span class="mc-side">{{ '+' if eb_edge >= 0 }}{{ eb_edge | round(1) }} edge</span>
                     <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < eb_conf_pips }}"></i>{% endfor %}</span>
                     <span class="mc-foot"><b class="mc-a">{{ eb_mkt_pct | round(1) }}</b><span class="mc-ar">→</span><b class="mc-b">{{ eb_mdl_pct | round(1) }}%</b></span>
                 </div>
