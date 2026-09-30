@@ -2477,6 +2477,28 @@ app.jinja_env.globals['spread_cover_prob'] = spread_proxy.cover_prob
 app.jinja_env.globals['spread_validated'] = spread_proxy.is_validated
 app.jinja_env.globals['vig_free_pair'] = _vig_free_implied
 
+# Sanity cap on a fetched spread's size, by sport — low-scoring sports have a
+# tight realistic band (MLB run lines are ~1.5, occasionally 2.5 for a big
+# pitching mismatch; NHL puck lines are almost always 1.5) so a double-digit
+# value there is bad upstream data (e.g. a team-name mismatch in
+# odds_api._fanduel_spread grabbing the wrong outcome), not a real market
+# line, and offering a bet on it would let a bogus spread get recorded as a
+# real one (see the +13.5 MLB "run line" bug this guards against). Sports
+# with legitimately wide spreads (NFL/CFB/NBA/WNBA) are left uncapped.
+_SPREAD_SANITY_CAP = {'MLB': 3.5, 'NHL': 3.5}
+
+
+def spread_is_sane(sport, home_spread):
+    """False if home_spread is outside the realistic band for this sport —
+    gates whether the Spread bet-type row/buttons render at all."""
+    if home_spread is None:
+        return False
+    cap = _SPREAD_SANITY_CAP.get((sport or '').upper())
+    return cap is None or abs(home_spread) <= cap
+
+
+app.jinja_env.globals['spread_is_sane'] = spread_is_sane
+
 # spread_model.py — real from-scratch margin regression (see its docstring),
 # now the live source for the Spread chip/bet row, replacing the spread_proxy
 # calls above wherever a real game.model.factors list is available. The

@@ -53,16 +53,6 @@ function bcFlip(el) {
     }, 170);
 }
 
-function bcEdit(el) {
-  var card = el.closest('.bet-card');
-  if (!card || card.classList.contains('bc-flipping')) return;
-  bcFlip(el);
-  setTimeout(function () {
-    var d = card.querySelector('.bc-details');
-    if (d) bdmShow(d.querySelector('.bdm-view'), 'edit');
-  }, 180);
-}
-
 function bcOpenGame(el) {
   var url = el.getAttribute('data-game-url');
   if (url) window.location.href = url;

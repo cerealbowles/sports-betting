@@ -9,7 +9,7 @@
    Expects `game` in context (with game.sport, game.odds.home_spread /
    .home_spread_price / .away_spread_price, game.home/.away .name/.abbr
    or .abbrev/.logo_url, game.model.factors). #}
-{% if game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none %}
+{% if game.odds and game.odds.home_spread is not none and game.odds.home_spread_price is not none and game.odds.away_spread_price is not none and spread_is_sane(game.sport, game.odds.home_spread) %}
 {% set sb_away_abbr = game.away.abbrev or game.away.abbr %}
 {% set sb_home_abbr = game.home.abbrev or game.home.abbr %}
 {% set sb_vf = vig_free_pair(game.odds.home_spread_price, game.odds.away_spread_price) %}

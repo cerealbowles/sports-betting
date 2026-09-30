@@ -103,6 +103,23 @@ def _get_schedule_raw(target_date=None):
     return _cached_get(f"{NHL_API}/schedule/now", 'nhl_sched_now', _TTL['schedule'])
 
 
+def _full_team_name(team_data):
+    """Reconstructs the "City Name" team name (e.g. "Pittsburgh Penguins")
+    from the NHL schedule endpoint's team object, which — unlike the
+    standings endpoint _build_team_info() reads its 'name' from — has no
+    combined 'name' field, only 'placeName' + 'commonName'. Without this,
+    get_live_scores()/get_live_game_states() silently fell back to the bare
+    abbreviation (e.g. "PIT") for their game_key, which never matched the
+    full-name game_key OpenBet rows are stored under (from
+    _build_team_info's 'name', built at bet-placement time via
+    _match_open_bets_to_games / add_open) — so the live scoreboard (and its
+    team logos) never rendered for any NHL open bet."""
+    place  = team_data.get('placeName', {}).get('default', '')
+    common = team_data.get('commonName', {}).get('default', '')
+    name = f"{place} {common}".strip()
+    return name or team_data.get('abbrev', '')
+
+
 def get_live_scores(date_str=None):
     """
     Returns {game_key: score_dict} for NHL games on `date_str` (YYYY-MM-DD ET,
@@ -123,8 +140,8 @@ def get_live_scores(date_str=None):
         for game in day.get('games', []):
             a_data = game.get('awayTeam', {})
             h_data = game.get('homeTeam', {})
-            h_name = h_data.get('name', {}).get('default', h_data.get('abbrev', ''))
-            a_name = a_data.get('name', {}).get('default', a_data.get('abbrev', ''))
+            h_name = _full_team_name(h_data)
+            a_name = _full_team_name(a_data)
             gk     = f"{_normalize(h_name)}_{_normalize(a_name)}"
             state  = game.get('gameState', '')
             if state in ('LIVE', 'CRIT'):
@@ -144,13 +161,11 @@ def get_live_scores(date_str=None):
                 'status':     status,
                 'away_abbr':  a_data.get('abbrev', ''),
                 'home_abbr':  h_data.get('abbrev', ''),
-                'away_logo':  f"https://assets.nhle.com/logos/nhl/svg/{a_data.get('abbrev', '')}_light.svg" if a_data.get('abbrev') else '',
-                'home_logo':  f"https://assets.nhle.com/logos/nhl/svg/{h_data.get('abbrev', '')}_light.svg" if h_data.get('abbrev') else '',
+                'away_logo':  f"https://assets.nhle.com/logos/nhl/svg/{a_data.get('abbrev', '')}_light.svg" if a_data.get('abbrev') else None,
+                'home_logo':  f"https://assets.nhle.com/logos/nhl/svg/{h_data.get('abbrev', '')}_light.svg" if h_data.get('abbrev') else None,
                 'away_score': a_data.get('score'),
                 'home_score': h_data.get('score'),
                 'period':     period,
-                'away_logo':  f"https://assets.nhle.com/logos/nhl/svg/{a_data.get('abbrev', '')}_light.svg" if a_data.get('abbrev') else None,
-                'home_logo':  f"https://assets.nhle.com/logos/nhl/svg/{h_data.get('abbrev', '')}_light.svg" if h_data.get('abbrev') else None,
             }
     return scores
 
@@ -177,8 +192,8 @@ def get_live_game_states(date_str=None):
         for game in day.get('games', []):
             a_data = game.get('awayTeam', {})
             h_data = game.get('homeTeam', {})
-            h_name = h_data.get('name', {}).get('default', h_data.get('abbrev', ''))
-            a_name = a_data.get('name', {}).get('default', a_data.get('abbrev', ''))
+            h_name = _full_team_name(h_data)
+            a_name = _full_team_name(a_data)
             gk     = f"{_normalize(h_name)}_{_normalize(a_name)}"
             state  = game.get('gameState', '')
             if state in ('LIVE', 'CRIT'):
