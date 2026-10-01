@@ -130,9 +130,17 @@
         {% set eb_ct = confidence_tiers(b.sport) if eb_type_class == 'ml' else total_confidence_tiers(b.sport) %}
         {% set eb_conf_level = 'high' if eb_conf >= eb_ct.high else ('medium' if eb_conf >= eb_ct.medium else 'low') %}
         {% set eb_conf_pips = 6 if eb_conf >= eb_ct.pips[4] else (5 if eb_conf >= eb_ct.pips[3] else (4 if eb_conf >= eb_ct.pips[2] else (3 if eb_conf >= eb_ct.pips[1] else (2 if eb_conf >= eb_ct.pips[0] else 1)))) %}
+        {% set eb_line = b.name | bet_line_value if eb_type_class in ('spread', 'total') else none %}
         <div class="mc-wrap eb-typerow">
             <div class="mc-chips" style="grid-template-columns:1fr;">
                 <div class="mc-chip mc-confidence-{{ eb_conf_level }}{{ ' mc-hot' if eb_hot }}">
+                    {# Live win/loss indicator — populated by refreshScores() in
+                       _open_bets_scripts.html once the game goes Live/Final,
+                       comparing the current score against this bet's own side
+                       and line (bet_type_class decides home/away±line vs
+                       over/under vs plain moneyline). Hidden until then. #}
+                    <span class="bc-cover-badge" data-bet-id="{{ b.id }}" data-bet-type-class="{{ eb_type_class }}"
+                          data-bet-side="{{ b.bet_side or '' }}" data-bet-line="{{ eb_line if eb_line is not none else '' }}" hidden></span>
                     <span class="mc-t">{{ eb_label }}</span>
                     {# Headline is the actual bet placed (e.g. "CWS +1.5") — not
                        the edge number, which used to sit here and read like a

@@ -192,6 +192,38 @@ function closeDeleteBetModal() {
             + '<div class="sb-center">' + center + '</div>'
             + team('home', info.home_abbr, info.home_logo);
 
+          // Live win/loss badge — is this bet's own side currently covering?
+          // Only meaningful once there's a real score to compare against.
+          var badge = document.querySelector('.bc-cover-badge[data-bet-id="' + betId + '"]');
+          if (badge) {
+            if ((isLive || isFinal) && !isNaN(asN) && !isNaN(hsN)) {
+              var typeClass = badge.getAttribute('data-bet-type-class');
+              var line = parseFloat(badge.getAttribute('data-bet-line'));
+              var diff = null;
+              if (typeClass === 'ml') {
+                diff = betSide === 'home' ? hsN - asN : (betSide === 'away' ? asN - hsN : null);
+              } else if (typeClass === 'spread' && !isNaN(line)) {
+                diff = betSide === 'home' ? (hsN + line) - asN : (betSide === 'away' ? (asN + line) - hsN : null);
+              } else if (typeClass === 'total' && !isNaN(line)) {
+                var total = asN + hsN;
+                diff = betSide === 'over' ? total - line : (betSide === 'under' ? line - total : null);
+              }
+              if (diff === null) {
+                badge.hidden = true;
+              } else {
+                badge.hidden = false;
+                var cls = diff > 0 ? 'cover-win' : (diff < 0 ? 'cover-loss' : 'cover-push');
+                badge.className = 'bc-cover-badge ' + cls;
+                badge.textContent = diff > 0 ? '✓' : (diff < 0 ? '✕' : '–');
+                badge.title = isFinal
+                  ? (diff > 0 ? 'Won' : (diff < 0 ? 'Lost' : 'Push'))
+                  : (diff > 0 ? 'Currently winning' : (diff < 0 ? 'Currently losing' : 'Currently a push'));
+              }
+            } else {
+              badge.hidden = true;
+            }
+          }
+
           // Model-line scale labels + pick abbr
           document.querySelectorAll('.bc-away-abbr[data-bet-id="' + betId + '"]').forEach(function (n) { n.textContent = info.away_abbr; });
           document.querySelectorAll('.bc-home-abbr[data-bet-id="' + betId + '"]').forEach(function (n) { n.textContent = info.home_abbr; });

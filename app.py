@@ -2750,6 +2750,19 @@ app.jinja_env.globals['spread_factors_panel'] = spread_factors_panel
 app.jinja_env.globals['total_factors_panel'] = total_factors_panel
 
 
+_BET_LINE_RE = re.compile(r'([+-]?\d+(?:\.\d+)?)\s*$')
+
+
+@app.template_filter('bet_line_value')
+def _bet_line_value_filter(name):
+    """Pulls the numeric line back out of a bet's stored name ('CWS +1.5' ->
+    1.5, 'Over 8.5' -> 8.5) — there's no separate numeric column for it, the
+    line only ever existed as text in the pick name. Used to compute live
+    cover/win status against the current score (see bc-cover-badge)."""
+    m = _BET_LINE_RE.search(name or '')
+    return float(m.group(1)) if m else None
+
+
 @app.template_filter('bet_pill_label')
 def _bet_pill_label_filter(name):
     """Compact bet selection for the game-card pill: 'SEA Moneyline' -> 'SEA ML',
