@@ -89,7 +89,6 @@
                 {% if b.live_clv >= 0 %}{% set clvcls = 'clv-good' %}{% elif b.live_clv >= -2 %}{% set clvcls = 'clv-warn' %}{% else %}{% set clvcls = 'clv-alert' %}{% endif %}
                 <span class="clv-live {{ clvcls }}">{{ '▲' if b.live_clv > 0 else ('▼' if b.live_clv < 0 else '—') }} {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}% CLV{{ ' · check line' if b.live_clv < -2 else '' }}</span>
                 {% endif %}
-                <span class="bc-live-hdr" data-bet-id="{{ b.id }}"></span>
             </div>
         </div>
 

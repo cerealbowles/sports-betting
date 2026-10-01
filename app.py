@@ -5933,50 +5933,13 @@ def api_live_scores():
 
     score_map = _score_map_for_open_bets(open_bets)
 
-    import odds_history as _oh
-
-    def _amer_to_implied(amer):
-        try:
-            o = int(amer)
-            if o > 0:
-                return round(100 / (100 + o) * 100, 1)
-            else:
-                return round(-o / (-o + 100) * 100, 1)
-        except Exception:
-            return None
-
     result = {}
     for bet in open_bets:
         score_key = _GAME_KEY_TS_STRIP.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
         info = score_map.get(score_key)
         if not info:
             continue
-        entry = dict(info)
-        # Attach implied win probability for the bet's own side. Once the
-        # game is Live this is the actual current in-play moneyline
-        # (odds_history.save_live, written every odds refresh by
-        # odds_api.get_odds_map) — real market movement, e.g. CWS going up
-        # 4-0 shortens their live price and this % rises with it. Pre-game
-        # it falls back to the last pre-kickoff snapshot (CLV context).
-        #
-        # Sport keys don't match between the two tables without translating:
-        # bet.sport is 'MLB' but odds_history rows are written under the Odds
-        # API sport key ('baseball_mlb') — passing bet.sport straight through
-        # silently matched nothing.
-        if bet.bet_side in ('home', 'away'):
-            sk = _SPORT_ODDS_KEY.get((bet.sport or '').upper(), '')
-            if sk:
-                snap = None
-                if info.get('status') == 'Live':
-                    snap = _oh.get_live(sk, bet.game_key)
-                if not snap:
-                    snap = _oh.get_latest(sk, bet.game_key, game_start=bet.eventstart)
-                if snap:
-                    live_amer = snap.get(f'{bet.bet_side}_odds')
-                    if live_amer is not None:
-                        entry['live_odds']    = live_amer
-                        entry['live_implied'] = _amer_to_implied(live_amer)
-        result[str(bet.id)] = entry
+        result[str(bet.id)] = dict(info)
 
     return jsonify(result)
 
