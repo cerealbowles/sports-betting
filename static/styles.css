@@ -2272,6 +2272,11 @@ body.embed-mode .container { padding-bottom: 0; }
   white-space: nowrap;
 }
 
+.bc-fin-val .line-cell {
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
 .bc-fin-val {
   font-size: 0.83rem;
   font-weight: 700;
