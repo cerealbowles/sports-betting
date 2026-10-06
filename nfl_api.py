@@ -8,6 +8,7 @@ import odds_api
 import odds_history
 import nfl_model
 import football_total_model
+import nfl_stats_db
 
 _ET = ZoneInfo('America/New_York')
 
@@ -124,10 +125,22 @@ def _get_nfl_season():
 
 def _get_season_game_log(season):
     """
-    Fetch and cache all completed NFL regular-season games for `season`.
-    Makes up to 18 weekly API calls; each week cached for 1 hour.
-    Returns list of {game_date, home_name, away_name, home_score, away_score, home_won}.
+    Returns list of {game_date, home_name, away_name, home_score, away_score,
+    home_won} for every completed NFL regular-season game in `season`.
+
+    Reads the local stats warehouse first (nfl_stats_db.get_season_game_log_db,
+    same TeamGameStat table/approach nba_api.py's own _get_season_game_log
+    now uses — see that module's comment for the full reasoning) and only
+    falls back to the live 18-week ESPN scoreboard walk below when the DB
+    has nothing for this season yet.
     """
+    try:
+        db_games = nfl_stats_db.get_season_game_log_db(season)
+        if db_games:
+            return db_games
+    except Exception:
+        pass
+
     key = f'nfl_season_log_{season}'
     now_ts = time.time()
     if key in _cache:
@@ -750,6 +763,25 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
     h_ab = home.get('abbrev', '')
 
     team_stats = _parse_team_stats(summary, home.get('id'), away.get('id')) if status in ('Live', 'Final') else None
+
+    # Persist a Final game's result into the local stats warehouse
+    # (nfl_stats_db.py) — no extra API call needed, the scoreboard event
+    # already has both teams' final scores. Idempotent (upsert), so this
+    # runs fine on every _build_game() call for a Final game, not just the
+    # first time it goes Final. Future reads (nfl_api._get_season_game_log)
+    # use this table instead of re-walking 18 weeks of ESPN scoreboard.
+    if status == 'Final':
+        try:
+            home_score = float(home['score']) if home.get('score') is not None else None
+            away_score = float(away['score']) if away.get('score') is not None else None
+            game_type = nfl_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
+                event.get('season', {}).get('type'), 'regular')
+            nfl_stats_db.ingest_team_game(
+                event.get('id'), game_date_et, _get_nfl_season(), game_type,
+                home.get('id'), away.get('id'), home.get('name'), away.get('name'),
+                home_score, away_score)
+        except Exception:
+            pass
 
     return {
         'game_id':       event.get('id'),
