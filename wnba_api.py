@@ -6,6 +6,12 @@ from zoneinfo import ZoneInfo
 import odds_api
 import wnba_model
 import bball_total_model
+import wnba_roster_api
+import wnba_player_model
+import wnba_ensemble_model
+import wnba_boxscore_api
+import wnba_stats_db
+import spread_proxy
 
 _ET = ZoneInfo('America/New_York')
 
@@ -138,14 +144,22 @@ EARLY_SEASON_GAMES = 4
 
 def _get_season_game_log(season):
     """
-    Fetch and cache all completed WNBA regular-season games for `season`
-    up through today, by paging the scoreboard day-by-day from May 1. Cached for 1
-    hour — this call re-walks the whole season-to-date on every cache miss,
-    which is cheap (ESPN scoreboard is a lightweight per-day payload) but
-    not free, so build_schedule_context()/get_today_game_count() share this
-    single cached game log rather than each re-fetching it.
-    Returns list of {game_date, home_name, away_name, home_score, away_score, home_won}.
+    Returns list of {game_date, home_name, away_name, home_score, away_score,
+    home_won} for every completed WNBA regular-season game in `season`.
+
+    Reads the local stats warehouse first (wnba_stats_db.get_season_game_log_db,
+    same TeamGameStat table/approach nba_api.py's own _get_season_game_log
+    uses — see that module's comment for the full reasoning) and only
+    falls back to the live day-by-day ESPN scoreboard walk below when the
+    DB has nothing for this season yet.
     """
+    try:
+        db_games = wnba_stats_db.get_season_game_log_db(season)
+        if db_games:
+            return db_games
+    except Exception:
+        pass
+
     key = f'wnba_season_log_{season}'
     now_ts = time.time()
     if key in _cache:
@@ -520,6 +534,91 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
     except Exception:
         model = None
 
+    # Blend in the player-level signal (wnba_player_model.py) via the fitted
+    # weights in wnba_ensemble_model.py — see wnba_ensemble_bootstrap.py for
+    # the backtest behind this. Mirrors nba_api.py's identical block.
+    # Wrapped in its own try/except, independent of the team model above —
+    # a roster/gamelog fetch failure should degrade to the team-only model,
+    # never break the page. `lineups` is attached to the game dict below
+    # regardless of whether the blend succeeds.
+    lineups = {'home': [], 'away': []}
+    event_id = event.get('id')
+    try:
+        unavailable_ids = wnba_boxscore_api.get_unavailable_player_ids(event_id)
+    except Exception:
+        unavailable_ids = set()
+
+    if model is not None:
+        try:
+            team_prob = model['home_prob']
+            team_margin = spread_proxy.implied_margin('WNBA', team_prob)
+
+            def _active_projections(team_id):
+                active = wnba_roster_api.get_active_roster(team_id, unavailable_ids=unavailable_ids)
+                projections, lineup = [], []
+                for p in active:
+                    proj = wnba_player_model.project_player(p['games'])
+                    if proj:
+                        projections.append(proj)
+                        lineup.append({'id': p['id'], 'name': p['name'], **proj})
+                lineup.sort(key=lambda row: row['mpg'], reverse=True)
+                return projections, lineup
+
+            home_active, lineups['home'] = _active_projections(home.get('id'))
+            away_active, lineups['away'] = _active_projections(away.get('id'))
+
+            home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+            away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
+            home_opp_factor = wnba_player_model.opponent_factor(away_ppg_allowed)
+            away_opp_factor = wnba_player_model.opponent_factor(home_ppg_allowed)
+
+            player_pred = (wnba_player_model.predict(
+                               home_active, away_active,
+                               home_opp_factor=home_opp_factor,
+                               away_opp_factor=away_opp_factor)
+                           if home_active and away_active else None)
+
+            ensemble = (wnba_ensemble_model.predict(
+                            team_prob, player_pred['home_prob'],
+                            team_margin, player_pred['margin'])
+                        if player_pred and team_margin is not None else None)
+
+            model['team_only_prob'] = team_prob
+            model['player_prob']    = player_pred['home_prob'] if player_pred else None
+            model['blended']        = ensemble is not None
+            if ensemble:
+                model['home_prob'] = ensemble['home_prob']
+                model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
+                model['ensemble_margin'] = ensemble['margin']
+        except Exception:
+            model['blended'] = False
+
+    # Once the game has actually started, match each projected player
+    # against ESPN's live/final boxscore and attach their real line +
+    # starter flag, and once Final, persist the box score into the local
+    # stats warehouse — mirrors nba_api.py's identical block.
+    if status in ('Live', 'Final'):
+        try:
+            boxscore = wnba_boxscore_api.get_live_boxscore(event_id)
+            for side, team in (('home', home), ('away', away)):
+                actual_by_id = {row['id']: row for row in boxscore.get(team.get('id'), [])}
+                for row in lineups[side]:
+                    actual = actual_by_id.get(row['id'])
+                    if actual:
+                        row['actual'] = actual
+
+            if status == 'Final' and boxscore:
+                home_score = float(home['score']) if home.get('score') is not None else None
+                away_score = float(away['score']) if away.get('score') is not None else None
+                game_type = wnba_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
+                    event.get('season', {}).get('type'), 'regular')
+                wnba_stats_db.ingest_game(
+                    event_id, game_date_et, _get_wnba_season(), game_type,
+                    home.get('id'), away.get('id'), home_score, away_score, boxscore,
+                    home_name=home.get('name'), away_name=away.get('name'))
+        except Exception:
+            pass
+
     # Pace-adjusted total (O/U) projection — see bball_total_model.py. Uses
     # blend_ppg/blend_ppg_allowed the same way wnba_model.predict() does
     # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
@@ -564,6 +663,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
         'sport':         'WNBA',
         'odds':          game_odds,
         'model':         model,
+        'lineups':       lineups,
         'total_model':   total_model,
         'total_model_breakdown': total_model_breakdown,
         'total_inputs':  total_inputs,

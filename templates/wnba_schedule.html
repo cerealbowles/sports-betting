@@ -186,6 +186,24 @@
         </div>
         {% endif %}
 
+        {% if game.model and game.model.blended %}
+        {# WNBA-only: the live moneyline/spread number above is a blend of
+           wnba_model.py (team-aggregate) and wnba_player_model.py (player-
+           level, roster/recent-production based) via wnba_ensemble_model.py's
+           fitted weights — see wnba_ensemble_bootstrap.py for the backtest
+           behind it. Mirrors the NBA game card's identical row. #}
+        <div class="analysis-row" title="Team-aggregate model vs. player-level model (active roster, recent production, opponent-adjusted), combined via fitted blend weights into the number used for this game's pick.">
+            <span class="analysis-label">Blend</span>
+            <div class="analysis-data">
+                <span>Team <b>{{ (game.model.team_only_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">·</span>
+                <span>Player <b>{{ (game.model.player_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">→</span>
+                <span>Blended <b>{{ (game.model.home_prob * 100) | round(1) }}%</b></span>
+            </div>
+        </div>
+        {% endif %}
+
         {% if game.model %}
         {% include "_market_chips.html" %}
         {% include "_factors_panel.html" %}
@@ -193,6 +211,8 @@
 
         </div>
         {% endif %}
+
+        {% include "_nba_lineups.html" %}
 
         <!-- ── Bet ── -->
         {% if game.status != 'Final' %}

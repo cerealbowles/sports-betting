@@ -6831,6 +6831,18 @@ def _nfl_stats_self_heal():
         pass
 
 
+def _wnba_stats_self_heal():
+    """Same idea as _nba_stats_self_heal() above, WNBA side — re-walks the
+    last few days (wnba_stats_backfill.backfill_recent()) and re-ingests
+    anything Final, so a game that finalizes during downtime/deploy
+    doesn't quietly leave a gap in the warehouse."""
+    try:
+        import wnba_stats_backfill
+        wnba_stats_backfill.backfill_recent(days=3)
+    except Exception:
+        pass
+
+
 def _start_cache_warmer():
     from apscheduler.schedulers.background import BackgroundScheduler
     from zoneinfo import ZoneInfo
@@ -6860,6 +6872,10 @@ def _start_cache_warmer():
                       hour=5, minute=20,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_stats_self_heal')
+    scheduler.add_job(_wnba_stats_self_heal, 'cron',
+                      hour=5, minute=25,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='wnba_stats_self_heal')
     # Pace-stats-only pre-warm — every 20 min, much more often than the full
     # warmer above since it's cheap (no DB writes) and the whole point is
     # shrinking the window a cold/expired pace cache can sit in.
@@ -6885,6 +6901,7 @@ def _start_cache_warmer():
         _resolve_pending_outcomes()
         _nba_stats_self_heal()
         _nfl_stats_self_heal()
+        _wnba_stats_self_heal()
         _refit_mlb_platt()
         for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
             _recompute_all_calibration(_sport)

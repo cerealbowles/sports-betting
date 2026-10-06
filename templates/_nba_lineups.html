@@ -1,10 +1,13 @@
 {# ── Projected lineup, with live/actual comparison once the game starts ──
-   game.lineups.{home,away} is built by nba_api._build_game from
-   nba_player_model's per-player projections (nba_roster_api's active-roster
-   guess, narrowed by real injury status from nba_boxscore_api) plus, once
-   the game is Live/Final, each player's actual boxscore line merged in by
-   id (nba_boxscore_api.get_live_boxscore). Native <details> toggle — no JS
-   needed, matches this card's tap-to-expand pattern at the section level. #}
+   Shared by both basketball sports (nba_schedule.html and
+   wnba_schedule.html both include this same partial) — the shape is
+   identical either way. game.lineups.{home,away} is built by _build_game
+   (nba_api.py / wnba_api.py) from that sport's player_model per-player
+   projections (that sport's roster_api active-roster guess, narrowed by
+   real injury status from that sport's boxscore_api) plus, once the game
+   is Live/Final, each player's actual boxscore line merged in by id.
+   Native <details> toggle — no JS needed, matches this card's
+   tap-to-expand pattern at the section level. #}
 {% if game.lineups and (game.lineups.home or game.lineups.away) %}
 <div class="lineup-section">
     <details class="lineup-details">
