@@ -1855,6 +1855,34 @@ body.embed-mode .container { padding-bottom: 0; }
 .dot-w { background: rgba(34,197,94,0.12); color: var(--win);  border: 1px solid rgba(34,197,94,0.30); }
 .dot-l { background: rgba(239,68,68,0.09); color: var(--loss); border: 1px solid rgba(239,68,68,0.25); }
 
+/* ── Projected lineup / live actuals (NBA, see _nba_lineups.html) ── */
+.lineup-section { margin-top: 10px; }
+.lineup-details { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.lineup-summary {
+    cursor: pointer; padding: 7px 10px; font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+    list-style: none;
+}
+.lineup-summary::-webkit-details-marker { display: none; }
+.lineup-summary::before { content: '▸ '; }
+.lineup-details[open] .lineup-summary::before { content: '▾ '; }
+.lineup-cols {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    border-top: 1px solid var(--border); padding: 8px 10px;
+}
+.lineup-col { min-width: 0; }
+.lineup-col-title { font-size: 0.62rem; font-weight: 800; color: var(--text-muted); margin-bottom: 4px; }
+.lineup-row {
+    display: flex; flex-direction: column; gap: 1px;
+    font-size: 0.72rem; padding: 3px 0;
+}
+.lineup-row + .lineup-row { border-top: 1px solid var(--border); }
+.lineup-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lineup-starter-dot { color: var(--win); margin-right: 3px; font-size: 0.6rem; }
+.lineup-stats { color: var(--text-muted); white-space: nowrap; font-size: 0.66rem; }
+.lineup-actual { color: var(--text); font-weight: 700; }
+.lineup-dnp { font-weight: 700; color: var(--loss); }
+
 .open-bet-pill {
     font-size: 0.68rem; font-weight: 700; white-space: nowrap;
     padding: 2px 8px; border-radius: 999px;

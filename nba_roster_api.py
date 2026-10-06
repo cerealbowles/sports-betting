@@ -14,15 +14,18 @@ Confirmed live against real team/player ids before building on it (Warriors
 roster endpoint, LeBron James gamelog) — see nba_roster_api spike notes in
 the NBA player-model plan.
 
-No pre-game "confirmed starters" feed exists on ESPN's free API. Worse, for
-NBA specifically, ESPN's scoreboard-based injury signal that other sports use
-(injuries_api.get_injury_map) doesn't exist at all — NBA competitor objects
-carry no `injuries` key (confirmed against a live response), so it always
-returns {}. get_active_roster() below instead uses recent-game participation
-(did this player appear in minutes in their team's last game) as the active-
-roster signal — a best-effort "probably still active" guess, not a confirmed
-lineup or real injury status. A player who's OUT tonight but played last game
-will be wrongly included; this is a known gap, not a bug.
+No pre-game "confirmed starters" feed exists on ESPN's free API. NBA's
+scoreboard-based injury signal that other sports use (injuries_api.get_injury_map)
+doesn't exist either — NBA competitor objects on the *scoreboard* endpoint
+carry no `injuries` key (confirmed against a live response), so that always
+returns {}. The per-game `summary` endpoint does carry real injury statuses
+though (see nba_boxscore_api.get_unavailable_player_ids) — get_active_roster()
+below takes those as an optional narrowing, but still falls back to recent-
+game participation (did this player appear in minutes in their team's last
+game) as the primary active-roster signal, since confirmed-available players
+aren't the same as confirmed starters/rotation players. A player who's OUT
+tonight but played last game, and whose game isn't passed through
+unavailable_ids, will be wrongly included; this is a known gap, not a bug.
 """
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -150,13 +153,23 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
     return rows
 
 
-def get_active_roster(team_id, min_recent_games=1, lookback=3):
+def get_active_roster(team_id, min_recent_games=1, lookback=3, unavailable_ids=None):
     """Best-effort "who's probably playing tonight" for team_id: roster
     players whose own gamelog shows minutes in at least `min_recent_games`
     of their last `lookback` games. Excludes players who are rostered but
     haven't played recently (likely injured/inactive/G-League assigned) —
     see this module's docstring for why this heuristic exists instead of a
     real injury/lineup feed for NBA.
+
+    `unavailable_ids` (optional): player ids confirmed OUT tonight (see
+    nba_boxscore_api.get_unavailable_player_ids, which reads real per-game
+    injury statuses) — excluded even if they'd pass the recent-participation
+    heuristic above, e.g. a player who played last game but was just ruled
+    out today. This is strictly a narrowing on top of the heuristic, not a
+    replacement: a confirmed-available player with a cold recent-minutes
+    streak (recently returned from injury, etc.) still needs to clear the
+    heuristic too, since no confirmed-starters feed exists to lean on
+    instead.
 
     Returns [{id, name, games}] where `games` is that player's full gamelog
     (newest first) for project_player() to use.
@@ -170,6 +183,7 @@ def get_active_roster(team_id, min_recent_games=1, lookback=3):
     roster = get_roster(team_id)
     if not roster:
         return []
+    unavailable_ids = unavailable_ids or set()
     games_by_pid = {}
     with ThreadPoolExecutor(max_workers=min(len(roster), 12)) as ex:
         futures = {ex.submit(get_player_gamelog, p['id']): p['id'] for p in roster}
@@ -182,6 +196,8 @@ def get_active_roster(team_id, min_recent_games=1, lookback=3):
 
     active = []
     for p in roster:
+        if p['id'] in unavailable_ids:
+            continue
         games = games_by_pid.get(p['id'], [])
         recent = games[:lookback]
         if sum(1 for g in recent if g['minutes'] > 0) >= min_recent_games:

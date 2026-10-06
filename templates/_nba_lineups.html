@@ -1,0 +1,34 @@
+{# ── Projected lineup, with live/actual comparison once the game starts ──
+   game.lineups.{home,away} is built by nba_api._build_game from
+   nba_player_model's per-player projections (nba_roster_api's active-roster
+   guess, narrowed by real injury status from nba_boxscore_api) plus, once
+   the game is Live/Final, each player's actual boxscore line merged in by
+   id (nba_boxscore_api.get_live_boxscore). Native <details> toggle — no JS
+   needed, matches this card's tap-to-expand pattern at the section level. #}
+{% if game.lineups and (game.lineups.home or game.lineups.away) %}
+<div class="lineup-section">
+    <details class="lineup-details">
+        <summary class="lineup-summary">Projected Lineup{% if game.status in ('Live', 'Final') %} vs. Actual{% endif %}</summary>
+        <div class="lineup-cols">
+            {% for team, side in [(game.away, 'away'), (game.home, 'home')] %}
+            <div class="lineup-col">
+                <div class="lineup-col-title">{{ team.abbrev }}</div>
+                {% for p in game.lineups[side][:8] %}
+                <div class="lineup-row">
+                    <span class="lineup-name">{% if p.actual and p.actual.starter %}<span class="lineup-starter-dot" title="Started">●</span>{% endif %}{{ p.name }}</span>
+                    <span class="lineup-stats">
+                        <span class="lineup-proj">proj {{ p.ppg | round(1) }}p/{{ p.mpg | round(0) | int }}m</span>
+                        {% if p.actual and p.actual.did_not_play %}
+                        <span class="lineup-dnp">DNP</span>
+                        {% elif p.actual %}
+                        <span class="lineup-actual">→ {{ p.actual.points | round(0) | int }}p/{{ p.actual.minutes | round(0) | int }}m</span>
+                        {% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+</div>
+{% endif %}

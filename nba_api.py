@@ -9,6 +9,7 @@ import bball_total_model
 import nba_roster_api
 import nba_player_model
 import nba_ensemble_model
+import nba_boxscore_api
 import spread_proxy
 
 _ET = ZoneInfo('America/New_York')
@@ -511,22 +512,39 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
     # in its own try/except, independent of the team model above — a roster/
     # gamelog fetch failure (new team-level data this app hasn't needed
     # before) should degrade to the team-only model, never break the page.
+    # `lineups` is built alongside the blend (same active-roster fetch,
+    # reused rather than hit twice) and attached to the game dict below
+    # regardless of whether the blend itself succeeds — a projected lineup
+    # is useful even on games the ensemble can't price.
+    lineups = {'home': [], 'away': []}
+    event_id = event.get('id')
+    try:
+        unavailable_ids = nba_boxscore_api.get_unavailable_player_ids(event_id)
+    except Exception:
+        unavailable_ids = set()
+
     if model is not None:
         try:
             team_prob = model['home_prob']
             team_margin = spread_proxy.implied_margin('NBA', team_prob)
 
             def _active_projections(team_id):
-                active = nba_roster_api.get_active_roster(team_id)
-                out = []
+                """Returns (projections for nba_player_model.predict(),
+                lineup rows with id/name for display) from one fetch."""
+                active = nba_roster_api.get_active_roster(team_id, unavailable_ids=unavailable_ids)
+                projections, lineup = [], []
                 for p in active:
                     proj = nba_player_model.project_player(p['games'])
                     if proj:
-                        out.append(proj)
-                return out
+                        projections.append(proj)
+                        lineup.append({'id': p['id'], 'name': p['name'], **proj})
+                # Highest-projected-minutes first — who the model expects
+                # to play the most, not roster order.
+                lineup.sort(key=lambda row: row['mpg'], reverse=True)
+                return projections, lineup
 
-            home_active = _active_projections(home.get('id'))
-            away_active = _active_projections(away.get('id'))
+            home_active, lineups['home'] = _active_projections(home.get('id'))
+            away_active, lineups['away'] = _active_projections(away.get('id'))
 
             home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
             away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
@@ -555,6 +573,24 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
             # Leave `model` as the team-only prediction — same fallback
             # philosophy as the try/except around nba_model.predict() above.
             model['blended'] = False
+
+    # Once the game has actually started, match each projected player
+    # against ESPN's live/final boxscore (nba_boxscore_api.get_live_boxscore)
+    # by player id and attach their real line + starter flag — the
+    # "prediction vs. actual" comparison. Pre-game this is a no-op (the
+    # boxscore endpoint returns {} before tip-off) and every lineup row
+    # just carries its projection.
+    if status in ('Live', 'Final'):
+        try:
+            boxscore = nba_boxscore_api.get_live_boxscore(event_id)
+            for side, team in (('home', home), ('away', away)):
+                actual_by_id = {row['id']: row for row in boxscore.get(team.get('id'), [])}
+                for row in lineups[side]:
+                    actual = actual_by_id.get(row['id'])
+                    if actual:
+                        row['actual'] = actual
+        except Exception:
+            pass
 
     # Pace-adjusted total (O/U) projection — separate from the win-prob
     # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see
@@ -605,6 +641,7 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
         'sport':         'NBA',
         'odds':          game_odds,
         'model':         model,
+        'lineups':       lineups,
         'total_model':   total_model,
         'total_model_breakdown': total_model_breakdown,
         'total_inputs':  total_inputs,
