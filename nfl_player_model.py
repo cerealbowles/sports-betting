@@ -85,22 +85,37 @@ def _split(composite, sep, idx, default=0.0):
         return default
 
 
-def compute_offense_grade(games):
-    """games: this TEAM's own recent games, newest first, each with
-    'categories' — the same shape nfl_stats_db.get_player_gamelog_db()
-    returns per player, pre-aggregated to team level by the caller (see
-    nfl_player_bootstrap.py / nfl_api.py for how team-level aggregation
-    from individual player rows happens — this function just grades
-    whatever aggregate dict it's handed).
+# Below these summed-across-the-window attempt/target counts, a category's
+# ratio is computed from too thin a sample to trust — see
+# compute_offense_grade_excluding()'s module comment for the real case
+# this was built from: excluding a true workhorse starter (who took
+# essentially every snap at his role) leaves only a handful of mop-up/
+# backup plays in the window, and a 9-attempt small sample can swing the
+# ratio in either direction off single-play noise. Thresholds are rough
+# (~2 games' worth of normal starter volume) — a real team-wide game
+# features roughly 25-40 pass attempts, 20-30 rush attempts, 25-35 targets.
+MIN_VOLUME = {'pass_att': 50, 'rush_att': 40, 'recv_tgt': 60}
 
-    `games` here is actually a list of per-game TEAM aggregate dicts:
-    [{'pass_att', 'pass_yds', 'pass_td', 'pass_int', 'rush_att',
-      'rush_yds', 'recv_tgt', 'recv_yds', 'giveaways'}, ...], newest first,
-    already filtered to strictly before the game being projected by the
-    caller (no-leakage requirement, same as nba_player_model.project_player).
+# Below-average prior for a category whose sample is too thin to trust
+# (see MIN_VOLUME above) — used ONLY by compute_offense_grade_excluding(),
+# never by the plain compute_offense_grade() (a team that genuinely barely
+# passes/rushes is real signal, not a thin-sample artifact, so that case
+# keeps the neutral LEAGUE_AVG fallback below). 0.85 is a reasonable
+# "backup/replacement-level" assumption pending a real fit — there's no
+# backtested value for this yet (no historical injury data existed before
+# this feature), refine once enough replacement-level games accumulate.
+REPLACEMENT_LEVEL_RATIO = 0.85
 
-    Returns a single float grade (1.0 = league average, higher = better
-    offense) or None if there's no usable sample."""
+
+def _offense_component_ratios(games):
+    """Shared core of compute_offense_grade()/compute_offense_grade_excluding()
+    below — sums each category across the window and returns the four
+    component ratios (1.0 = league average) PLUS the raw summed volumes
+    behind each, so a caller can tell when a ratio came from too thin a
+    sample to trust (see MIN_VOLUME above). `games`: this TEAM's own recent
+    games, newest first, each a per-game aggregate dict (see
+    compute_offense_grade()'s docstring for the exact shape). None if
+    `games` is empty."""
     sample = games[:QB_WINDOW]
     if not sample:
         return None
@@ -121,13 +136,38 @@ def compute_offense_grade(games):
     recv_ypt = recv_yds / recv_tgt if recv_tgt > 0 else LEAGUE_AVG['recv_ypt']
     give_pg  = giveaways / n
 
-    ratios = [
-        qb_ay_a / LEAGUE_AVG['qb_ay_a'],
-        rush_ypc / LEAGUE_AVG['rush_ypc'],
-        recv_ypt / LEAGUE_AVG['recv_ypt'],
-        2.0 - (give_pg / LEAGUE_AVG['give_pg']),  # inverted: fewer giveaways than average -> ratio > 1
-    ]
-    return sum(ratios) / len(ratios)
+    return {
+        'ratios': {
+            'qb_ay_a':  qb_ay_a / LEAGUE_AVG['qb_ay_a'],
+            'rush_ypc': rush_ypc / LEAGUE_AVG['rush_ypc'],
+            'recv_ypt': recv_ypt / LEAGUE_AVG['recv_ypt'],
+            'giveaways': 2.0 - (give_pg / LEAGUE_AVG['give_pg']),  # inverted: fewer than average -> ratio > 1
+        },
+        'volumes': {'pass_att': pass_att, 'rush_att': rush_att, 'recv_tgt': recv_tgt},
+    }
+
+
+def compute_offense_grade(games):
+    """games: this TEAM's own recent games, newest first, each with
+    'categories' — the same shape nfl_stats_db.get_player_gamelog_db()
+    returns per player, pre-aggregated to team level by the caller (see
+    nfl_player_bootstrap.py / nfl_api.py for how team-level aggregation
+    from individual player rows happens — this function just grades
+    whatever aggregate dict it's handed).
+
+    `games` here is actually a list of per-game TEAM aggregate dicts:
+    [{'pass_att', 'pass_yds', 'pass_td', 'pass_int', 'rush_att',
+      'rush_yds', 'recv_tgt', 'recv_yds', 'giveaways'}, ...], newest first,
+    already filtered to strictly before the game being projected by the
+    caller (no-leakage requirement, same as nba_player_model.project_player).
+
+    Returns a single float grade (1.0 = league average, higher = better
+    offense) or None if there's no usable sample."""
+    result = _offense_component_ratios(games)
+    if result is None:
+        return None
+    ratios = result['ratios']
+    return sum(ratios.values()) / len(ratios)
 
 
 def compute_defense_grade(games):
@@ -327,10 +367,31 @@ def compute_offense_grade_excluding(games_with_players, unavailable_ids, window=
     the unavailable players actually appear (most games, most of the
     time) — this only changes anything for the specific games a now-
     injured player actually played in.
+
+    REPLACEMENT-LEVEL FALLBACK: confirmed live against a real case (a
+    starting QB who took ~100% of his team's pass attempts, now Out) that
+    subtracting a true workhorse's production can leave almost nothing
+    behind in that category — a handful of mop-up/backup-scramble attempts
+    dominated by single-play noise, not a meaningful "backup tier" sample.
+    Naively grading that thin residual produced a HIGHER offense grade
+    with the starter excluded than with him included, the wrong direction
+    entirely. Any component whose post-exclusion volume falls under
+    MIN_VOLUME is replaced with REPLACEMENT_LEVEL_RATIO (a flat below-
+    average prior) instead of being computed from the thin sample — other
+    components (e.g. rushing, if only the QB was excluded) still come from
+    real data, since this check is per-category, not all-or-nothing.
     """
     adjusted_games = []
     for game in games_with_players[:window]:
         rows = [row for row in game if row.get('player_id') not in unavailable_ids]
         off, _ = parse_team_game_aggregate(rows)
         adjusted_games.append(off)
-    return compute_offense_grade(adjusted_games)
+
+    result = _offense_component_ratios(adjusted_games)
+    if result is None:
+        return None
+    ratios, volumes = result['ratios'], result['volumes']
+    for key, volume_key in (('qb_ay_a', 'pass_att'), ('rush_ypc', 'rush_att'), ('recv_ypt', 'recv_tgt')):
+        if volumes[volume_key] < MIN_VOLUME[volume_key]:
+            ratios[key] = REPLACEMENT_LEVEL_RATIO
+    return sum(ratios.values()) / len(ratios)
