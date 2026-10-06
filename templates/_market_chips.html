@@ -288,43 +288,43 @@
     </div>
 
     {# Movement — pre-game odds-movement category per market (odds_history.
-       classify_movement/classify_spread_movement/classify_total_movement)
-       plus that category's real historical win-loss record (movement_stat()/
-       spread_movement_stat()/total_movement_stat(), app.py) once enough
-       resolved games exist to trust it.
+       classify_movement/classify_spread_movement/classify_total_movement),
+       condensed to just the toward/away direction per market in one strip
+       (used to be 3 full rows each with shape + W-L record — the full
+       detail, including that category's real historical win-loss record
+       via movement_stat()/spread_movement_stat()/total_movement_stat(),
+       app.py, still lives in the title tooltip on hover/tap).
 
        Wording notes (this got confusing in testing, worth keeping explicit):
        "toward pick"/"away from pick" is relative to whichever side THIS
-       game's pick is — not a fixed team, and the record shown is a
-       league-wide stat across every {sport} pick that ever showed this
-       exact pattern, not specific to either team in this game. Showing an
-       exact W-L record instead of a bare percentage since a decimal like
-       "52.9%" reads as more precise than a small sample (e.g. n=17)
-       actually supports.
+       game's pick is — not a fixed team, and the record in the tooltip is
+       a league-wide stat across every {sport} pick that ever showed this
+       exact pattern, not specific to either team in this game.
 
-       Colored green/red the same way the chips above color an edge. A
-       thin full-width strip rather than a 4th grid chip (the chip grid is
-       a fixed 3 columns — a 4th item there wraps to its own row and leaves
-       empty slots beside it). Up to 3 independent bars — a game can have
-       0, 1, 2, or 3 depending on what's classified for each market.
-       Skipped entirely for no_data/static (nothing informative to show) or
-       no profile yet (insufficient snapshot history so far today). #}
-    {% macro movement_bar(profile, stat, label) %}
+       Colored green/red the same way the chips above color an edge.
+       Skipped entirely for no_data/static (nothing informative to show),
+       no profile yet (insufficient snapshot history so far today), or a
+       flat/no-direction classification (toward/away is the whole point of
+       this condensed view — nothing to show without a direction). #}
+    {% macro movement_chip(profile, stat, label) %}
     {% if profile and profile not in ('no_data', 'static') %}
-    {% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
     {% set dir = 'for' if profile.endswith('_for') else ('against' if profile.endswith('_against') else none) %}
-    {% set dir_phrase = 'toward the pick' if dir == 'for' else ('away from the pick' if dir == 'against' else none) %}
+    {% if dir %}
+    {% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
+    {% set dir_phrase = 'toward the pick' if dir == 'for' else 'away from the pick' %}
     {% set losses = stat.n - stat.wins %}
-    <div class="mc-move-bar" title="{{ label }}: {{ shape }}{{ ' — line moved ' ~ dir_phrase if dir_phrase }}. {% if stat.n %}Every {{ game.sport }} pick with this exact pattern has gone {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%) — league-wide, not specific to either team here.{% else %}Not enough history yet to trust — too new to show a record.{% endif %}">
-        <span class="mc-move-t">{{ label }}</span>
-        <span class="mc-move-shape{{ ' edge-pos' if dir == 'for' else (' edge-neg' if dir == 'against' else '') }}">{{ shape }}{{ ' · ' ~ dir_phrase if dir_phrase }}</span>
-        <span class="mc-move-stat{{ '' if stat.n else ' mc-side-muted' }}">{% if stat.n %}Similar picks: {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%){% else %}new · no history yet{% endif %}</span>
-    </div>
+    <span class="mc-move-chip{{ ' edge-pos' if dir == 'for' else ' edge-neg' }}" title="{{ label }}: {{ shape }} — line moved {{ dir_phrase }}. {% if stat.n %}Every {{ game.sport }} pick with this exact pattern has gone {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%) — league-wide, not specific to either team here.{% else %}Not enough history yet to trust — too new to show a record.{% endif %}">
+        {{ label }} {{ '▲ toward' if dir == 'for' else '▼ away' }}
+    </span>
+    {% endif %}
     {% endif %}
     {% endmacro %}
-    {{ movement_bar(game.movement_profile, movement_stat(game.movement_profile, game.sport), 'ML MOVE') }}
-    {{ movement_bar(game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport), 'SPREAD MOVE') }}
-    {{ movement_bar(game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport), 'TOTAL MOVE') }}
+    {% set _moves = [movement_chip(game.movement_profile, movement_stat(game.movement_profile, game.sport), 'ML'),
+                      movement_chip(game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport), 'SPREAD'),
+                      movement_chip(game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport), 'TOTAL')] %}
+    {% if _moves | select | list %}
+    <div class="mc-move-row">{{ _moves | join('') | safe }}</div>
+    {% endif %}
 
     <details class="mc-fold" onclick="event.stopPropagation()">
         <summary class="mc-toggle">Market vs model</summary>
