@@ -120,12 +120,19 @@ def backfill_recent(weeks=2):
     docstring for the full reasoning (identical, NFL side)."""
     season = _get_nfl_season()
     current = _current_week_guess()
-    return backfill(season, max(1, current - weeks + 1), current, seasontype=2, dry_run=False)
+    # +1 week of slack on the guess — it's date-arithmetic, not a real
+    # schedule lookup (ESPN's actual week boundaries don't fall on exact
+    # 7-day marks from Sept 1), so a plain `current` could land one week
+    # short of the real latest-played week and self-heal would silently
+    # re-walk only already-Final-and-ingested weeks, never reaching the
+    # gap it exists to catch. Idempotent upserts make the extra week free.
+    return backfill(season, max(1, current - weeks), current + 1, seasontype=2, dry_run=False)
 
 
 def _current_week_guess():
     """Rough current NFL week from today's date — only used to bound the
-    self-heal re-walk window, not for anything that needs to be exact."""
+    self-heal re-walk window (with its own slack, see backfill_recent()),
+    not for anything that needs to be exact."""
     season = _get_nfl_season()
     season_start = datetime(season, 9, 1, tzinfo=_ET).date()
     days_in = (datetime.now(_ET).date() - season_start).days
