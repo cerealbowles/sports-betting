@@ -203,6 +203,39 @@ def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
     return offense_list, defense_list
 
 
+def get_team_games_with_players_db(team_id, before_date=None, limit=5):
+    """Returns this team's most recent games, newest first, WITHOUT
+    collapsing player identity the way get_team_game_aggregates_db() above
+    does — each game is [{player_id, player_name, categories}, ...], so a
+    specific player's own contribution to that game can still be isolated
+    and subtracted back out (see nfl_player_model.identify_key_players()/
+    compute_offense_grade_excluding()). ([]) if nothing stored yet."""
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        q = PlayerGameStat.query.filter_by(sport='NFL', team_id=team_id)
+        if before_date:
+            q = q.filter(PlayerGameStat.game_date < before_date)
+        q = q.order_by(PlayerGameStat.game_date.desc())
+        rows = q.all()
+
+    by_game = {}
+    game_order = []
+    for r in rows:
+        if r.game_id not in by_game:
+            by_game[r.game_id] = []
+            game_order.append(r.game_id)
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        by_game[r.game_id].append({
+            'player_id': r.player_id, 'player_name': r.player_name, 'categories': categories,
+        })
+
+    return [by_game[gid] for gid in game_order[:limit]]
+
+
 def get_schedule_db(season, game_type='regular'):
     """Returns every stored game for `season` as [{event_id, game_date,
     home_id, away_id, home_score, away_score}], chronological — the DB
@@ -244,3 +277,85 @@ def get_game_boxscore_db(game_id):
             'id': r.player_id, 'name': r.player_name, 'categories': categories,
         })
     return out
+
+
+def ingest_injury_report(team_id, injuries, date_et):
+    """Persists one team's current injury list (as returned by
+    nfl_api._parse_injuries()'s per-team value: [{id, name, pos, status}])
+    for `date_et` (YYYY-MM-DD). Upserts on (sport, date, player_id) — a
+    same-day re-ingestion (e.g. status changes from Questionable to Out
+    later in the week) updates the existing row in place rather than
+    duplicating it; a new date starts a new row, which is what actually
+    builds up real injury HISTORY over time (see InjuryStatus's docstring
+    in app.py for why this matters — it's new data this app never kept
+    before). Skips entries with no id (shouldn't happen — confirmed live
+    that ESPN's injury entries always carry one — but defensive either way
+    since this is a write path)."""
+    if not injuries:
+        return
+    from app import app as flask_app, db, InjuryStatus
+
+    with flask_app.app_context():
+        for inj in injuries:
+            pid = inj.get('id')
+            if not pid:
+                continue
+            existing = InjuryStatus.query.filter_by(sport='NFL', date=date_et, player_id=pid).first()
+            row = existing or InjuryStatus(sport='NFL', date=date_et, player_id=pid)
+            row.team_id     = team_id
+            row.player_name = inj.get('name', '')
+            row.position    = inj.get('pos', '')
+            row.status      = inj.get('status', '')
+            if not existing:
+                db.session.add(row)
+        db.session.commit()
+
+
+def has_injury_snapshot(team_id, date_et):
+    """True if a snapshot for team_id already exists for EXACTLY date_et —
+    used only to decide whether nfl_api.py needs to ingest today's fetch at
+    all (skip re-writing identical rows on every page render the same
+    day). Not what prediction logic should call — see
+    get_latest_injury_status() below for that."""
+    from app import app as flask_app, InjuryStatus
+
+    with flask_app.app_context():
+        return InjuryStatus.query.filter_by(sport='NFL', team_id=team_id, date=date_et).first() is not None
+
+
+def get_latest_injury_status(team_id, as_of_date=None):
+    """Returns {player_id: status} — each player's MOST RECENTLY RECORDED
+    status on or before `as_of_date` (default: no cutoff, i.e. the latest
+    snapshot available at all). This is deliberately NOT an exact-date
+    match: ESPN's injury report reflects current-state-as-of-today
+    regardless of when the game being projected actually kicks off, so a
+    game a few days out should still read today's (or the most recent)
+    snapshot, not wait for a snapshot dated on the game's own future date
+    that will never exist until that day arrives. {} if nothing stored for
+    this team yet (caller falls back to a live fetch)."""
+    from app import app as flask_app, InjuryStatus
+
+    with flask_app.app_context():
+        q = InjuryStatus.query.filter_by(sport='NFL', team_id=team_id)
+        if as_of_date:
+            q = q.filter(InjuryStatus.date <= as_of_date)
+        rows = q.order_by(InjuryStatus.date.desc()).all()
+
+    latest = {}
+    for r in rows:  # date-desc, so the first row seen per player is its latest
+        if r.player_id not in latest:
+            latest[r.player_id] = r.status
+    return latest
+
+
+_OUT_STATUSES = {'out', 'injured reserve', 'suspension', 'suspended'}
+
+
+def get_unavailable_player_ids(team_id, date_et):
+    """Subset of get_latest_injury_status() whose status means the player
+    is confirmed not playing — same OUT-statuses convention as
+    nba_boxscore_api._OUT_STATUSES (Day-To-Day/Questionable/Doubtful are
+    left in: project them rather than silently zero them out, same
+    reasoning as nba_roster_api.get_active_roster)."""
+    statuses = get_latest_injury_status(team_id, date_et)
+    return {pid for pid, status in statuses.items() if status.lower() in _OUT_STATUSES}

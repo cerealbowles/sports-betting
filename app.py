@@ -301,6 +301,44 @@ class TeamGameStat(db.Model):
   __table_args__ = (db.UniqueConstraint('sport', 'game_id', 'team_id', name='uq_team_game'),)
 
 
+class InjuryStatus(db.Model):
+  """A daily snapshot of one player's injury status, as reported by ESPN —
+  persisted so (a) we stop re-fetching the live injury endpoint on every
+  page load within the same day, and (b) this builds up a real HISTORICAL
+  injury record going forward, which this app never had before (the live
+  injury report was always fetched fresh and thrown away after rendering
+  the page — see nfl_api._parse_injuries()'s prior behavior). That history
+  is what lets a future backtest use TRUE pre-game injury knowledge instead
+  of nba_player_bootstrap.py-style "who actually played" hindsight — not
+  retroactively for games before this table existed (ESPN's injury
+  endpoint is current-state-only, no historical lookback), but every day
+  from here forward adds one real data point.
+
+  One row per (sport, player_id, date) — a player's status can change
+  within a day (e.g. Questionable -> Out), so same-day re-ingestion
+  updates the existing row rather than appending a new one; a new row
+  only starts the next calendar date. See nfl_stats_db.ingest_injury_report
+  for the write side, and get_latest_injury_status for the DB-first read
+  that replaces a live ESPN call within the same day.
+  """
+  __tablename__ = 'injury_status'
+  id          = db.Column(db.Integer, primary_key=True)
+  sport       = db.Column(db.String(10), nullable=False, index=True)
+  date        = db.Column(db.String(10), nullable=False, index=True)   # YYYY-MM-DD ET, date this snapshot was recorded
+  team_id     = db.Column(db.String(20), nullable=False, index=True)
+  player_id   = db.Column(db.String(20), nullable=False, index=True)
+  player_name = db.Column(db.String(80), nullable=False)
+  position    = db.Column(db.String(10))
+  status      = db.Column(db.String(20), nullable=False)   # ESPN's own label: 'Out', 'Doubtful', 'Questionable', ...
+  created_at  = db.Column(db.DateTime(timezone=True),
+                           default=lambda: datetime.now(timezone.utc))
+  updated_at  = db.Column(db.DateTime(timezone=True),
+                           default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('sport', 'date', 'player_id', name='uq_injury_status'),)
+
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()

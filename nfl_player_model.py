@@ -240,3 +240,97 @@ def parse_team_game_aggregate(player_rows):
         'sacks': sacks, 'tfl': tfl, 'takeaways': takeaways, 'pass_defended': pass_defended,
     }
     return offense, defense
+
+
+# ── Injury-aware offense grading ────────────────────────────────────────────
+#
+# compute_offense_grade() above answers "how good has this team's offense
+# been recently" from a blind team-wide aggregate — it has no idea WHO
+# produced those numbers, so if the starting QB gets ruled out for tonight's
+# game, the recent-games window still silently includes every snap he took
+# while healthy, overstating what this offense will actually do without him.
+#
+# Rather than build a second, parallel "sum of individual players" model
+# (the exact approach nba_player_model.py uses, and the one this module's
+# own docstring explains football's score DOESN'T decompose into cleanly —
+# see the top of this file), this keeps the proven ratio-based grade and
+# fixes its input instead: when a key player is unavailable, their own
+# per-game line is subtracted OUT of each historical game in the lookback
+# window before the existing ratio math ever runs. The grade becomes
+# "what this offense produced in recent games, with this player's specific
+# contribution removed" — a real adjustment, not a new model.
+#
+# Generalizes to any of the four tracked roles (not just QB), which is why
+# this is identify_key_players(), plural, rather than find_starting_qb().
+
+KEY_ROLE_WINDOW = 5  # games of usage history used to identify who's "the" QB/RB1/etc.
+
+
+def identify_key_players(games_with_players, window=KEY_ROLE_WINDOW):
+    """games_with_players: this team's recent games, newest first, each a
+    list of [{player_id, player_name, categories}, ...] — the shape
+    nfl_stats_db.get_team_games_with_players_db() returns (per-player
+    identity preserved, unlike get_team_game_aggregates_db()'s collapsed
+    team totals).
+
+    Returns {'QB': (player_id, name) or None, 'RB1': ..., 'WR1': ...,
+    'WR2': ...} — whoever had the most usage at that role over the last
+    `window` games. Position labels aren't reliably available from this
+    box score source (see nfl_boxscore_api.py's docstring — ESPN's athlete
+    object here carries no position field), so roles are identified by
+    USAGE share instead: QB = most pass attempts, RB1 = most rush
+    attempts, WR1/WR2 = top two by targets (whichever pass-catchers those
+    are — a productive TE would be picked up here too, since there's no
+    reliable way to separate "WR" from "TE" without position labels this
+    data doesn't have).
+    """
+    pass_att, rush_att, targets = {}, {}, {}
+    names = {}
+    for game in games_with_players[:window]:
+        for row in game:
+            pid = row.get('player_id')
+            if not pid:
+                continue
+            names[pid] = row.get('player_name', '')
+            cats = row.get('categories', {})
+            if 'passing' in cats:
+                pass_att[pid] = pass_att.get(pid, 0.0) + _split(cats['passing'].get('completions/passingAttempts', '0/0'), '/', 1)
+            if 'rushing' in cats:
+                rush_att[pid] = rush_att.get(pid, 0.0) + _num(cats['rushing'].get('rushingAttempts'))
+            if 'receiving' in cats:
+                targets[pid] = targets.get(pid, 0.0) + _num(cats['receiving'].get('receivingTargets'))
+
+    def _top(d, n=1):
+        ranked = sorted(d.items(), key=lambda kv: kv[1], reverse=True)
+        return [(pid, names[pid]) for pid, _ in ranked[:n]]
+
+    qb  = _top(pass_att, 1)
+    rb1 = _top(rush_att, 1)
+    wrs = _top(targets, 2)
+    return {
+        'QB':  qb[0] if qb else None,
+        'RB1': rb1[0] if rb1 else None,
+        'WR1': wrs[0] if len(wrs) > 0 else None,
+        'WR2': wrs[1] if len(wrs) > 1 else None,
+    }
+
+
+def compute_offense_grade_excluding(games_with_players, unavailable_ids, window=QB_WINDOW):
+    """Same output as compute_offense_grade() (a single float grade, 1.0 =
+    league average), but each game in the window first has any unavailable
+    player's own per-game line subtracted out — see this section's module
+    comment for why. `unavailable_ids`: player ids confirmed OUT for the
+    game being projected (not Day-To-Day/Questionable — same convention as
+    nfl_stats_db.get_unavailable_player_ids).
+
+    Falls back to the unmodified team aggregate for any game where none of
+    the unavailable players actually appear (most games, most of the
+    time) — this only changes anything for the specific games a now-
+    injured player actually played in.
+    """
+    adjusted_games = []
+    for game in games_with_players[:window]:
+        rows = [row for row in game if row.get('player_id') not in unavailable_ids]
+        off, _ = parse_team_game_aggregate(rows)
+        adjusted_games.append(off)
+    return compute_offense_grade(adjusted_games)

@@ -362,8 +362,14 @@ def _parse_weather(summary):
 
 
 def _parse_injuries(summary):
-    """{team_id: [{'name','pos','status'}, ...]}, current-week Out/Doubtful/Questionable only —
-    long-term IR/PUP entries are already-known season-long absences, not this week's news."""
+    """{team_id: [{'id','name','pos','status'}, ...]}, current-week
+    Out/Doubtful/Questionable only — long-term IR/PUP entries are
+    already-known season-long absences, not this week's news. `id` is
+    ESPN's own athlete id (confirmed present on every injury entry) — the
+    same id PlayerGameStat.player_id uses, so this resolves directly
+    against the local stats warehouse with no name-matching needed. See
+    nfl_stats_db.ingest_injury_report(), which persists this same data
+    (this function itself stays a pure parse — no DB write here)."""
     result = {}
     if not summary:
         return result
@@ -378,6 +384,7 @@ def _parse_injuries(summary):
                 continue
             athlete = inj.get('athlete') or {}
             players.append({
+                'id':     athlete.get('id', ''),
                 'name':   athlete.get('displayName', ''),
                 'pos':    (athlete.get('position') or {}).get('abbreviation', ''),
                 'status': status,
@@ -663,6 +670,23 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
     home['injuries'] = injury_map.get(home.get('id'), [])
     away['injuries'] = injury_map.get(away.get('id'), [])
 
+    # Persist today's injury report into the local warehouse (app.py's
+    # InjuryStatus) — see that model's docstring for why: this is new data
+    # this app never kept before (the live fetch above was always thrown
+    # away after rendering). DB-checked first so a page re-render within
+    # the same ET day doesn't re-write identical rows every time; only
+    # ingests when today's date has nothing stored yet for that team.
+    _today_str = _today_et()
+    for side_team in (home, away):
+        tid = side_team.get('id')
+        if not tid:
+            continue
+        try:
+            if not nfl_stats_db.has_injury_snapshot(tid, _today_str):
+                nfl_stats_db.ingest_injury_report(tid, injury_map.get(tid, []), _today_str)
+        except Exception:
+            pass
+
     # ── Live game state — quarter, clock, down/distance, possession,
     # field position, red zone, timeouts. ESPN's `situation` object is
     # only present while state == 'in'; it goes away between plays'
@@ -730,10 +754,31 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
             team_prob = model['home_prob']
 
             def _grades(team_id):
-                off_list, def_list = nfl_stats_db.get_team_game_aggregates_db(
+                # Offense: injury-aware — excludes any CONFIRMED-OUT key
+                # player's own contribution from each game in the lookback
+                # window before grading (see nfl_player_model.compute_
+                # offense_grade_excluding()'s module comment for why: a
+                # blind recent-games aggregate can't otherwise tell the
+                # difference between "this team's starting QB played
+                # great" and "this team's offense is great," which matters
+                # the moment that QB is the one who's actually OUT tonight).
+                # Defense stays on the plain team aggregate — no reliable
+                # per-player "key defender" identification exists yet from
+                # this box score source (sparse D-stat categories, no
+                # position labels — see identify_key_players()'s docstring).
+                games_with_players = nfl_stats_db.get_team_games_with_players_db(
                     team_id, before_date=game_date_et)
-                return (nfl_player_model.compute_offense_grade(off_list),
-                        nfl_player_model.compute_defense_grade(def_list))
+                # "As of today" (not game_date_et, which can be days in the
+                # future) — ESPN's injury report is current-state, so the
+                # latest snapshot we have IS the best available read for any
+                # upcoming game, not just one dated on the game's own day.
+                unavailable_ids = nfl_stats_db.get_unavailable_player_ids(team_id, _today_str)
+                offense = (nfl_player_model.compute_offense_grade_excluding(games_with_players, unavailable_ids)
+                           if games_with_players else None)
+
+                _, def_list = nfl_stats_db.get_team_game_aggregates_db(team_id, before_date=game_date_et)
+                defense = nfl_player_model.compute_defense_grade(def_list)
+                return offense, defense
 
             home_off, home_def = _grades(home.get('id'))
             away_off, away_def = _grades(away.get('id'))
