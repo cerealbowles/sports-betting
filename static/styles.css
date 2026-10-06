@@ -1138,10 +1138,8 @@ body.embed-mode .container { padding-bottom: 0; }
   --mc-neutral-bg: rgba(148,163,184,0.12);
 }
 .mc-chips { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
-.mc-move-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 8px; }
-.mc-move-chip {
-  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em;
-  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+.mc-chip .mc-t-move {
+  padding: 1px 7px; border-radius: 999px; letter-spacing: 0.02em;
 }
 .mc-chip {
   position: relative;

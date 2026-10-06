@@ -224,13 +224,38 @@
 
 {% endif %}
 
+{# Per-market movement direction, folded into each chip's own header
+   (replaces "ML"/"SPREAD"/"TOTAL" with e.g. "ML ▲ TOWARD" when a pre-game
+   odds-movement classification exists for that market) instead of a
+   separate row below the chips. Pulls from odds_history.classify_movement/
+   classify_spread_movement/classify_total_movement via game.movement_profile
+   etc., plus that pattern's real historical win-loss record (movement_stat()/
+   spread_movement_stat()/total_movement_stat(), app.py) — shown in the
+   tooltip rather than inline, same reasoning as before: "toward pick"/
+   "away from pick" is relative to whichever side THIS game's pick is, and
+   the record is a league-wide stat across every {sport} pick that ever
+   showed this exact pattern, not specific to either team in this game.
+   Falls back to the plain label when there's no profile yet, or it's
+   no_data/static/flat (nothing with a direction to show). #}
+{% macro move_header(label, profile, stat) %}
+{% set dir = 'for' if profile and profile.endswith('_for') else ('against' if profile and profile.endswith('_against') else none) %}
+{% if dir and profile not in ('no_data', 'static') %}
+{% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
+{% set dir_phrase = 'toward the pick' if dir == 'for' else 'away from the pick' %}
+{% set losses = stat.n - stat.wins %}
+<span class="mc-t mc-t-move{{ ' edge-pos' if dir == 'for' else ' edge-neg' }}" title="{{ label }}: {{ shape }} — line moved {{ dir_phrase }}. {% if stat.n %}Every {{ game.sport }} pick with this exact pattern has gone {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%) — league-wide, not specific to either team here.{% else %}Not enough history yet to trust — too new to show a record.{% endif %}">{{ label }} {{ '▲' if dir == 'for' else '▼' }} {{ 'TOWARD' if dir == 'for' else 'AWAY' }}</span>
+{% else %}
+<span class="mc-t">{{ label }}</span>
+{% endif %}
+{% endmacro %}
+
 <div class="mc-wrap">
     <div class="mc-chips">
         {# ML — surfaces the "Model Factors" panel behind this number instead
            of jumping straight to the bet slip (the bet is still one tap
            away from there, once you've seen why the model says what it says). #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
-            <span class="mc-t">ML</span>
+            {{ move_header('ML', game.movement_profile, movement_stat(game.movement_profile, game.sport)) }}
             {% if mc_ml_has %}
             <span class="mc-big">{{ mc_ml_model_side }}</span>
             <span class="mc-side">{{ mc_ml_side }} {{ mc_ml_amer_disp }}</span>
@@ -246,7 +271,7 @@
            against actual margins, not derived from the win-prob model's
            logit like the old spread_proxy.py was. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_model_ok }}{{ ' mc-hot' if mc_sp_model_ok and mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_model_ok }}" title="{% if mc_sp_model_ok %}{% if mc_sp_validated %}Model predicted spread{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model spread{% endif %}"{% if mc_sp_model_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
-            <span class="mc-t">SPREAD</span>
+            {{ move_header('SPREAD', game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport)) }}
             {% if mc_sp_model_ok %}
             <span class="mc-big">{{ mc_sp_model_fav_val | round(1) }}</span>
             <span class="mc-side">{{ mc_sp_model_fav_team }}</span>
@@ -265,7 +290,7 @@
            shared factors panel (_factors_panel.html) to its "Total" tab —
            totals don't share the ML win-prob model's factor list. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
-            <span class="mc-t">TOTAL</span>
+            {{ move_header('TOTAL', game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport)) }}
             {% if mc_tot_model_ok %}
             <span class="mc-big">{{ game.total_model.total_projection | round | int }}</span>
             <span class="mc-side">{% if mc_tot_has %}{{ 'OVER' if game.total_model.total_projection > game.odds.total_line else ('UNDER' if game.total_model.total_projection < game.odds.total_line else 'PUSH') }}{% else %}Model proj{% endif %}</span>
@@ -286,45 +311,6 @@
             {% endif %}
         </div>
     </div>
-
-    {# Movement — pre-game odds-movement category per market (odds_history.
-       classify_movement/classify_spread_movement/classify_total_movement),
-       condensed to just the toward/away direction per market in one strip
-       (used to be 3 full rows each with shape + W-L record — the full
-       detail, including that category's real historical win-loss record
-       via movement_stat()/spread_movement_stat()/total_movement_stat(),
-       app.py, still lives in the title tooltip on hover/tap).
-
-       Wording notes (this got confusing in testing, worth keeping explicit):
-       "toward pick"/"away from pick" is relative to whichever side THIS
-       game's pick is — not a fixed team, and the record in the tooltip is
-       a league-wide stat across every {sport} pick that ever showed this
-       exact pattern, not specific to either team in this game.
-
-       Colored green/red the same way the chips above color an edge.
-       Skipped entirely for no_data/static (nothing informative to show),
-       no profile yet (insufficient snapshot history so far today), or a
-       flat/no-direction classification (toward/away is the whole point of
-       this condensed view — nothing to show without a direction). #}
-    {% macro movement_chip(profile, stat, label) %}
-    {% if profile and profile not in ('no_data', 'static') %}
-    {% set dir = 'for' if profile.endswith('_for') else ('against' if profile.endswith('_against') else none) %}
-    {% if dir %}
-    {% set shape = profile.replace('_for', '').replace('_against', '').replace('_', ' ') | title %}
-    {% set dir_phrase = 'toward the pick' if dir == 'for' else 'away from the pick' %}
-    {% set losses = stat.n - stat.wins %}
-    <span class="mc-move-chip{{ ' edge-pos' if dir == 'for' else ' edge-neg' }}" title="{{ label }}: {{ shape }} — line moved {{ dir_phrase }}. {% if stat.n %}Every {{ game.sport }} pick with this exact pattern has gone {{ stat.wins }}-{{ losses }} ({{ stat.win_rate }}%) — league-wide, not specific to either team here.{% else %}Not enough history yet to trust — too new to show a record.{% endif %}">
-        {{ label }} {{ '▲ toward' if dir == 'for' else '▼ away' }}
-    </span>
-    {% endif %}
-    {% endif %}
-    {% endmacro %}
-    {% set _moves = [movement_chip(game.movement_profile, movement_stat(game.movement_profile, game.sport), 'ML'),
-                      movement_chip(game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport), 'SPREAD'),
-                      movement_chip(game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport), 'TOTAL')] %}
-    {% if _moves | select | list %}
-    <div class="mc-move-row">{{ _moves | join('') | safe }}</div>
-    {% endif %}
 
     <details class="mc-fold" onclick="event.stopPropagation()">
         <summary class="mc-toggle">Market vs model</summary>
