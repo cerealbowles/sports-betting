@@ -51,6 +51,7 @@ predictions anyway, re-fetching independently was redundant — one source of
 truth, and a full backtest run is now a DB-only operation (seconds, not the
 original run's long sequential-fetch wall time).
 """
+import json
 import math
 import os
 import sys
