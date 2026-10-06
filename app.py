@@ -752,7 +752,7 @@ def _stamp_movement(schedule, sport):
             total_model = game.get('total_model')
             total_line  = odds.get('total_line')
             if total_model and total_line is not None:
-                proj = total_model.get('total_projection')
+                proj = _effective_total_projection(game)
                 over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
                 if over_prob is not None:
                     tot_profile, tot_pct = _oh_mv.classify_total_movement(
@@ -2185,14 +2185,18 @@ def _upsert_predictions(schedule, sport='MLB'):
 
           total_model = game.get('total_model') or {}
           total_line  = odds.get('total_line')
-          proj        = total_model.get('total_projection')
+          proj        = _effective_total_projection(game)
           if total_line is not None and proj is not None:
             pred.total_pick_line  = total_line
             pred.total_proj       = proj
             pred.total_over_price  = odds.get('over_odds')
             pred.total_under_price = odds.get('under_odds')
-            # Blended-ensemble total TRACKING (parallel, not a replacement —
-            # see GamePrediction.blended_total_proj's comment).
+            # blended_total_proj/blended_total_over_prob below are now
+            # identical to total_proj/total_over_prob whenever model
+            # ['blended_total'] is set (NBA/WNBA) since _effective_total_
+            # projection() prefers it live too — kept as separate columns
+            # anyway so the parallel-tracking comparison still works for
+            # sports with no blend (NFL/CFB/MLB/NHL stay team-only here).
             blended_total = model.get('blended_total')
             if blended_total is not None:
               pred.blended_total_proj      = blended_total
@@ -2778,6 +2782,24 @@ app.jinja_env.globals['spread_model_factor_rows'] = spread_model.weighted_factor
 
 _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
                              **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}
+
+
+def _effective_total_projection(game):
+    """The total projection actual picks should be graded/made against —
+    prefers the blended team+player total (model['blended_total'], only
+    set for NBA/WNBA, see nba_ensemble_model.py/wnba_ensemble_model.py's
+    TOTAL_FIT) over the team-only total_model.total_projection every other
+    sport still uses (no player total model exists for MLB/NFL/CFB/NHL).
+    Live-wired per user request (2026-10-06) after the parallel TOTAL
+    tracking columns showed the mechanism working correctly end-to-end;
+    sample was still thin (n=2 WNBA games) so this is a judgment call to
+    start feeding the data in now rather than wait for more volume."""
+    model = game.get('model') or {}
+    blended = model.get('blended_total')
+    if blended is not None:
+        return blended
+    total_model = game.get('total_model') or {}
+    return total_model.get('total_projection')
 
 
 def _margin_cover_prob(sport, margin, home_spread_line):
@@ -4262,7 +4284,7 @@ def _best_market_pick(game):
   total_model = game.get('total_model')
   total_line  = odds.get('total_line')
   if total_model and total_line is not None and _total_confidence_tier(sport, 'high') != 'unproven':
-    proj = total_model.get('total_projection')
+    proj = _effective_total_projection(game)
     over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
     over_price, under_price = odds.get('over_odds'), odds.get('under_odds')
     if over_prob is not None and over_price is not None and under_price is not None:
