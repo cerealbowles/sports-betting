@@ -4370,6 +4370,26 @@ def _mlb_star_pick(game):
 app.jinja_env.globals['best_market_pick'] = _best_market_pick
 
 
+def _injury_last_refreshed(sport):
+  """Most recent InjuryStatus.updated_at for this sport, ET-formatted, or
+  None if nothing's been ingested yet. Surfaces when the injury snapshot
+  powering today's grading actually last changed — now that nhl_api.py's
+  per-game injury fetch is gated behind has_injury_snapshot() (and NFL's
+  injury data always rides along with its already-cached weather fetch),
+  neither sport hits ESPN for injuries on a plain page load once today's
+  snapshot exists, so this replaces that live check as the user-visible
+  freshness signal."""
+  ts = db.session.query(db.func.max(InjuryStatus.updated_at)).filter_by(sport=sport.upper()).scalar()
+  if not ts:
+    return None
+  if ts.tzinfo is None:
+    ts = ts.replace(tzinfo=timezone.utc)
+  return ts.astimezone(_ET).strftime('%-I:%M %p ET')
+
+
+app.jinja_env.globals['injury_last_refreshed'] = _injury_last_refreshed
+
+
 def _mlb_candidates(schedule):
   """Pure MLB trust-score candidate list, built from a schedule (list of
   {'games': [...]}) with no DB writes — shared by mlb_schedule() (which

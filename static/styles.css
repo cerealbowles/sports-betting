@@ -1747,6 +1747,7 @@ body.embed-mode .container { padding-bottom: 0; }
 .refresh-info { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
 .refresh-link { color: var(--text-muted); text-decoration: none; font-weight: 600; }
 .refresh-link:hover { color: var(--text); }
+.injury-refresh-note { font-size: 0.72rem; color: var(--text-muted); margin: -4px 0 10px; }
 
 .game-card { padding: 0; overflow: hidden; margin-bottom: 14px; }
 

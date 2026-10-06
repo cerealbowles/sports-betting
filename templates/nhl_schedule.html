@@ -45,6 +45,11 @@
 {% set nav_endpoint = 'nhl_schedule' %}
 {% include "_day_nav.html" %}
 
+{% set inj_refreshed = injury_last_refreshed('NHL') %}
+{% if inj_refreshed %}
+<div class="injury-refresh-note">Injury reports updated {{ inj_refreshed }}</div>
+{% endif %}
+
 {% if not schedule %}
 <div class="card" style="padding:24px; text-align:center;">
     <p style="color:var(--text-muted);">No NHL games {{ 'that day' if not day_nav.is_today else 'today' }}, or unable to reach the NHL API. Try refreshing.</p>

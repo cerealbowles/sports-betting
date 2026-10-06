@@ -22,6 +22,11 @@
     {% endif %}
 </div>
 
+{% set inj_refreshed = injury_last_refreshed('NFL') %}
+{% if inj_refreshed %}
+<div class="injury-refresh-note">Injury reports updated {{ inj_refreshed }}</div>
+{% endif %}
+
 {% if not week_ctx.days %}
 <div class="card offseason-card">
     <div class="offseason-icon">🏈</div>

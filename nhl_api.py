@@ -648,13 +648,26 @@ def build_schedule_context(target_date=None):
                 espn_home_id, espn_away_id = espn_info['home_id'], espn_info['away_id']
                 team_prob = model['home_prob']
 
-                # Persist today's injury report (DB-checked first so a
-                # repeat render the same day doesn't re-fetch/re-write) —
-                # same pattern as nfl_api.py's identical block.
-                injuries_by_team = nhl_boxscore_api.get_injuries(event_id)
-                for tid in (espn_home_id, espn_away_id):
-                    if tid and not nhl_stats_db.has_injury_snapshot(tid, today_str):
-                        nhl_stats_db.ingest_injury_report(tid, injuries_by_team.get(tid, []), today_str)
+                # Persist today's injury report — DB-checked BEFORE the
+                # live fetch now (not just before the write), so a page
+                # render no longer hits ESPN at all once today's snapshot
+                # exists for both teams. The live nhl_boxscore_api.get_
+                # injuries() call only happens on the first render of the
+                # day (or whichever request/cron tick gets there first);
+                # every subsequent render this same day — including all
+                # user page loads — reads purely from the DB via
+                # get_unavailable_player_ids() in _grades() below. In
+                # practice the first fetch each day happens from app.py's
+                # 8am-20pm _warm_all_caches cron (which calls this same
+                # build_schedule_context()), well before most user traffic.
+                needs_fetch = any(
+                    tid and not nhl_stats_db.has_injury_snapshot(tid, today_str)
+                    for tid in (espn_home_id, espn_away_id))
+                if needs_fetch:
+                    injuries_by_team = nhl_boxscore_api.get_injuries(event_id)
+                    for tid in (espn_home_id, espn_away_id):
+                        if tid and not nhl_stats_db.has_injury_snapshot(tid, today_str):
+                            nhl_stats_db.ingest_injury_report(tid, injuries_by_team.get(tid, []), today_str)
 
                 def _grades(team_id):
                     games_with_players = nhl_stats_db.get_team_games_with_players_db(
