@@ -49,6 +49,18 @@ def implied_margin(sport, home_prob):
     return a + b * logit
 
 
+# Pull-toward-50% factor applied to cover_prob for sports outside
+# VALIDATED_SPORTS. These sports' margin fit is a weak/unvalidated proxy (see
+# the out-of-sample table below — NBA tested at 43.3% ATS, below break-even),
+# so the raw normal-CDF number overstates how sure the proxy actually is.
+# This doesn't change which side gets picked (sign is unchanged) or flat-unit
+# ROI — it only keeps the displayed/graded confidence from claiming 65-75%
+# on a signal that hasn't earned it. Revisit (or remove) once a sport clears
+# enough live-graded games to either join VALIDATED_SPORTS or get its own
+# real margin model.
+UNVALIDATED_SHRINK = 0.35
+
+
 def cover_prob(sport, home_prob, home_spread_line):
     """P(home team covers home_spread_line) per the proxy model, or None if
     unavailable. home_spread_line follows market convention (negative = home
@@ -60,7 +72,10 @@ def cover_prob(sport, home_prob, home_spread_line):
     _, _, sigma = coeffs
     if sigma <= 0:
         return None
-    return _phi((margin - (-home_spread_line)) / sigma)
+    prob = _phi((margin - (-home_spread_line)) / sigma)
+    if not is_validated(sport):
+        prob = 0.5 + (prob - 0.5) * UNVALIDATED_SHRINK
+    return prob
 
 
 # Out-of-sample cover accuracy per sport (fit COEFFS on the first 70% of each

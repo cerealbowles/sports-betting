@@ -2,7 +2,11 @@
 Injury status from ESPN's unofficial scoreboard API.
 The scoreboard responses include an `injuries` array on each competitor
 for NFL. MLB and NHL are attempted via the same pattern but may return
-empty lists — all failures are silent.
+empty lists. NBA's scoreboard competitor objects don't expose an `injuries`
+key at all (confirmed by inspecting a live response) — get_injury_map('nba')
+will always return {}, not just "sometimes empty". nba_roster_api.py's
+active-roster logic accounts for this and falls back to recent-game
+participation instead of depending on this injury signal for NBA.
 """
 import time
 import requests
@@ -13,6 +17,7 @@ _PATHS = {
     'mlb': 'baseball/mlb',
     'nhl': 'hockey/nhl',
     'nfl': 'football/nfl',
+    'nba': 'basketball/nba',
 }
 
 _cache = {}

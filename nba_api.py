@@ -6,6 +6,10 @@ from zoneinfo import ZoneInfo
 import odds_api
 import nba_model
 import bball_total_model
+import nba_roster_api
+import nba_player_model
+import nba_ensemble_model
+import spread_proxy
 
 _ET = ZoneInfo('America/New_York')
 
@@ -499,6 +503,58 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
         model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
     except Exception:
         model = None
+
+    # Blend in the player-level signal (nba_player_model.py) via the fitted
+    # weights in nba_ensemble_model.py — see nba_ensemble_bootstrap.py for
+    # the backtest behind this (2,453 games: 66.7% blended accuracy / 0.2106
+    # Brier vs. 65.0%/0.2204 team-only and 64.2%/0.2338 player-only). Wrapped
+    # in its own try/except, independent of the team model above — a roster/
+    # gamelog fetch failure (new team-level data this app hasn't needed
+    # before) should degrade to the team-only model, never break the page.
+    if model is not None:
+        try:
+            team_prob = model['home_prob']
+            team_margin = spread_proxy.implied_margin('NBA', team_prob)
+
+            def _active_projections(team_id):
+                active = nba_roster_api.get_active_roster(team_id)
+                out = []
+                for p in active:
+                    proj = nba_player_model.project_player(p['games'])
+                    if proj:
+                        out.append(proj)
+                return out
+
+            home_active = _active_projections(home.get('id'))
+            away_active = _active_projections(away.get('id'))
+
+            home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+            away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
+            home_opp_factor = nba_player_model.opponent_factor(away_ppg_allowed)
+            away_opp_factor = nba_player_model.opponent_factor(home_ppg_allowed)
+
+            player_pred = (nba_player_model.predict(
+                               home_active, away_active,
+                               home_opp_factor=home_opp_factor,
+                               away_opp_factor=away_opp_factor)
+                           if home_active and away_active else None)
+
+            ensemble = (nba_ensemble_model.predict(
+                            team_prob, player_pred['home_prob'],
+                            team_margin, player_pred['margin'])
+                        if player_pred and team_margin is not None else None)
+
+            model['team_only_prob'] = team_prob
+            model['player_prob']    = player_pred['home_prob'] if player_pred else None
+            model['blended']        = ensemble is not None
+            if ensemble:
+                model['home_prob'] = ensemble['home_prob']
+                model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
+                model['ensemble_margin'] = ensemble['margin']
+        except Exception:
+            # Leave `model` as the team-only prediction — same fallback
+            # philosophy as the try/except around nba_model.predict() above.
+            model['blended'] = False
 
     # Pace-adjusted total (O/U) projection — separate from the win-prob
     # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see

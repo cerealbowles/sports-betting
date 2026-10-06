@@ -3,11 +3,29 @@
 bootstrap_2024.py — Build MLB model training data from historical seasons.
 
 Usage:
-    python3 bootstrap_2024.py               # fetch all seasons, run refit
-    python3 bootstrap_2024.py --refit-only  # skip fetch, use cached combined data
+    python3 bootstrap_2024.py                    # fetch all seasons, run refit
+    python3 bootstrap_2024.py --refit-only        # skip fetch, use cached combined data
+    python3 bootstrap_2024.py --max-dates 10      # smoke test: first 10 game dates/season only
 
 Covers all completed seasons defined in SEASONS below.
-Each season uses its own team stats — 2024 stats score 2024 games, etc.
+
+POINT-IN-TIME (fixed — see build_season_rows() docstring for detail): each
+game is scored using team stats as of the day before it, not the season's
+final aggregate. The previous version fetched one full-season stat snapshot
+per season and reused it for every game — a hindsight leak (an April game
+scored with that team's September numbers), caught during unrelated NBA
+model work and traced to spread_proxy.py's "MLB 58.5% ATS, validated"
+footnote. That specific ATS figure itself came from real historical
+predictions logged by the live app (not from this script), so it wasn't
+directly leaked — but this script's own fitted coefficients were, which is
+what this fix addresses. Mirrors nhl_backfill.build_pointintime_stats().
+
+This is meaningfully more expensive than the old version — point-in-time
+stats are fetched once per unique game date (~150-190/season) rather than
+once per season, and the xwOBA/xFIP fetchers' own as_of_date paths do
+further day-by-day chunking internally (see their docstrings). Use
+--max-dates for a quick correctness check before committing to a full,
+multi-season run.
 """
 
 import csv
@@ -490,15 +508,18 @@ def build_fatigue_map(games):
     return result
 
 
-def build_recent_rpg_map(games, window=15, team_era=None):
+def build_recent_rpg_map(games, window=15, era_by_date=None):
     """
     For each game, compute each team's rolling {window}-game opponent-adjusted
     runs-per-game using only games *before* this one (no lookahead bias).
 
-    team_era: {team_id: era_float} — when provided, normalizes each game's runs
-    scored by the opponent's ERA relative to league average so that 13 runs
-    against Colorado (ERA ~6.5) counts less than 13 runs against an ace staff.
-    Multiplier is capped to [0.60, 1.60] to avoid extreme adjustments.
+    era_by_date: {game_date: {team_id: era_float}} — each game's opponent-ERA
+    normalization uses THAT game's own point-in-time ERA snapshot (era_by_date
+    built from pitch_by_date in build_season_rows()), not a single season-wide
+    ERA value for every game. Using one static end-of-season ERA for every
+    game here would itself be a point-in-time leak even after the rest of
+    build_season_rows() stopped doing that — a team's ERA in April isn't its
+    ERA in September. Multiplier capped to [0.60, 1.60] to avoid extremes.
 
     Returns {(game_date, home_id, away_id): {'home': float|None, 'away': float|None}}
     None when fewer than 5 prior games exist (matches mlb_api threshold).
@@ -510,7 +531,8 @@ def build_recent_rpg_map(games, window=15, team_era=None):
     for g in sorted_games:
         h_id = g['home_id']
         a_id = g['away_id']
-        key  = (g['game_date'], h_id, a_id)
+        gd   = g['game_date']
+        key  = (gd, h_id, a_id)
 
         def _rpg(tid):
             recent = team_runs.get(tid, [])[-window:]
@@ -518,12 +540,13 @@ def build_recent_rpg_map(games, window=15, team_era=None):
 
         result[key] = {'home': _rpg(h_id), 'away': _rpg(a_id)}
 
-        # Normalize runs by opponent ERA before appending
+        # Normalize runs by the opponent's ERA AS OF THIS GAME'S DATE before appending
         h_runs = g.get('home_score', 0)
         a_runs = g.get('away_score', 0)
-        if team_era:
-            h_era  = team_era.get(h_id, LG_ERA)
-            a_era  = team_era.get(a_id, LG_ERA)
+        if era_by_date is not None:
+            era_asof = era_by_date.get(gd, {})
+            h_era  = era_asof.get(h_id, LG_ERA)
+            a_era  = era_asof.get(a_id, LG_ERA)
             # home scored against away pitching; normalize by away team ERA
             h_mult = min(max(LG_ERA / max(a_era, 2.0), 0.60), 1.60)
             a_mult = min(max(LG_ERA / max(h_era, 2.0), 0.60), 1.60)
@@ -538,52 +561,77 @@ def build_recent_rpg_map(games, window=15, team_era=None):
 
 # ── Build training rows for one season ────────────────────────────────────────
 
-def build_season_rows(season, team_abbrevs, import_model):
+def build_season_rows(season, team_abbrevs, import_model, max_dates=None):
+    """
+    POINT-IN-TIME: every stat fed to import_model.predict() for a given game
+    is fetched as-of the day BEFORE that game, not the full-season aggregate.
+    (Previously this function fetched one full-season snapshot of pitching/
+    batting/xwOBA/xFIP and reused it for every game in the season — including
+    games that happened before that snapshot's data existed. That's a
+    hindsight leak: an April game was being scored with September's final
+    stats. Same bug class as nba_bootstrap.py's season-aggregate team stats,
+    caught during the NBA player-model work and fixed here. See
+    nhl_backfill.build_pointintime_stats() for the pattern this follows.)
+
+    Stats only change meaningfully day-to-day, not game-to-game, so this
+    fetches once per UNIQUE game date in the season (not once per game) —
+    still real API cost (~150-190 dates/season x 4 endpoints), but far
+    cheaper than per-game, and the fetchers already supported as_of_date
+    (see fetch_team_pitching/batting/xwoba/xfip docstrings) — they just
+    weren't being called with it here.
+
+    max_dates: process only the first N chronological dates — for a quick
+    correctness smoke test without paying the full-season fetch cost.
+
+    REMAINING KNOWN LEAK: fetch_team_pitcher_metrics() (Savant K%/BB%/
+    barrel%/whiff%) has no as_of_date support at all — always full-season.
+    Not fixed this pass; same disclosed-not-hidden spirit as the rolling
+    factors below.
+    """
     print(f'\n── Season {season} ──────────────────────────────────────', flush=True)
-    games      = fetch_schedule(season)
-    team_pitch = fetch_team_pitching(season)
-    team_bat   = fetch_team_batting(season)
-    team_xwoba = fetch_team_xwoba(season)
+    games = fetch_schedule(season)
+    dates = sorted({g['game_date'] for g in games})
+    if max_dates:
+        dates = dates[:max_dates]
+        games = [g for g in games if g['game_date'] in set(dates)]
 
-    # Predictive pitcher metrics (xFIP/SIERA and Savant K%/BB%/barrel%/whiff%)
-    # These are keyed by lowercase team abbreviation.
-    # Silent failure returns {} so the model falls back to descriptive stats.
-    xfip_by_abbrev    = fetch_team_xfip(season)
+    print(f'  Fetching point-in-time team stats for {len(dates)} game dates...', flush=True)
+    pitch_by_date, bat_by_date, xwoba_by_date, xfip_by_date = {}, {}, {}, {}
+    for d in dates:
+        pitch_by_date[d] = fetch_team_pitching(season, as_of_date=d)
+        bat_by_date[d]   = fetch_team_batting(season, as_of_date=d)
+        xwoba_by_date[d] = fetch_team_xwoba(season, as_of_date=d)
+        xfip_by_date[d]  = fetch_team_xfip(season, as_of_date=d)
+
+    # Predictive pitcher metrics (Savant K%/BB%/barrel%/whiff%) — no
+    # as_of_date support, stays full-season (see docstring above).
     metrics_by_abbrev = fetch_team_pitcher_metrics(season)
-
-    n_pitch = len(team_pitch)
-    n_xwoba = len(team_xwoba)
-    n_xfip  = len(xfip_by_abbrev)
-    n_met   = len(metrics_by_abbrev)
-    print(f'  Team pitching: {n_pitch} teams  |  '
-          f'Team batting: {len(team_bat)} teams  |  '
-          f'xwOBA: {n_xwoba} teams {"(falling back to OPS)" if n_xwoba == 0 else ""}  |  '
-          f'xFIP/SIERA: {n_xfip} teams  |  '
-          f'Savant metrics: {n_met} teams',
-          flush=True)
-
-    xwoba_by_id = {tid: team_xwoba[abbrev]
-                   for tid, abbrev in team_abbrevs.items()
-                   if abbrev in team_xwoba}
-
-    # Build tid → xfip/siera and tid → savant metrics using team_abbrevs map
-    xfip_by_id    = {tid: xfip_by_abbrev[abbrev]
-                     for tid, abbrev in team_abbrevs.items()
-                     if abbrev in xfip_by_abbrev}
     metrics_by_id = {tid: metrics_by_abbrev[abbrev]
                      for tid, abbrev in team_abbrevs.items()
                      if abbrev in metrics_by_abbrev}
 
-    fatigue_map  = build_fatigue_map(games)
-    team_era     = {tid: info['era'] for tid, info in team_pitch.items() if info.get('era')}
-    recent_rpg_map = build_recent_rpg_map(games, team_era=team_era)
+    era_by_date = {d: {tid: info['era'] for tid, info in pitch_by_date[d].items() if info.get('era')}
+                   for d in dates}
+
+    fatigue_map    = build_fatigue_map(games)
+    recent_rpg_map = build_recent_rpg_map(games, era_by_date=era_by_date)
 
     rows = []
     for g in games:
         h_id = g['home_id']
         a_id = g['away_id']
-        fat  = fatigue_map.get((g['game_date'], h_id, a_id), {})
-        rpg  = recent_rpg_map.get((g['game_date'], h_id, a_id), {})
+        gd   = g['game_date']
+        fat  = fatigue_map.get((gd, h_id, a_id), {})
+        rpg  = recent_rpg_map.get((gd, h_id, a_id), {})
+
+        team_pitch = pitch_by_date.get(gd, {})
+        team_bat   = bat_by_date.get(gd, {})
+        xwoba_by_id = {tid: xwoba_by_date.get(gd, {})[abbrev]
+                       for tid, abbrev in team_abbrevs.items()
+                       if abbrev in xwoba_by_date.get(gd, {})}
+        xfip_by_id = {tid: xfip_by_date.get(gd, {})[abbrev]
+                      for tid, abbrev in team_abbrevs.items()
+                      if abbrev in xfip_by_date.get(gd, {})}
 
         def team_pitcher(tid):
             p   = team_pitch.get(tid, {})
@@ -626,7 +674,7 @@ def build_season_rows(season, team_abbrevs, import_model):
         result = import_model.predict(home, away, game_time_utc=g['game_time'])
         rows.append({
             'season':       season,
-            'game_date':    g['game_date'],
+            'game_date':    gd,
             'home_team':    g['home_name'],
             'away_team':    g['away_name'],
             'home_won':     1 if g['home_won'] else 0,
@@ -784,7 +832,7 @@ def refit(training_rows):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def main():
+def main(max_dates=None):
     seasons_str = ' + '.join(str(s) for s in SEASONS)
     print('═' * 62)
     print(f'  MLB Model Bootstrap — {seasons_str}')
@@ -804,8 +852,10 @@ def main():
     for season in SEASONS:
         cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   f'bootstrap_training_{season}.json')
-        # Never cache in-progress seasons — always re-fetch so today's results count
-        use_cache = (season < current_year) and os.path.exists(cache_path)
+        # Never cache in-progress seasons — always re-fetch so today's results count.
+        # Also never cache a --max-dates smoke-test run — it's a partial season
+        # and would otherwise poison the cache for a later full run.
+        use_cache = (season < current_year) and os.path.exists(cache_path) and not max_dates
         if use_cache:
             with open(cache_path) as f:
                 rows = json.load(f)
@@ -813,13 +863,13 @@ def main():
             print(f'  Loaded from cache: {len(rows):,} rows  '
                   f'(delete bootstrap_training_{season}.json to re-fetch)')
         else:
-            rows = build_season_rows(season, team_abbrevs, mlb_model)
-            if season < current_year:
+            rows = build_season_rows(season, team_abbrevs, mlb_model, max_dates=max_dates)
+            if season < current_year and not max_dates:
                 with open(cache_path, 'w') as f:
                     json.dump(rows, f)
                 print(f'  Cached → bootstrap_training_{season}.json')
             else:
-                print(f'  (2026 in-progress — not cached)')
+                print(f'  (not cached — {"in-progress season" if season >= current_year else "smoke test"})')
         all_rows.extend(rows)
 
     combined_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -834,6 +884,9 @@ def main():
 if __name__ == '__main__':
     combined_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  'bootstrap_training.json')
+    _max_dates = None
+    if '--max-dates' in sys.argv:
+        _max_dates = int(sys.argv[sys.argv.index('--max-dates') + 1])
     if '--refit-only' in sys.argv and os.path.exists(combined_path):
         print('Loading cached combined training data...')
         with open(combined_path) as f:
@@ -842,4 +895,4 @@ if __name__ == '__main__':
               f'{sorted({r["season"] for r in rows})}')
         refit(rows)
     else:
-        main()
+        main(max_dates=_max_dates)
