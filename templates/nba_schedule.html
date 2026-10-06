@@ -185,6 +185,25 @@
         </div>
         {% endif %}
 
+        {% if game.model and game.model.blended %}
+        {# NBA-only: the live moneyline/spread number above is a blend of
+           nba_model.py (team-aggregate) and nba_player_model.py (player-
+           level, roster/recent-production based) via nba_ensemble_model.py's
+           fitted weights — see nba_ensemble_bootstrap.py for the backtest
+           behind it. Surfaced here so it's visible which number is actually
+           driving the pick, not just computed silently server-side. #}
+        <div class="analysis-row" title="Team-aggregate model vs. player-level model (active roster, recent production, opponent-adjusted), combined via fitted blend weights into the number used for this game's pick.">
+            <span class="analysis-label">Blend</span>
+            <div class="analysis-data">
+                <span>Team <b>{{ (game.model.team_only_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">·</span>
+                <span>Player <b>{{ (game.model.player_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">→</span>
+                <span>Blended <b>{{ (game.model.home_prob * 100) | round(1) }}%</b></span>
+            </div>
+        </div>
+        {% endif %}
+
         {% if game.model %}
         {% include "_market_chips.html" %}
         {% include "_factors_panel.html" %}
