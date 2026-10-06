@@ -22,8 +22,19 @@ any more cleanly than football's does — see that module's docstring for
 the full reasoning), and a logistic is fit directly on the matchup
 differential rather than hand-deriving a goals scale.
 
-UNVALIDATED until nhl_player_bootstrap.py's backtest replaces INTERCEPT/
-SLOPE below with real fitted values.
+Fit provenance (nhl_player_bootstrap.py, 2024+2025+2026 seasons, strictly
+point-in-time state — no hindsight leakage, n=2,609):
+    54.9% win accuracy, 0.2464 Brier, vs. a 54.3% home-ice-always baseline.
+This is a MUCH weaker standalone signal than NBA's/NFL's/WNBA's own
+player-grade models (all landed 58-64%) — barely above a coin flip with
+home ice added in. See nhl_ensemble_model.py for the blended-with-team-
+model numbers, which turn out barely better than team-only alone; hockey
+appears to be the one sport in this app where a skater/goalie box-score
+grade doesn't add much beyond what the team-aggregate model already
+captures, consistent with hockey's reputation as the most parity-driven,
+highest-variance of the major sports (goal variance from a small number
+of bounces/deflections per game swamps most skill signals this box score
+can see).
 """
 import math
 
@@ -165,9 +176,9 @@ def _sigmoid(x):
 # Fit by nhl_player_bootstrap.py: P(home_win) ~ sigmoid(INTERCEPT + SLOPE *
 # matchup_diff), where matchup_diff = (home_skater - away_goalie) -
 # (away_skater - home_goalie) — mirrors nfl_player_model.py's matchup-diff
-# approach exactly. Placeholder until a real backtest replaces these.
-INTERCEPT = 0.0
-SLOPE     = 1.0
+# approach exactly. See module docstring's fit provenance above.
+INTERCEPT = 0.1779
+SLOPE     = 0.7645
 
 
 def predict(home_skater, home_goalie, away_skater, away_goalie):
