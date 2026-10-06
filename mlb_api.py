@@ -51,6 +51,9 @@ _TTL = {
     # that cost, not the user.
     'gamelog':  7200,   # 2 hours (was 30 min)
     'roster':   7200,   # 2 hours (was 1 hour)
+    # Short — a playoff series' own record should update promptly once a
+    # game in it goes Final, not sit on a 1-hour TTL like regular-season form.
+    'playoff_matchups': 300,
 }
 
 LG_ERA = 4.20  # MLB league-average ERA used for opponent-quality normalization
@@ -294,6 +297,48 @@ def _get_recent_data(days_back=20):
         sched[tid].sort(key=lambda x: x['date'])
     recent_runs = {tid: v[-15:] for tid, v in runs.items()}
     return {tid: v[-10:] for tid, v in form.items()}, matchups, sched, recent_runs
+
+
+def _get_playoff_matchups(days_back=45):
+    """Returns {frozenset({id_a, id_b}): [{'date': str, 'winner': id}, ...]}
+    for postseason games (gameType D/L/W/F — division/league/wild-card/World
+    Series) in the last `days_back` days.
+
+    Separate from _get_recent_data()'s matchups map, which only requests
+    gameType 'R' (regular season) — so during an actual playoff series, that
+    map never contains the series' own prior games, and the series-record
+    text built from it (see build_schedule_context()) always showed "Tied
+    0-0" no matter what game of the series it actually was. This mirrors
+    that function's parsing but against the postseason game-type filter,
+    over a window wide enough to cover a full postseason (practically
+    doesn't run past 4-5 weeks, 45 days is a safety margin, not a tight fit).
+    """
+    end   = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    start = (datetime.utcnow() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    data = _cached_get(
+        f"{MLB_API}/schedule",
+        {'sportId': 1, 'startDate': start, 'endDate': end,
+         'hydrate': 'linescore', 'gameType': 'D,L,W,F'},
+        f'playoff_recent_{start}',
+        _TTL['playoff_matchups'],
+    )
+    matchups = {}
+    if not data:
+        return matchups
+    for date_obj in data.get('dates', []):
+        for game in date_obj.get('games', []):
+            if game.get('status', {}).get('abstractGameState') != 'Final':
+                continue
+            away = game['teams']['away']
+            home = game['teams']['home']
+            a_id, h_id = away['team']['id'], home['team']['id']
+            a_s,  h_s  = away.get('score', 0) or 0, home.get('score', 0) or 0
+            winner = a_id if a_s > h_s else h_id
+            key = frozenset([a_id, h_id])
+            matchups.setdefault(key, []).append({'date': date_obj['date'], 'winner': winner})
+    for key in matchups:
+        matchups[key].sort(key=lambda x: x['date'])
+    return matchups
 
 
 def _get_team_era_map():
@@ -708,6 +753,7 @@ def build_schedule_context(target_date=None):
     from odds_api import _normalize
     raw        = _get_schedule_raw(date_str=target_date)
     recent, matchups, team_sched, recent_runs_map = _get_recent_data()
+    playoff_matchups = _get_playoff_matchups()
     team_era_map = _get_team_era_map()
     splits     = _get_standings_splits()
     odds_map   = odds_api.get_odds_map('mlb')
@@ -871,7 +917,12 @@ def build_schedule_context(target_date=None):
             if series_total > 1:
                 a_id = game['teams']['away']['team']['id']
                 h_id = game['teams']['home']['team']['id']
-                past = matchups.get(frozenset([a_id, h_id]), [])
+                # Playoff series need their own (postseason gameType) head-
+                # to-head map — _get_recent_data()'s `matchups` only pulls
+                # regular-season games, which never contains this series'
+                # own prior games (see _get_playoff_matchups() docstring).
+                series_matchups = playoff_matchups if is_playoffs else matchups
+                past = series_matchups.get(frozenset([a_id, h_id]), [])
                 # Take only the most recent (series_num - 1) meetings — these are the prior games in this series
                 prev = past[-(series_num - 1):] if series_num > 1 else []
                 a_wins = sum(1 for g in prev if g['winner'] == a_id)
