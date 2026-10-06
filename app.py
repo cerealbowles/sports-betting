@@ -741,13 +741,12 @@ def _stamp_movement(schedule, sport):
             odds = game.get('odds') or {}
             factors = model.get('factors')
             home_spread = odds.get('home_spread')
-            if spread_model.is_validated(sport) and factors and home_spread is not None:
-                home_cover = spread_model.cover_prob(sport, factors, home_spread)
-                if home_cover is not None:
-                    sp_profile, sp_pct = _oh_mv.classify_spread_movement(
-                        odds_sport_key, home_name, away_name, home_cover >= 0.5, game_start)
-                    game['spread_movement_profile'] = sp_profile
-                    game['spread_movement_pct'] = sp_pct
+            home_cover = _effective_spread_cover_prob(sport, model, factors, home_spread)
+            if home_cover is not None:
+                sp_profile, sp_pct = _oh_mv.classify_spread_movement(
+                    odds_sport_key, home_name, away_name, home_cover >= 0.5, game_start)
+                game['spread_movement_profile'] = sp_profile
+                game['spread_movement_pct'] = sp_pct
 
             total_model = game.get('total_model')
             total_line  = odds.get('total_line')
@@ -2784,6 +2783,27 @@ _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_mo
                              **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}
 
 
+def _effective_spread_cover_prob(sport, model, factors, home_spread):
+    """P(home covers home_spread) for actual spread picks/grading. Prefers
+    spread_model.py's own fitted factor regression where it's proven out
+    (spread_model.VALIDATED_SPORTS = MLB, NHL). Elsewhere, falls back to
+    the blended ensemble margin (model['ensemble_margin'], only set for
+    NBA/WNBA — see nba_ensemble_model.py/wnba_ensemble_model.py) via
+    _margin_cover_prob(), which reuses spread_model.COEFFS[sport]['sigma']
+    for the margin-to-probability conversion even though spread_model's
+    own factor regression isn't validated there. Live-wired per user
+    request (2026-10-06): this turns on a brand-new spread-pick market for
+    NBA/WNBA that didn't exist before, on a thin (n=2 game) backtest
+    sample — explicitly accepted as a 'accumulate and tune as we go'
+    tradeoff rather than waiting for more volume first. Returns None if
+    neither path has what it needs."""
+    if spread_model.is_validated(sport) and factors and home_spread is not None:
+        return spread_model.cover_prob(sport, factors, home_spread)
+    if home_spread is not None and model.get('ensemble_margin') is not None:
+        return _margin_cover_prob(sport, model.get('ensemble_margin'), home_spread)
+    return None
+
+
 def _effective_total_projection(game):
     """The total projection actual picks should be graded/made against —
     prefers the blended team+player total (model['blended_total'], only
@@ -4258,8 +4278,8 @@ def _best_market_pick(game):
   # ── Spread ──
   factors     = model.get('factors')
   home_spread = odds.get('home_spread')
-  if spread_model.is_validated(sport) and factors and home_spread is not None:
-    home_cover = spread_model.cover_prob(sport, factors, home_spread)
+  home_cover  = _effective_spread_cover_prob(sport, model, factors, home_spread)
+  if home_cover is not None:
     hp_price, ap_price = odds.get('home_spread_price'), odds.get('away_spread_price')
     if home_cover is not None and hp_price is not None and ap_price is not None:
       vf_h, vf_a = _vig_free_implied(hp_price, ap_price)
