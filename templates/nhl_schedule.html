@@ -247,6 +247,24 @@
         </div>
         {% endif %}
 
+        {% if game.model and game.model.blended %}
+        {# NHL-only: the live moneyline above is a blend of nhl_model.py
+           (team-aggregate) and nhl_player_model.py (skater + goalie grades)
+           via nhl_ensemble_model.py's fitted weights — see
+           nhl_ensemble_bootstrap.py for the backtest behind it. Mirrors
+           the NBA/WNBA/NFL game cards' identical row. #}
+        <div class="analysis-row" title="Team-aggregate model vs. player-level model (skater production + goaltender save rate, injury-adjusted), combined via fitted blend weights into the number used for this game's pick.">
+            <span class="analysis-label">Blend</span>
+            <div class="analysis-data">
+                <span>Team <b>{{ (game.model.team_only_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">·</span>
+                <span>Player <b>{{ (game.model.player_prob * 100) | round(1) }}%</b></span>
+                <span class="odds-sep">→</span>
+                <span>Blended <b>{{ (game.model.home_prob * 100) | round(1) }}%</b></span>
+            </div>
+        </div>
+        {% endif %}
+
         {% if game.model %}
         {% include "_market_chips.html" %}
         {% include "_factors_panel.html" %}

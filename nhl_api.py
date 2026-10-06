@@ -7,6 +7,11 @@ import odds_api
 import injuries_api
 import nhl_model
 import hockey_total_model
+import nhl_boxscore_api
+import nhl_stats_db
+import nhl_player_model
+import nhl_ensemble_model
+import spread_proxy
 
 _ET = ZoneInfo('America/New_York')
 
@@ -362,6 +367,47 @@ def _rest_days(last_game_date, abbrev, today_str):
         return None
 
 
+ESPN_NHL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+
+
+def _get_espn_event_map(date_str):
+    """Returns {frozenset({home_abbrev, away_abbrev}): {'event_id',
+    'home_id', 'away_id'}} from ESPN's hockey scoreboard for `date_str`
+    (YYYY-MM-DD ET).
+
+    This module's own game identity comes entirely from the official NHL
+    API (NHL_API above) — a different id space than ESPN's, which is what
+    the local stats warehouse (nhl_stats_db.py) and injury data
+    (nhl_boxscore_api.py) are built from, same as every other sport in
+    this app. Bridging the two by team ABBREVIATION (not full name, which
+    differs in formatting between providers — confirmed 'TOR'/'BOS'-style
+    codes match across both) is this function's only job; everything
+    downstream uses ESPN's ids once this lookup succeeds. {} (and the
+    player-blend block that depends on it degrades to team-only) if
+    ESPN's scoreboard has nothing for this date."""
+    date_compact = date_str.replace('-', '')
+    data = _cached_get(f"{ESPN_NHL_SCOREBOARD}?dates={date_compact}&limit=100",
+                        f'espn_nhl_sched_{date_str}', _TTL['schedule'])
+    out = {}
+    if not data:
+        return out
+    for event in data.get('events', []):
+        comp = event.get('competitions', [{}])[0]
+        tmap = {c.get('homeAway'): c for c in comp.get('competitors', [])}
+        home_c, away_c = tmap.get('home', {}), tmap.get('away', {})
+        h_ab = (home_c.get('team') or {}).get('abbreviation', '')
+        a_ab = (away_c.get('team') or {}).get('abbreviation', '')
+        if not h_ab or not a_ab:
+            continue
+        out[frozenset({h_ab, a_ab})] = {
+            'event_id': event.get('id'),
+            'home_id':  (home_c.get('team') or {}).get('id'),
+            'away_id':  (away_c.get('team') or {}).get('id'),
+            'season_type': event.get('season', {}).get('type'),
+        }
+    return out
+
+
 def _get_team_goalie(abbrev):
     data = _cached_get(f"{NHL_API}/club-stats/{abbrev}/now", f'nhl_goalie_{abbrev}', _TTL['goalie'])
     if not data:
@@ -505,6 +551,7 @@ def build_schedule_context(target_date=None):
         return []
 
     today_str = target_date or _today_et()
+    espn_map = _get_espn_event_map(today_str)
     today_games = []
     for day in raw.get('gameWeek', []):
         if day.get('date') == today_str:
@@ -576,6 +623,74 @@ def build_schedule_context(target_date=None):
             model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
         except Exception:
             model = None
+
+        # Blend in the skater+goalie signal (nhl_player_model.py) via the
+        # fitted weights in nhl_ensemble_model.py — see
+        # nhl_ensemble_bootstrap.py for the backtest behind this. Needs an
+        # ESPN event id (this module's own game identity comes from the
+        # official NHL API, a different id space — see _get_espn_event_map()'s
+        # docstring), so the whole block is a no-op (degrades cleanly to the
+        # team-only model) whenever that bridge lookup doesn't find a match.
+        espn_info = espn_map.get(frozenset({a_ab, h_ab}))
+        if model is not None and espn_info is not None:
+            try:
+                event_id = espn_info['event_id']
+                espn_home_id, espn_away_id = espn_info['home_id'], espn_info['away_id']
+                team_prob = model['home_prob']
+
+                # Persist today's injury report (DB-checked first so a
+                # repeat render the same day doesn't re-fetch/re-write) —
+                # same pattern as nfl_api.py's identical block.
+                injuries_by_team = nhl_boxscore_api.get_injuries(event_id)
+                for tid in (espn_home_id, espn_away_id):
+                    if tid and not nhl_stats_db.has_injury_snapshot(tid, today_str):
+                        nhl_stats_db.ingest_injury_report(tid, injuries_by_team.get(tid, []), today_str)
+
+                def _grades(team_id):
+                    games_with_players = nhl_stats_db.get_team_games_with_players_db(
+                        team_id, before_date=today_str)
+                    if not games_with_players:
+                        return None, None
+                    unavailable_ids = nhl_stats_db.get_unavailable_player_ids(team_id, today_str)
+                    skater = nhl_player_model.compute_skater_grade(games_with_players)
+                    goalie = nhl_player_model.compute_goalie_grade_excluding(games_with_players, unavailable_ids)
+                    return skater, goalie
+
+                home_skater, home_goalie = _grades(espn_home_id)
+                away_skater, away_goalie = _grades(espn_away_id)
+                player_pred = nhl_player_model.predict(home_skater, home_goalie, away_skater, away_goalie)
+
+                ensemble = (nhl_ensemble_model.predict(team_prob, player_pred['home_prob'])
+                            if player_pred else None)
+
+                model['team_only_prob'] = team_prob
+                model['player_prob']    = player_pred['home_prob'] if player_pred else None
+                model['blended']        = ensemble is not None
+                if ensemble:
+                    model['home_prob'] = ensemble['home_prob']
+                    model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
+
+                # Once Final, persist this game's result + full box score —
+                # reuses the boxscore fetch nhl_boxscore_api.get_live_boxscore()
+                # makes (cached 600s), so this costs no extra API call beyond
+                # the injury fetch above.
+                if status == 'Final':
+                    boxscore = nhl_boxscore_api.get_live_boxscore(event_id)
+                    if boxscore:
+                        game_type = nhl_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
+                            espn_info.get('season_type'), 'regular')
+                        season = _get_nhl_season_start_year()
+                        h_score = float(home['score']) if home.get('score') is not None else None
+                        a_score = float(away['score']) if away.get('score') is not None else None
+                        nhl_stats_db.ingest_team_game(
+                            event_id, today_str, season, game_type,
+                            espn_home_id, espn_away_id, home['name'], away['name'],
+                            h_score, a_score)
+                        nhl_stats_db.ingest_player_stats(
+                            event_id, today_str, season, game_type,
+                            espn_home_id, espn_away_id, boxscore)
+            except Exception:
+                model['blended'] = False
 
         # Opponent-adjusted goals total — see hockey_total_model.py. No new
         # fetch needed, GF/GA-per-game are already computed above for the
