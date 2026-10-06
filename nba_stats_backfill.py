@@ -98,6 +98,8 @@ def backfill(start_date, end_date, dry_run=False):
             game_date_et = event.get('date', '')[:10]
             game_type = nba_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
                 event.get('season', {}).get('type'), 'regular')
+            home_name = (home_c.get('team') or {}).get('displayName', '')
+            away_name = (away_c.get('team') or {}).get('displayName', '')
             h_ab = (home_c.get('team') or {}).get('abbreviation', '?')
             a_ab = (away_c.get('team') or {}).get('abbreviation', '?')
 
@@ -109,11 +111,28 @@ def backfill(start_date, end_date, dry_run=False):
             print(f'  {game_date_et}  {a_ab} @ {h_ab}  ({game_type})')
             if not dry_run:
                 nba_stats_db.ingest_game(event_id, game_date_et, season, game_type,
-                                          home_id, away_id, home_score, away_score, boxscore)
+                                          home_id, away_id, home_score, away_score, boxscore,
+                                          home_name=home_name, away_name=away_name)
             total_games += 1
         time.sleep(0.2)  # be polite to ESPN's free, unofficial API
 
     print(f'\nDone — {total_games} games {"would be " if dry_run else ""}ingested.')
+    return total_games
+
+
+def backfill_recent(days=3):
+    """Self-heal hook, called from app.py's daily cron (see _start_cache_warmer):
+    re-walks just the last `days` days and re-ingests anything Final.
+    Idempotent, so this is cheap insurance rather than a real backfill —
+    covers a game that went Final while the container was down/mid-deploy,
+    or any 20-min cron tick that errored before reaching the ingest call in
+    nba_api.py's _build_game(), without needing anyone to notice and run
+    the full script by hand. Silent on failure (best-effort, same
+    philosophy as every other cron job in app.py) — a miss here just means
+    nba_stats_db stays one cycle further behind, not a broken page."""
+    end = datetime.now(_ET).date()
+    start = end - timedelta(days=days - 1)
+    return backfill(start, end, dry_run=False)
 
 
 if __name__ == '__main__':

@@ -261,7 +261,9 @@ class TeamGameStat(db.Model):
   season        = db.Column(db.Integer)
   game_type     = db.Column(db.String(12))
   team_id       = db.Column(db.String(20), nullable=False, index=True)
-  opponent_id   = db.Column(db.String(20))
+  team_name     = db.Column(db.String(80))     # denormalized so season-log consumers (keyed by
+  opponent_id   = db.Column(db.String(20))     # team display name, not id) need no join/lookup
+  opponent_name = db.Column(db.String(80))
   is_home       = db.Column(db.Boolean)
   points        = db.Column(db.Float)
   points_allowed = db.Column(db.Float)
@@ -333,6 +335,8 @@ def ensure_column_exists():
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
+    _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -6783,6 +6787,24 @@ def _refit_mlb_platt():
     mlb_model.fit_platt(records)
 
 
+def _nba_stats_self_heal():
+    """Re-walks the last few days and re-ingests any Final NBA game into
+    the local stats warehouse (PlayerGameStat/TeamGameStat) — see
+    nba_stats_backfill.backfill_recent()'s docstring for why this exists:
+    nba_api.py's _build_game() ingests a game the moment it's built, but
+    that only happens when something actually calls build_schedule_context()
+    for that game's date (the page route, or a cron tick) — a game that
+    finalizes while the container is down, mid-deploy, or during some
+    other gap never gets a chance to be ingested on its own. Cheap
+    (idempotent, 3 days of ESPN scoreboard calls) insurance so the
+    warehouse doesn't quietly fall behind without anyone noticing."""
+    try:
+        import nba_stats_backfill
+        nba_stats_backfill.backfill_recent(days=3)
+    except Exception:
+        pass
+
+
 def _start_cache_warmer():
     from apscheduler.schedulers.background import BackgroundScheduler
     from zoneinfo import ZoneInfo
@@ -6801,6 +6823,13 @@ def _start_cache_warmer():
                       hour=5, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='resolve_outcomes')
+    # NBA stats warehouse self-heal — 5:15 am ET daily, right after the
+    # outcome resolver above (same "after last night's games are all
+    # Final" reasoning).
+    scheduler.add_job(_nba_stats_self_heal, 'cron',
+                      hour=5, minute=15,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nba_stats_self_heal')
     # Pace-stats-only pre-warm — every 20 min, much more often than the full
     # warmer above since it's cheap (no DB writes) and the whole point is
     # shrinking the window a cold/expired pace cache can sit in.
@@ -6824,6 +6853,7 @@ def _start_cache_warmer():
     def _startup():
         _warm_all_caches(send_alerts=False)
         _resolve_pending_outcomes()
+        _nba_stats_self_heal()
         _refit_mlb_platt()
         for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
             _recompute_all_calibration(_sport)

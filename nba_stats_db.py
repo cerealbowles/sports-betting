@@ -30,7 +30,7 @@ GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
 
 
 def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
-                 home_score, away_score, boxscore):
+                 home_score, away_score, boxscore, home_name=None, away_name=None):
     """Upserts PlayerGameStat rows for every athlete ESPN's boxscore lists
     for this game (did-not-play entries included — useful for seeing who
     was active/inactive, and harmless since get_player_gamelog_db() below
@@ -50,9 +50,9 @@ def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
     from app import app as flask_app, db, PlayerGameStat, TeamGameStat
 
     with flask_app.app_context():
-        for team_id, opp_id, team_score, opp_score, is_home in (
-            (home_id, away_id, home_score, away_score, True),
-            (away_id, home_id, away_score, home_score, False),
+        for team_id, opp_id, team_score, opp_score, is_home, team_name, opp_name in (
+            (home_id, away_id, home_score, away_score, True, home_name, away_name),
+            (away_id, home_id, away_score, home_score, False, away_name, home_name),
         ):
             rows = boxscore.get(team_id)
             if rows is None:
@@ -96,7 +96,9 @@ def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
                 tt.game_date      = game_date_et
                 tt.season         = season
                 tt.game_type      = game_type
+                tt.team_name      = team_name
                 tt.opponent_id    = opp_id
+                tt.opponent_name  = opp_name
                 tt.is_home        = is_home
                 tt.points         = team_score
                 tt.points_allowed = opp_score
@@ -164,3 +166,34 @@ def get_team_game_log_db(team_id, before_date=None, limit=None):
             'opponent_id':     r.opponent_id,
             'is_home':         r.is_home,
         } for r in rows]
+
+
+def get_season_game_log_db(season, game_type='regular'):
+    """Returns every stored game for `season` in the same shape
+    nba_api._get_season_game_log()'s live ESPN walk already produces:
+    [{game_date, home_name, away_name, home_score, away_score, home_won}] —
+    the format _compute_team_season_stats()/_team_recent_form()/
+    _team_rest_days() all consume (team-name-keyed, one row per game, not
+    per team-side). [] if this table has nothing for the season yet.
+
+    Reads only the is_home=True TeamGameStat row per game — each finalized
+    game writes one row per side, and the home side's row already carries
+    both teams' names/scores (team_name/points = home, opponent_name/
+    points_allowed = away), so the away side's row would just be the exact
+    same game pair restated from the other row's perspective.
+    """
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NBA', season=season, game_type=game_type, is_home=True)
+                .order_by(TeamGameStat.game_date.asc())
+                .all())
+        return [{
+            'game_date':  r.game_date,
+            'home_name':  r.team_name,
+            'away_name':  r.opponent_name,
+            'home_score': r.points,
+            'away_score': r.points_allowed,
+            'home_won':   r.won,
+        } for r in rows if r.team_name and r.opponent_name]

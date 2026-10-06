@@ -125,15 +125,27 @@ EARLY_SEASON_GAMES = 4
 
 def _get_season_game_log(season):
     """
-    Fetch and cache all completed NBA regular-season games for `season`
-    (ESPN's `season` year, e.g. 2024 = 2024-25) up through today, by paging
-    the scoreboard day-by-day from the season's Oct 1 start. Cached for 1
-    hour — this call re-walks the whole season-to-date on every cache miss,
-    which is cheap (ESPN scoreboard is a lightweight per-day payload) but
-    not free, so build_schedule_context()/get_today_game_count() share this
-    single cached game log rather than each re-fetching it.
-    Returns list of {game_date, home_name, away_name, home_score, away_score, home_won}.
+    Returns list of {game_date, home_name, away_name, home_score, away_score,
+    home_won} for every completed NBA regular-season game in `season`
+    (ESPN's `season` year, e.g. 2024 = 2024-25) up through today.
+
+    Reads the local stats warehouse (nba_stats_db.get_season_game_log_db,
+    backed by TeamGameStat — see that module's docstring) first — every
+    Final game nba_api.py itself builds gets ingested there automatically,
+    and nba_stats_backfill.py catches up anything from before that wiring
+    existed or missed during downtime. Only falls back to the live
+    day-by-day ESPN scoreboard walk below when the DB has nothing for this
+    season yet (e.g. a brand new season with no games finalized/ingested
+    at all) — same "DB first, live fetch as the only-if-empty fallback"
+    pattern as nba_roster_api.get_player_gamelog().
     """
+    try:
+        db_games = nba_stats_db.get_season_game_log_db(season)
+        if db_games:
+            return db_games
+    except Exception:
+        pass
+
     key = f'nba_season_log_{season}'
     now_ts = time.time()
     if key in _cache:
@@ -607,7 +619,8 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                     event.get('season', {}).get('type'), 'regular')
                 nba_stats_db.ingest_game(
                     event_id, game_date_et, _get_nba_season(), game_type,
-                    home.get('id'), away.get('id'), home_score, away_score, boxscore)
+                    home.get('id'), away.get('id'), home_score, away_score, boxscore,
+                    home_name=home.get('name'), away_name=away.get('name'))
         except Exception:
             pass
 
