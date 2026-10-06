@@ -33,6 +33,7 @@ the real app/DB, same as every other *_backfill.py script in this app):
 """
 import argparse
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -75,11 +76,35 @@ def backfill(start_date, end_date, dry_run=False):
         if not data:
             continue
 
-        for event in data.get('events', []):
+        finalized = [
+            event for event in data.get('events', [])
+            if (event.get('competitions', [{}])[0]
+                    .get('status', {}).get('type', {}).get('state', 'pre')) == 'post'
+        ]
+        if not finalized:
+            continue
+
+        # Fetch this day's box scores in parallel (NBA plays up to ~12
+        # games on a given day, each needing its own summary fetch) — the
+        # same ThreadPoolExecutor pattern nba_roster_api.get_active_roster()
+        # already uses for a team's roster. Sequential per-game fetches
+        # were the actual bottleneck in this script: a full historical
+        # season (~1,230 games) one request at a time was projected to take
+        # many hours; this cuts it to roughly (games-per-day / worker-count)
+        # round trips instead of one per game.
+        boxscores = {}
+        with ThreadPoolExecutor(max_workers=min(len(finalized), 8)) as ex:
+            futures = {ex.submit(nba_boxscore_api.get_live_boxscore, event.get('id')): event.get('id')
+                       for event in finalized}
+            for f in as_completed(futures):
+                eid = futures[f]
+                try:
+                    boxscores[eid] = f.result()
+                except Exception:
+                    boxscores[eid] = {}
+
+        for event in finalized:
             comp = event.get('competitions', [{}])[0]
-            state = comp.get('status', {}).get('type', {}).get('state', 'pre')
-            if state != 'post':
-                continue  # only finalized games have a real box score
 
             # Per-event, not a single outer variable derived from "today" —
             # a backfill date range can (and for a historical season, does)
@@ -124,7 +149,7 @@ def backfill(start_date, end_date, dry_run=False):
             h_ab = (home_c.get('team') or {}).get('abbreviation', '?')
             a_ab = (away_c.get('team') or {}).get('abbreviation', '?')
 
-            boxscore = nba_boxscore_api.get_live_boxscore(event_id)
+            boxscore = boxscores.get(event_id)
             if not boxscore:
                 print(f'  ! no boxscore for {event_id} ({a_ab} @ {h_ab}, {game_date_et})')
                 continue
