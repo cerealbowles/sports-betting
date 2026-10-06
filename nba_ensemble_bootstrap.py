@@ -4,7 +4,8 @@ nba_ensemble_bootstrap.py — Combines nba_model.py (team-aggregate, 73.0%
 backtested win accuracy) and nba_player_model.py (player-level, 64.2%) into
 one blended signal, and checks whether the blend beats either alone.
 
-Reuses nba_player_bootstrap.py's cached schedule/boxscore data (same event
+Reuses nba_player_bootstrap.py's schedule/boxscore functions (now reading
+nba_stats_db.py's local warehouse — see that module's docstring; same event
 set, same no-leakage per-player history) and, in the SAME chronological
 pass, reconstructs each team's season-to-date aggregate state (wins/losses,
 home/road split, PPG/PPG-allowed, L5 form, rest days) to feed nba_model.py —
@@ -186,9 +187,7 @@ def run(max_games=None):
 
         if (i + 1) % 200 == 0:
             print(f'  processed {i+1}/{len(all_games)}, {len(rows)} usable', flush=True)
-            player_bt._save_boxscore_cache()
 
-    player_bt._save_boxscore_cache()
     return rows
 
 

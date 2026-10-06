@@ -14,123 +14,39 @@ app already uses (nba_ensemble_bootstrap._fit_logistic_2d, 1D version
 here), and reports accuracy against the actual team-aggregate model
 (nfl_model.py) so the two can be compared honestly before any blend.
 
-Fetches schedule + per-game box scores directly from ESPN (NOT the local
-stats warehouse — nfl_stats_db.py only has the current season's first few
-weeks so far, nowhere near enough for a real backtest), with disk caches
-so an interrupted run resumes instead of re-fetching everything.
+Schedule/boxscore source: reads nfl_stats_db.py's local warehouse (fetch_
+season_schedule/fetch_boxscore below), not a live ESPN fetch — now that
+nfl_stats_backfill.py has loaded full 2024+2025 seasons there (see that
+script's module docstring), re-fetching independently would just be
+redundant work against the same data. This used to hit ESPN directly with
+its own disk cache; a full backtest run is now a DB-only operation.
 """
-import json
 import math
 import os
 import sys
-import time
-import requests
 from collections import defaultdict
 
 SEASONS = [2024, 2025]
-ESPN_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEDULE_CACHE = os.path.join(_DIR, 'nfl_player_schedule_{season}.json')
-BOXSCORE_CACHE = os.path.join(_DIR, 'nfl_player_boxscores.json')
-
-sys.path.insert(0, _DIR)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nfl_player_model as pm
-import nfl_boxscore_api
-
-
-def _get(url, params, label, retries=3):
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, params=params, timeout=20)
-            r.raise_for_status()
-            return r
-        except Exception as e:
-            if attempt == retries - 1:
-                print(f'  ! {label} failed: {e}', flush=True)
-                return None
-            time.sleep(1 + attempt)
-    return None
+import nfl_stats_db
 
 
 def fetch_season_schedule(season):
     """Completed NFL regular-season games for `season`: [{event_id,
-    game_date, home_id, away_id, home_score, away_score}], chronological."""
-    cache_path = SCHEDULE_CACHE.format(season=season)
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
-
-    games = []
-    seen_ids = set()
-    for week in range(1, 19):
-        r = _get(ESPN_SCOREBOARD, {'seasontype': 2, 'week': week, 'season': season,
-                                    'dates': season, 'limit': 20}, f'{season} wk{week}')
-        if not r:
-            continue
-        found = False
-        for event in r.json().get('events', []):
-            eid = event.get('id')
-            if eid in seen_ids:
-                continue
-            comp = event.get('competitions', [{}])[0]
-            if comp.get('status', {}).get('type', {}).get('state') != 'post':
-                continue
-            tmap = {c.get('homeAway'): c for c in comp.get('competitors', [])}
-            home_c, away_c = tmap.get('home', {}), tmap.get('away', {})
-            try:
-                games.append({
-                    'event_id':   eid,
-                    'game_date':  event.get('date', '')[:10],
-                    'home_id':    (home_c.get('team') or {}).get('id'),
-                    'away_id':    (away_c.get('team') or {}).get('id'),
-                    'home_score': int(home_c.get('score', 0) or 0),
-                    'away_score': int(away_c.get('score', 0) or 0),
-                })
-                seen_ids.add(eid)
-                found = True
-            except Exception:
-                pass
-        if not found and week > 3:
-            break
-        time.sleep(0.1)
-
-    games.sort(key=lambda g: g['game_date'])
-    with open(cache_path, 'w') as f:
-        json.dump(games, f)
-    print(f'  season {season}: {len(games)} completed games', flush=True)
-    return games
-
-
-_boxscore_cache = None
-
-
-def _load_boxscore_cache():
-    global _boxscore_cache
-    if _boxscore_cache is None:
-        if os.path.exists(BOXSCORE_CACHE):
-            with open(BOXSCORE_CACHE) as f:
-                _boxscore_cache = json.load(f)
-        else:
-            _boxscore_cache = {}
-    return _boxscore_cache
-
-
-def _save_boxscore_cache():
-    if _boxscore_cache is not None:
-        with open(BOXSCORE_CACHE, 'w') as f:
-            json.dump(_boxscore_cache, f)
+    game_date, home_id, away_id, home_score, away_score}], chronological.
+    Thin wrapper over nfl_stats_db.get_schedule_db() — kept as its own
+    function so nfl_ensemble_bootstrap.py's existing
+    `player_bt.fetch_season_schedule(season)` calls keep working unchanged."""
+    return nfl_stats_db.get_schedule_db(season, game_type='regular')
 
 
 def fetch_boxscore(event_id):
-    """{team_id: [{id, name, position, categories}]} for this game, via
-    nfl_boxscore_api's parser (disk-cached — see module docstring)."""
-    cache = _load_boxscore_cache()
-    if event_id in cache:
-        return cache[event_id]
-    box = nfl_boxscore_api.get_live_boxscore(event_id)
-    cache[event_id] = box
-    return box
+    """{team_id: [{id, name, categories}]} for this game. Thin wrapper over
+    nfl_stats_db.get_game_boxscore_db() — see fetch_season_schedule()'s
+    docstring for why this stays a function rather than inlining."""
+    return nfl_stats_db.get_game_boxscore_db(event_id) or None
 
 
 def _logit(p, eps=1e-6):
@@ -209,9 +125,7 @@ def run(max_games=None):
 
         if (i + 1) % 100 == 0:
             print(f'  processed {i+1}/{len(all_games)}, {len(rows)} usable', flush=True)
-            _save_boxscore_cache()
 
-    _save_boxscore_cache()
     return rows
 
 

@@ -197,3 +197,59 @@ def get_season_game_log_db(season, game_type='regular'):
             'away_score': r.points_allowed,
             'home_won':   r.won,
         } for r in rows if r.team_name and r.opponent_name]
+
+
+def get_schedule_db(season, game_type='regular'):
+    """Returns every stored game for `season` as [{event_id, game_date,
+    home_id, away_id, home_score, away_score}], chronological — the DB
+    equivalent of nba_player_bootstrap.py's old live ESPN schedule fetch
+    (fetch_season_schedule), now that the warehouse covers full historical
+    seasons (see nba_stats_backfill.py). Built from the is_home=True
+    TeamGameStat row per game, same approach as get_season_game_log_db()
+    above, just keeping ids (needed to key per-player gamelogs/boxscores)
+    instead of names."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NBA', season=season, game_type=game_type, is_home=True)
+                .order_by(TeamGameStat.game_date.asc())
+                .all())
+        return [{
+            'event_id':   r.game_id,
+            'game_date':  r.game_date,
+            'home_id':    r.team_id,
+            'away_id':    r.opponent_id,
+            'home_score': r.points,
+            'away_score': r.points_allowed,
+        } for r in rows]
+
+
+def get_game_boxscore_db(game_id):
+    """Returns {team_id: [{player_id, minutes, points, rebounds, assists,
+    fga, fta, tov}]} for one game — the DB equivalent of nba_player_
+    bootstrap.py's old live ESPN per-game summary fetch (fetch_boxscore).
+    Excludes did_not_play rows and non-participants (minutes <= 0), same
+    filter the old live fetch applied. {} if nothing stored for this game."""
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        rows = (PlayerGameStat.query
+                .filter_by(sport='NBA', game_id=game_id, did_not_play=False)
+                .all())
+
+    out = {}
+    for r in rows:
+        if not r.minutes or r.minutes <= 0:
+            continue
+        out.setdefault(r.team_id, []).append({
+            'player_id': r.player_id,
+            'minutes':   r.minutes or 0.0,
+            'points':    r.points or 0.0,
+            'rebounds':  r.rebounds or 0.0,
+            'assists':   r.assists or 0.0,
+            'fga':       r.fga or 0.0,
+            'fta':       r.fta or 0.0,
+            'tov':       r.turnovers or 0.0,
+        })
+    return out

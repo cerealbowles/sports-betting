@@ -29,10 +29,9 @@ undercount scoring early in the season for teams relying on new additions.
 Documented, not fixed, for this first pass.
 
 No pace adjustment in this backtest (pace_factor left at the nba_player_model
-default of 1.0) — adding bball_total_model's per-team pace fetch would
-roughly double the number of HTTP calls this script already makes; worth
-adding in a follow-up once the no-pace/no-opponent-adjustment baseline's
-numbers justify the cost.
+default of 1.0) — adding bball_total_model's per-team pace fetch would mean
+yet another data source to reconcile; worth adding in a follow-up once the
+no-pace/no-opponent-adjustment baseline's numbers justify the cost.
 
 Opponent-defense adjustment: each team's own points-allowed history is
 tracked chronologically (team_history below) alongside player_history, using
@@ -41,184 +40,46 @@ Added after the first backtest (2,452 games, no opponent adjustment: 59.1%
 win accuracy, Brier 0.2597 — worse than the 0.2474 constant-baseline Brier)
 pointed at raw player-production sums missing the opponent-quality signal
 team win% already captures.
+
+Schedule/boxscore source: reads nba_stats_db.py's local warehouse (fetch_
+season_schedule/fetch_boxscore below), not a live ESPN fetch — SEASONS below
+is exactly what nba_stats_backfill.py has already loaded there (see that
+script's module docstring). This used to be its own live fetch with a disk
+cache (hitting ESPN directly, ~2,500 HTTP round trips for a 2-season run);
+now that the warehouse covers the same seasons for the live app's own
+predictions anyway, re-fetching independently was redundant — one source of
+truth, and a full backtest run is now a DB-only operation (seconds, not the
+original run's long sequential-fetch wall time).
 """
-import datetime as _dt
-import json
 import math
 import os
 import sys
-import time
-import requests
 from collections import defaultdict
 
 SEASONS = [2024, 2025]
-ESPN_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard'
-ESPN_SUMMARY    = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary'
-
-_DIR = os.path.dirname(os.path.abspath(__file__))
-# Disk caches so a killed/interrupted run (e.g. ESPN rate-limiting a long
-# sequential fetch) resumes instead of re-fetching ~2,500 games from
-# scratch. Same spirit as nba_bootstrap.py's nba_training_{season}.json
-# cache, just also caching the much more numerous per-game boxscore calls.
-SCHEDULE_CACHE  = os.path.join(_DIR, 'nba_player_schedule_{season}.json')
-# v2 adds fga/fta/tov (for usage-weighted projection) that v1 didn't parse —
-# new cache file rather than a migration, since the cached rows don't carry
-# enough raw data to backfill the new fields without re-fetching anyway.
-BOXSCORE_CACHE  = os.path.join(_DIR, 'nba_player_boxscores_v2.json')
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nba_player_model as pm
+import nba_stats_db
 
-
-def _get(url, params, label, retries=3):
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, params=params, timeout=20)
-            r.raise_for_status()
-            return r
-        except Exception as e:
-            if attempt == retries - 1:
-                print(f'  ! {label} failed: {e}', flush=True)
-                return None
-            time.sleep(1 + attempt)
-    return None
-
-
-# ── Schedule fetch (which games happened, and their ESPN event ids) ───────────
 
 def fetch_season_schedule(season):
     """Completed NBA regular-season games for `season`, with event ids and
-    team ids (not just names — needed to key per-player gamelogs)."""
-    cache_path = SCHEDULE_CACHE.format(season=season)
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
-
-    games = []
-    start = _dt.date(season, 10, 1)
-    end   = _dt.date(season + 1, 4, 20)
-    day = start
-    seen_ids = set()
-    while day <= end:
-        date_str = day.strftime('%Y%m%d')
-        r = _get(ESPN_SCOREBOARD, {'dates': date_str, 'limit': 100}, date_str)
-        if r:
-            for event in r.json().get('events', []):
-                eid = event.get('id')
-                if eid in seen_ids:
-                    continue
-                comp = event.get('competitions', [{}])[0]
-                if comp.get('status', {}).get('type', {}).get('state') != 'post':
-                    continue
-                if event.get('season', {}).get('type') != 2:
-                    continue
-                tmap = {c['homeAway']: c for c in comp.get('competitors', [])}
-                home_c, away_c = tmap.get('home', {}), tmap.get('away', {})
-                try:
-                    games.append({
-                        'event_id':   eid,
-                        'game_date':  event.get('date', '')[:10],
-                        'home_id':    home_c['team']['id'],
-                        'away_id':    away_c['team']['id'],
-                        'home_score': int(home_c.get('score', 0) or 0),
-                        'away_score': int(away_c.get('score', 0) or 0),
-                    })
-                    seen_ids.add(eid)
-                except (KeyError, TypeError):
-                    continue
-        day += _dt.timedelta(days=1)
-        time.sleep(0.05)
-    games = sorted(games, key=lambda g: g['game_date'])
-    with open(cache_path, 'w') as f:
-        json.dump(games, f)
-    return games
-
-
-# ── Per-game boxscore fetch (actual participants + their per-game line) ───────
-
-_boxscore_cache = None  # loaded lazily so a plain `import` doesn't touch disk
-
-
-def _load_boxscore_cache():
-    global _boxscore_cache
-    if _boxscore_cache is None:
-        if os.path.exists(BOXSCORE_CACHE):
-            with open(BOXSCORE_CACHE) as f:
-                _boxscore_cache = json.load(f)
-        else:
-            _boxscore_cache = {}
-    return _boxscore_cache
-
-
-def _save_boxscore_cache():
-    if _boxscore_cache is not None:
-        with open(BOXSCORE_CACHE, 'w') as f:
-            json.dump(_boxscore_cache, f)
-
-
-def _attempts(made_attempt_str):
-    """'7-14' -> 14.0 (the attempts half of ESPN's made-attempt composite
-    fields FG/3PT/FT). Returns 0.0 on anything unparseable."""
-    try:
-        return float(str(made_attempt_str).split('-')[1])
-    except (IndexError, ValueError, TypeError):
-        return 0.0
+    team ids (not just names — needed to key per-player gamelogs). Thin
+    wrapper over nba_stats_db.get_schedule_db() — kept as its own function
+    (rather than inlining that call at each use site) so nba_ensemble_
+    bootstrap.py's existing `player_bt.fetch_season_schedule(season)` calls
+    keep working unchanged."""
+    return nba_stats_db.get_schedule_db(season, game_type='regular')
 
 
 def fetch_boxscore(event_id):
     """Returns {team_id: [{player_id, minutes, points, rebounds, assists,
-    fga, fta, tov}]} for both teams in this game, or None on failure.
-    fga/fta/tov feed nba_player_model's usage-weighted projection (FGA +
-    0.44*FTA + TOV is the standard scoring-possessions-used estimator).
-    Cached to disk (BOXSCORE_CACHE) — a completed game's boxscore never
-    changes, so this is safe to reuse across runs indefinitely."""
-    cache = _load_boxscore_cache()
-    if event_id in cache:
-        return cache[event_id]
-
-    r = _get(ESPN_SUMMARY, {'event': event_id}, event_id)
-    if not r:
-        return None
-    box = r.json().get('boxscore', {})
-    out = {}
-    for team_block in box.get('players', []):
-        team_id = team_block.get('team', {}).get('id')
-        stats_block = team_block.get('statistics', [{}])[0]
-        names = stats_block.get('names', [])
-        idx = {name: names.index(name) for name in
-               ('MIN', 'PTS', 'REB', 'AST', 'FG', 'FT', 'TO') if name in names}
-        rows = []
-        for ath in stats_block.get('athletes', []):
-            pid = (ath.get('athlete') or {}).get('id')
-            vals = ath.get('stats', [])
-            if not pid or not vals:
-                continue
-            try:
-                minutes = float(vals[idx['MIN']]) if 'MIN' in idx else 0.0
-            except (ValueError, TypeError):
-                minutes = 0.0
-            if minutes <= 0:
-                continue
-            def _num(key):
-                try:
-                    return float(vals[idx[key]]) if key in idx else 0.0
-                except (ValueError, TypeError):
-                    return 0.0
-            rows.append({
-                'player_id': pid,
-                'minutes':   minutes,
-                'points':    _num('PTS'),
-                'rebounds':  _num('REB'),
-                'assists':   _num('AST'),
-                'fga':       _attempts(vals[idx['FG']]) if 'FG' in idx else 0.0,
-                'fta':       _attempts(vals[idx['FT']]) if 'FT' in idx else 0.0,
-                'tov':       _num('TO'),
-            })
-        if team_id:
-            out[team_id] = rows
-    result = out or None
-    cache[event_id] = result  # cache the None too — don't re-request a dud every run
-    return result
+    fga, fta, tov}]} for both teams in this game, or None if nothing's
+    stored for it. Thin wrapper over nba_stats_db.get_game_boxscore_db() —
+    see fetch_season_schedule()'s docstring for why this stays a function
+    rather than inlining."""
+    return nba_stats_db.get_game_boxscore_db(event_id) or None
 
 
 # ── Backtest loop ──────────────────────────────────────────────────────────────
@@ -310,9 +171,7 @@ def run_backtest(max_games=None):
 
         if (i + 1) % 100 == 0:
             print(f'  processed {i+1}/{len(all_games)} games, {len(results)} usable', flush=True)
-            _save_boxscore_cache()  # so a kill/timeout mid-run doesn't lose fetched work
 
-    _save_boxscore_cache()
     return results
 
 

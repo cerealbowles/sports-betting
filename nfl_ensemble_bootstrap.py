@@ -6,8 +6,9 @@ and checks whether the blend beats either alone. Mirrors
 nba_ensemble_bootstrap.py — same stacking-via-logistic-regression idea,
 NFL side.
 
-Reuses nfl_player_bootstrap.py's cached schedule/boxscore data (same event
-set) and, in the SAME chronological pass, reconstructs each team's
+Reuses nfl_player_bootstrap.py's schedule/boxscore functions (now DB-backed
+— see that module's docstring; same event set either way) and, in the SAME
+chronological pass, reconstructs each team's
 season-to-date aggregate state (wins/losses, home/road split, PPG/PPG-
 allowed, L3 form, rest days) to feed nfl_model.py — same reasoning as
 nba_ensemble_bootstrap.py's inline team_state tracking: keeps both models
@@ -150,9 +151,7 @@ def run(max_games=None):
 
         if (i + 1) % 100 == 0:
             print(f'  processed {i+1}/{len(all_games)}, {len(rows)} usable', flush=True)
-            player_bt._save_boxscore_cache()
 
-    player_bt._save_boxscore_cache()
     return rows
 
 

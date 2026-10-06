@@ -201,3 +201,46 @@ def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
         offense_list.append(off)
         defense_list.append(defn)
     return offense_list, defense_list
+
+
+def get_schedule_db(season, game_type='regular'):
+    """Returns every stored game for `season` as [{event_id, game_date,
+    home_id, away_id, home_score, away_score}], chronological — the DB
+    equivalent of nfl_player_bootstrap.py's old live ESPN schedule fetch.
+    Same approach as nba_stats_db.get_schedule_db()."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NFL', season=season, game_type=game_type, is_home=True)
+                .order_by(TeamGameStat.game_date.asc())
+                .all())
+        return [{
+            'event_id':   r.game_id,
+            'game_date':  r.game_date,
+            'home_id':    r.team_id,
+            'away_id':    r.opponent_id,
+            'home_score': r.points,
+            'away_score': r.points_allowed,
+        } for r in rows]
+
+
+def get_game_boxscore_db(game_id):
+    """Returns {team_id: [{id, name, categories}]} for one game — the DB
+    equivalent of nfl_player_bootstrap.py's old live ESPN per-game summary
+    fetch (nfl_boxscore_api.get_live_boxscore). {} if nothing stored."""
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        rows = PlayerGameStat.query.filter_by(sport='NFL', game_id=game_id).all()
+
+    out = {}
+    for r in rows:
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        out.setdefault(r.team_id, []).append({
+            'id': r.player_id, 'name': r.player_name, 'categories': categories,
+        })
+    return out
