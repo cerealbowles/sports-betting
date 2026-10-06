@@ -66,7 +66,6 @@ def _fetch_day(date_str):
 
 
 def backfill(start_date, end_date, dry_run=False):
-    season = _get_nba_season()
     day = start_date
     total_games = 0
     while day <= end_date:
@@ -81,6 +80,28 @@ def backfill(start_date, end_date, dry_run=False):
             state = comp.get('status', {}).get('type', {}).get('state', 'pre')
             if state != 'post':
                 continue  # only finalized games have a real box score
+
+            # Per-event, not a single outer variable derived from "today" —
+            # a backfill date range can (and for a historical season, does)
+            # span a different season than the one in progress right now.
+            # Derived from each event's OWN date (same month>=10 rule as
+            # _get_nba_season(), just applied to the event instead of
+            # "today") — NOT from ESPN's own event.season.year field, which
+            # uses the season's ENDING year (e.g. 2025 for the 2024-25
+            # season) rather than this app's STARTING-year convention (2024
+            # for that same season, matching _get_nba_season()'s own
+            # convention everywhere else in this app). Using ESPN's field
+            # directly was tried and confirmed wrong: it would store a
+            # season number one higher than this app's own, including
+            # colliding with the real current season's number for a
+            # just-finished season (e.g. 2025-26 games landing under the
+            # same `season` value nba_api.py uses for 2026-27).
+            event_date_str = (event.get('date') or '')[:10]  # 'YYYY-MM-DD'
+            if event_date_str:
+                ev_year, ev_month = int(event_date_str[:4]), int(event_date_str[5:7])
+                season = ev_year if ev_month >= 10 else ev_year - 1
+            else:
+                season = _get_nba_season()
 
             event_id = event.get('id')
             tmap = {c.get('homeAway'): c for c in comp.get('competitors', [])}

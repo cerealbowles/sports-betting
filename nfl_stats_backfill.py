@@ -148,13 +148,14 @@ def _current_week_guess():
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
+    p.add_argument('--season', type=int, default=None, help='e.g. 2024 for the 2024-25 season, default: current season')
     p.add_argument('--weeks', nargs=2, type=int, metavar=('START', 'END'),
                     help='Week range, default: 1 18')
     p.add_argument('--seasontype', type=int, default=2, help='1=preseason, 2=regular (default), 3=postseason')
     p.add_argument('--dry-run', action='store_true', help="Print what would be ingested without writing to the DB")
     args = p.parse_args()
 
-    season = _get_nfl_season()
+    season = args.season or _get_nfl_season()
     week_start, week_end = args.weeks if args.weeks else (1, 18)
 
     print(f'Backfilling NFL stats season {season}, weeks {week_start}-{week_end} (seasontype {args.seasontype})...')
