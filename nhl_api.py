@@ -369,22 +369,30 @@ def _rest_days(last_game_date, abbrev, today_str):
 
 ESPN_NHL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 
+# ESPN's team abbreviation doesn't always match the official NHL API's own
+# (confirmed live: ESPN uses 2-letter 'NJ'/'LA' where the NHL API uses
+# 'NJD'/'LAK') — this maps ESPN's spelling to the NHL API's so the
+# frozenset join in _get_espn_event_map() below actually lines up. Add to
+# this as any other mismatches turn up; most team codes already match
+# ('TOR', 'BOS', etc. confirmed identical across both).
+_ESPN_TO_NHL_ABBREV = {'NJ': 'NJD', 'LA': 'LAK', 'SJ': 'SJS', 'TB': 'TBL'}
+
 
 def _get_espn_event_map(date_str):
     """Returns {frozenset({home_abbrev, away_abbrev}): {'event_id',
     'home_id', 'away_id'}} from ESPN's hockey scoreboard for `date_str`
-    (YYYY-MM-DD ET).
+    (YYYY-MM-DD ET), keyed by the official NHL API's OWN abbreviation
+    spelling (via _ESPN_TO_NHL_ABBREV above) so it joins cleanly against
+    this module's existing a_ab/h_ab.
 
     This module's own game identity comes entirely from the official NHL
     API (NHL_API above) — a different id space than ESPN's, which is what
     the local stats warehouse (nhl_stats_db.py) and injury data
     (nhl_boxscore_api.py) are built from, same as every other sport in
-    this app. Bridging the two by team ABBREVIATION (not full name, which
-    differs in formatting between providers — confirmed 'TOR'/'BOS'-style
-    codes match across both) is this function's only job; everything
-    downstream uses ESPN's ids once this lookup succeeds. {} (and the
-    player-blend block that depends on it degrades to team-only) if
-    ESPN's scoreboard has nothing for this date."""
+    this app. Bridging the two by team abbreviation is this function's
+    only job; everything downstream uses ESPN's ids once this lookup
+    succeeds. {} (and the player-blend block that depends on it degrades
+    to team-only) if ESPN's scoreboard has nothing for this date."""
     date_compact = date_str.replace('-', '')
     data = _cached_get(f"{ESPN_NHL_SCOREBOARD}?dates={date_compact}&limit=100",
                         f'espn_nhl_sched_{date_str}', _TTL['schedule'])
@@ -399,6 +407,8 @@ def _get_espn_event_map(date_str):
         a_ab = (away_c.get('team') or {}).get('abbreviation', '')
         if not h_ab or not a_ab:
             continue
+        h_ab = _ESPN_TO_NHL_ABBREV.get(h_ab, h_ab)
+        a_ab = _ESPN_TO_NHL_ABBREV.get(a_ab, a_ab)
         out[frozenset({h_ab, a_ab})] = {
             'event_id': event.get('id'),
             'home_id':  (home_c.get('team') or {}).get('id'),
