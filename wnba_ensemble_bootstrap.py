@@ -143,6 +143,14 @@ def run(max_games=None):
         actual_margin = g['home_score'] - g['away_score']
         actual_total  = g['home_score'] + g['away_score']
 
+        # Team-only total "projection" — no pace-adjusted total model is run
+        # in this backtest, so the point-in-time PPG sum (already tracked in
+        # home_dict/away_dict above) stands in as the team-only total signal
+        # to blend against. See nba_ensemble_bootstrap.py's identical comment.
+        team_total = None
+        if home_dict['ppg'] is not None and away_dict['ppg'] is not None:
+            team_total = home_dict['ppg'] + away_dict['ppg']
+
         if team_prob is not None and player_pred and player_pred['home_prob'] is not None \
                 and team_margin is not None:
             rows.append({
@@ -151,6 +159,7 @@ def run(max_games=None):
                 'player_prob':    player_pred['home_prob'],
                 'team_margin':    team_margin,
                 'player_margin':  player_pred['margin'],
+                'team_total':     team_total,
                 'player_total':   player_pred['total'],
                 'actual_margin':  actual_margin,
                 'actual_total':   actual_total,
@@ -285,12 +294,29 @@ def report(rows):
     print(f"  Blended margin RMSE:     {_rmse(blend_m, actual_m):.2f}")
     print(f"    fit: intercept={ma:.3f}  team_weight={mb:.3f}  player_weight={mc:.3f}")
 
+    # Total blend via OLS — see nba_ensemble_bootstrap.py's identical block
+    # for the team_total-is-a-PPG-proxy caveat.
+    total_rows = [r for r in rows if r.get('team_total') is not None]
+    ta, tb, tc = (0.0, 1.0, 0.0)
+    if len(total_rows) >= 20:
+        team_t = [r['team_total'] for r in total_rows]
+        player_t = [r['player_total'] for r in total_rows]
+        actual_t = [r['actual_total'] for r in total_rows]
+        print(f"\n  Team-total-only RMSE:   {_rmse(team_t, actual_t):.2f}  (n={len(total_rows)})")
+        print(f"  Player-total-only RMSE: {_rmse(player_t, actual_t):.2f}")
+        ta, tb, tc = _fit_linear_2d(team_t, player_t, actual_t)
+        blend_t = [ta + tb * tt + tc * pt for tt, pt in zip(team_t, player_t)]
+        print(f"  Blended total RMSE:     {_rmse(blend_t, actual_t):.2f}")
+        print(f"    fit: intercept={ta:.3f}  team_weight={tb:.3f}  player_weight={tc:.3f}")
+
     out = {
         'n_games': n,
         'team_only':   {'acc': round(_acc(team_p, y), 4), 'brier': round(_brier(team_p, y), 4)},
         'player_only': {'acc': round(_acc(player_p, y), 4), 'brier': round(_brier(player_p, y), 4)},
         'blended':     {'acc': round(_acc(blend_p, y), 4), 'brier': round(_brier(blend_p, y), 4),
                          'intercept': round(a, 4), 'team_weight': round(b, 4), 'player_weight': round(c, 4)},
+        'total_blend': {'intercept': round(ta, 4), 'team_weight': round(tb, 4), 'player_weight': round(tc, 4),
+                         'n': len(total_rows)},
         'margin_blend': {'intercept': round(ma, 4), 'team_weight': round(mb, 4), 'player_weight': round(mc, 4),
                           'rmse_team_only': round(_rmse(team_m, actual_m), 3),
                           'rmse_player_only': round(_rmse(player_m, actual_m), 3),

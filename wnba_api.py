@@ -578,9 +578,16 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
                                away_opp_factor=away_opp_factor)
                            if home_active and away_active else None)
 
+            # PPG-sum proxy for the team-only total — tracking-only input
+            # for the total blend, same caveat as nba_api.py's identical block.
+            home_ppg = home.get('blend_ppg', home.get('ppg'))
+            away_ppg = away.get('blend_ppg', away.get('ppg'))
+            team_total = (home_ppg + away_ppg) if home_ppg is not None and away_ppg is not None else None
+
             ensemble = (wnba_ensemble_model.predict(
                             team_prob, player_pred['home_prob'],
-                            team_margin, player_pred['margin'])
+                            team_margin, player_pred['margin'],
+                            team_total, player_pred['total'])
                         if player_pred and team_margin is not None else None)
 
             model['team_only_prob'] = team_prob
@@ -590,6 +597,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
                 model['home_prob'] = ensemble['home_prob']
                 model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
                 model['ensemble_margin'] = ensemble['margin']
+                model['blended_total']   = ensemble.get('total')
         except Exception:
             model['blended'] = False
 

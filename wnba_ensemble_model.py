@@ -16,8 +16,16 @@ A bigger lift than NBA's own blend (+2.3pp accuracy here vs. NBA's
 alone, combines with it more productively than NBA's does, unlike NFL's
 (whose fitted player_weight actually came out negative).
 
+Wired into the live app via wnba_api.py's _build_game() (moneyline/
+favorite pick, edge %, Model Performance tracking). The margin blend
+(model['ensemble_margin']) and total blend (TOTAL_FIT below) are used for
+parallel spread/total TRACKING only (app.py's blended_* columns on
+GamePrediction) — not yet feeding the live Spread/Total buttons
+themselves, which still read the team-only signal.
+
 Refit periodically: rerun wnba_ensemble_bootstrap.py and copy its printed
-`fit:` lines into PROB_FIT/MARGIN_FIT below as more games accumulate.
+`fit:` lines into PROB_FIT/MARGIN_FIT/TOTAL_FIT below as more games
+accumulate.
 """
 import math
 
@@ -28,6 +36,14 @@ PROB_FIT = {'intercept': -0.037, 'team_weight': 0.647, 'player_weight': 0.269}
 # {blended_margin: (intercept, team_weight, player_weight)} — applied to
 # each model's own implied point margin directly (OLS, not logit space).
 MARGIN_FIT = {'intercept': -0.052, 'team_weight': 0.576, 'player_weight': 0.283}
+
+# {blended_total: (intercept, team_weight, player_weight)} — applied to each
+# side's own combined-score projection directly (OLS, not logit space).
+# team_total here is a PPG-sum proxy (not the real pace-adjusted
+# bball_total_model.py projection) — see wnba_ensemble_bootstrap.py's
+# row-collection comment for why. Placeholder until that script's own
+# total-blend fit replaces this.
+TOTAL_FIT = {'intercept': 0.0, 'team_weight': 1.0, 'player_weight': 0.0}
 
 
 def _logit(p, eps=1e-6):
@@ -61,11 +77,26 @@ def blend_margin(team_margin, player_margin):
     return f['intercept'] + f['team_weight'] * team_margin + f['player_weight'] * player_margin
 
 
-def predict(team_prob, player_prob, team_margin, player_margin):
-    """Convenience wrapper bundling both blends into one result dict, or
-    None if either model's signal is missing for this game."""
+def blend_total(team_total, player_total):
+    """Combined projected combined score (home+away) from a team-only
+    PPG-sum proxy and wnba_player_model.py's own 'total' projection.
+    Returns None if either input is None."""
+    if team_total is None or player_total is None:
+        return None
+    f = TOTAL_FIT
+    return f['intercept'] + f['team_weight'] * team_total + f['player_weight'] * player_total
+
+
+def predict(team_prob, player_prob, team_margin, player_margin, team_total=None, player_total=None):
+    """Convenience wrapper bundling the prob/margin blends (and, if both
+    totals are supplied, the total blend) into one result dict, or None if
+    either model's core signal (prob/margin) is missing for this game."""
     prob = blend_prob(team_prob, player_prob)
     margin = blend_margin(team_margin, player_margin)
     if prob is None or margin is None:
         return None
-    return {'home_prob': round(prob, 4), 'margin': round(margin, 2)}
+    out = {'home_prob': round(prob, 4), 'margin': round(margin, 2)}
+    total = blend_total(team_total, player_total)
+    if total is not None:
+        out['total'] = round(total, 2)
+    return out

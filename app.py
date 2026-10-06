@@ -197,6 +197,21 @@ class GamePrediction(db.Model):
                                                                 # at pick time (pitcher/bullpen, ppg, gf/ga, etc.) — lets a
                                                                 # future total-model recalibration replay this exact game,
                                                                 # the same way spread_proxy.py was fit from home_prob history.
+  # Blended (team+player ensemble) spread/total tracking — PARALLEL to the
+  # team-only columns above, not a replacement. NBA/WNBA only (NFL's player
+  # model has no margin/total signal to blend — see nfl_player_model.py).
+  # The live Spread/Total buttons still read the team-only signal; these
+  # columns exist purely to let the Model Performance page compare "would
+  # the blended number have done better" without touching anything live.
+  # See nba_ensemble_model.py/wnba_ensemble_model.py's TOTAL_FIT and
+  # app.py's _margin_cover_prob() for how these are computed.
+  blended_spread_cover_prob = db.Column(db.Float)
+  blended_spread_covered    = db.Column(db.Boolean)
+  blended_spread_pick_roi   = db.Column(db.Float)
+  blended_total_proj        = db.Column(db.Float)
+  blended_total_over_prob   = db.Column(db.Float)
+  blended_total_went_over   = db.Column(db.Boolean)
+  blended_total_pick_roi    = db.Column(db.Float)
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -351,6 +366,13 @@ def ensure_column_exists():
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
     _add('player_game_stats', 'position',          'TEXT DEFAULT NULL')
     _add('player_game_stats', 'stats_json',        'TEXT DEFAULT NULL')
+    _add('game_predictions', 'blended_spread_cover_prob', 'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'blended_spread_covered',    'BOOLEAN DEFAULT NULL')
+    _add('game_predictions', 'blended_spread_pick_roi',   'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'blended_total_proj',        'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'blended_total_over_prob',   'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'blended_total_went_over',   'BOOLEAN DEFAULT NULL')
+    _add('game_predictions', 'blended_total_pick_roi',    'FLOAT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -2116,6 +2138,12 @@ def _upsert_predictions(schedule, sport='MLB'):
             pred.spread_home_price = odds.get('home_spread_price')
             pred.spread_away_price = odds.get('away_spread_price')
             pred.spread_cover_prob = spread_proxy.cover_prob(sport, pred.home_prob, spread_line)
+            # Blended-ensemble spread TRACKING (parallel, not a replacement —
+            # see GamePrediction.blended_spread_cover_prob's comment). Only
+            # populated where model['ensemble_margin'] exists (NBA/WNBA —
+            # NFL's player model has no margin signal to blend).
+            pred.blended_spread_cover_prob = _margin_cover_prob(
+                sport, model.get('ensemble_margin'), spread_line)
 
           total_model = game.get('total_model') or {}
           total_line  = odds.get('total_line')
@@ -2125,6 +2153,12 @@ def _upsert_predictions(schedule, sport='MLB'):
             pred.total_proj       = proj
             pred.total_over_price  = odds.get('over_odds')
             pred.total_under_price = odds.get('under_odds')
+            # Blended-ensemble total TRACKING (parallel, not a replacement —
+            # see GamePrediction.blended_total_proj's comment).
+            blended_total = model.get('blended_total')
+            if blended_total is not None:
+              pred.blended_total_proj      = blended_total
+              pred.blended_total_over_prob = _total_over_prob(sport, blended_total, total_line)
             pred.total_over_prob   = _total_over_prob(sport, proj, total_line)
             try:
               pred.total_inputs_json = json.dumps(game.get('total_inputs'))
@@ -2191,6 +2225,25 @@ def _upsert_predictions(schedule, sport='MLB'):
                   except (TypeError, ValueError):
                     pass
 
+              # Blended-ensemble spread TRACKING — graded the same way as
+              # above, just off blended_spread_cover_prob (None for NFL,
+              # which has no margin signal to blend — this is a no-op there).
+              if pred.blended_spread_cover_prob is not None:
+                if margin == cover_target:
+                  pred.blended_spread_pick_roi = 0.0   # push
+                else:
+                  pred.blended_spread_covered = margin > cover_target
+                  b_pick_home    = pred.blended_spread_cover_prob >= 0.5
+                  b_pick_correct = (b_pick_home == pred.blended_spread_covered)
+                  b_price = pred.spread_home_price if b_pick_home else pred.spread_away_price
+                  if b_price:
+                    try:
+                      o = int(b_price)
+                      profit = o / 100.0 if o > 0 else 100.0 / (-o)
+                      pred.blended_spread_pick_roi = round(profit if b_pick_correct else -1.0, 4)
+                    except (TypeError, ValueError):
+                      pass
+
             if pred.total_pick_line is not None:
               pred.total_actual = h + a
               if pred.total_actual == pred.total_pick_line:
@@ -2207,6 +2260,25 @@ def _upsert_predictions(schedule, sport='MLB'):
                     pred.total_pick_roi = round(profit if pick_correct else -1.0, 4)
                   except (TypeError, ValueError):
                     pass
+
+              # Blended-ensemble total TRACKING — graded the same way as
+              # above, just off blended_total_over_prob (None for sports/
+              # games where no blended total was projected).
+              if pred.blended_total_over_prob is not None:
+                if pred.total_actual == pred.total_pick_line:
+                  pred.blended_total_pick_roi = 0.0   # push
+                else:
+                  pred.blended_total_went_over = pred.total_actual > pred.total_pick_line
+                  b_pick_over    = pred.blended_total_over_prob >= 0.5
+                  b_pick_correct = (b_pick_over == pred.blended_total_went_over)
+                  b_price = pred.total_over_price if b_pick_over else pred.total_under_price
+                  if b_price:
+                    try:
+                      o = int(b_price)
+                      profit = o / 100.0 if o > 0 else 100.0 / (-o)
+                      pred.blended_total_pick_roi = round(profit if b_pick_correct else -1.0, 4)
+                    except (TypeError, ValueError):
+                      pass
 
             changed = True
         except (TypeError, ValueError):
@@ -2601,6 +2673,32 @@ app.jinja_env.globals['spread_model_factor_rows'] = spread_model.weighted_factor
 
 _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
                              **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}
+
+
+def _margin_cover_prob(sport, margin, home_spread_line):
+    """P(home covers home_spread_line) from a raw point-margin projection —
+    used only for the blended-ensemble spread TRACKING columns (see
+    GamePrediction.blended_spread_cover_prob), where nba_ensemble_model.py/
+    wnba_ensemble_model.py's margin blend already produces a real point
+    margin directly. Unlike spread_proxy.cover_prob (which has to reverse-
+    engineer an implied margin from a win probability first, since that's
+    all spread_proxy ever had to work with), this skips that step — reuses
+    spread_model.py's own fitted sigma per sport (same game-margin scale)
+    rather than fitting a separate one just for this tracking column.
+    Returns None if margin/spread_line are missing or this sport has no
+    spread_model fit at all (e.g. NFL's player model has no margin to blend,
+    so model['ensemble_margin'] is never set there and this is never called
+    with a real margin for NFL)."""
+    if margin is None or home_spread_line is None:
+        return None
+    coeffs = spread_model.COEFFS.get(sport)
+    if not coeffs:
+        return None
+    sigma = coeffs.get('sigma')
+    if not sigma or sigma <= 0:
+        return None
+    z = (margin - (-home_spread_line)) / sigma
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
 
 
 def _total_over_prob(sport, total_projection, market_total_line):
