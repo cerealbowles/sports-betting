@@ -41,9 +41,16 @@ MARGIN_FIT = {'intercept': -0.052, 'team_weight': 0.576, 'player_weight': 0.283}
 # side's own combined-score projection directly (OLS, not logit space).
 # team_total here is a PPG-sum proxy (not the real pace-adjusted
 # bball_total_model.py projection) — see wnba_ensemble_bootstrap.py's
-# row-collection comment for why. Placeholder until that script's own
-# total-blend fit replaces this.
-TOTAL_FIT = {'intercept': 0.0, 'team_weight': 1.0, 'player_weight': 0.0}
+# row-collection comment for why.
+#
+# Fit provenance (wnba_ensemble_bootstrap.py, n=521): team-only (PPG-sum)
+# RMSE 17.50, player-only RMSE 17.57, blended RMSE 16.39 — a real
+# improvement, though team_weight came out negative (-0.161), same
+# "slight over-correction once stacked against the player signal" pattern
+# nfl_ensemble_model.py's PROB_FIT shows, not literally "the team proxy
+# hurts." Tracked in parallel against the real total model (app.py's
+# blended_total_* GamePrediction columns), not assumed to transfer to it.
+TOTAL_FIT = {'intercept': 109.176, 'team_weight': -0.161, 'player_weight': 0.500}
 
 
 def _logit(p, eps=1e-6):
