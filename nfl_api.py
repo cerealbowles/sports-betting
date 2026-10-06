@@ -10,6 +10,8 @@ import nfl_model
 import football_total_model
 import nfl_stats_db
 import nfl_boxscore_api
+import nfl_player_model
+import nfl_ensemble_model
 
 _ET = ZoneInfo('America/New_York')
 
@@ -715,6 +717,39 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
     except Exception:
         model = None
+
+    # Blend in the offense/defense unit-grade signal (nfl_player_model.py)
+    # via the fitted weights in nfl_ensemble_model.py — see
+    # nfl_ensemble_bootstrap.py for the backtest behind this. Wrapped in
+    # its own try/except, independent of the team model above — a
+    # warehouse read returning too little history should degrade to the
+    # team-only model, never break the page. Probability-only (no spread
+    # blend) — see nfl_player_model.predict()'s docstring for why.
+    if model is not None:
+        try:
+            team_prob = model['home_prob']
+
+            def _grades(team_id):
+                off_list, def_list = nfl_stats_db.get_team_game_aggregates_db(
+                    team_id, before_date=game_date_et)
+                return (nfl_player_model.compute_offense_grade(off_list),
+                        nfl_player_model.compute_defense_grade(def_list))
+
+            home_off, home_def = _grades(home.get('id'))
+            away_off, away_def = _grades(away.get('id'))
+            player_pred = nfl_player_model.predict(home_off, home_def, away_off, away_def)
+
+            ensemble = (nfl_ensemble_model.predict(team_prob, player_pred['home_prob'])
+                        if player_pred else None)
+
+            model['team_only_prob'] = team_prob
+            model['player_prob']    = player_pred['home_prob'] if player_pred else None
+            model['blended']        = ensemble is not None
+            if ensemble:
+                model['home_prob'] = ensemble['home_prob']
+                model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
+        except Exception:
+            model['blended'] = False
 
     # Pace-adjusted total (O/U) projection — separate from the win-prob
     # model above, needs its own plays-per-game fetch per team (see

@@ -8,12 +8,11 @@ nfl_api._get_season_game_log()'s 18-week live ESPN walk, re-run on every
 1-hour cache miss just for PPG/recent-form/rest-days inputs — a Final
 game's result never changes, so there's no reason to keep re-fetching it.
 
-Player-level (ingest_player_stats/get_player_gamelog_db) is new data this
-app didn't have before — there's no existing NFL player model consuming
-it yet (unlike NBA's nba_player_model.py), so this exists to actually
-have the per-player box score data stored and queryable ("play around
-with the data"), as the foundation for a player-level model later rather
-than something already wired into a live prediction path today.
+Player-level (ingest_player_stats/get_player_gamelog_db) feeds
+nfl_player_model.py's offense/defense unit grades — get_team_game_
+aggregates_db() below is the bridge: groups a team's stored player rows
+back into per-game team aggregates (nfl_player_model.parse_team_game_
+aggregate's shape) for nfl_api.py's live predictions to grade off of.
 
 Same lazy `from app import ...` pattern as nba_stats_db.py and every
 *_backfill.py script — avoids a circular import with app.py, which
@@ -160,3 +159,45 @@ def get_player_gamelog_db(player_id, before_date=None, limit=None):
                 'categories':  categories,
             })
         return out
+
+
+def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
+    """Returns (offense_list, defense_list) — up to `limit` of this team's
+    most recent games, newest first, each already collapsed to one team-
+    level aggregate dict via nfl_player_model.parse_team_game_aggregate().
+    This is what nfl_api.py's live predictions pass straight into
+    nfl_player_model.compute_offense_grade()/compute_defense_grade().
+
+    Groups the team's stored PlayerGameStat rows (one row per player per
+    game) back into per-game buckets by game_id — a Final game writes many
+    player rows that all share the same game_id/game_date, so this just
+    re-assembles the team's own side of that game from them. ([], []) if
+    nothing stored for this team yet."""
+    import nfl_player_model as pm
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        q = PlayerGameStat.query.filter_by(sport='NFL', team_id=team_id)
+        if before_date:
+            q = q.filter(PlayerGameStat.game_date < before_date)
+        q = q.order_by(PlayerGameStat.game_date.desc())
+        rows = q.all()
+
+    by_game = {}
+    game_order = []
+    for r in rows:
+        if r.game_id not in by_game:
+            by_game[r.game_id] = []
+            game_order.append(r.game_id)
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        by_game[r.game_id].append({'categories': categories})
+
+    offense_list, defense_list = [], []
+    for game_id in game_order[:limit]:
+        off, defn = pm.parse_team_game_aggregate(by_game[game_id])
+        offense_list.append(off)
+        defense_list.append(defn)
+    return offense_list, defense_list
