@@ -113,7 +113,22 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
     """Returns this player's games this season, newest first:
     [{event_id, date, minutes, points, rebounds, assists, team_id, home}],
     or [] on failure / no games found.
+
+    Tries the local stats warehouse (nba_stats_db.py) first — a player's
+    finalized games are durable once stored, so there's no reason to ask
+    ESPN for them again. Only falls through to the live gamelog fetch below
+    when the DB has nothing for this player yet (not backfilled, or new to
+    the league this season) — see nba_stats_db.py's module docstring for
+    the ingestion side of this.
     """
+    try:
+        import nba_stats_db
+        db_games = nba_stats_db.get_player_gamelog_db(player_id)
+        if db_games:
+            return db_games
+    except Exception:
+        pass
+
     data = _get(f'{ESPN_WEB}/athletes/{player_id}/gamelog', None, 'gamelog')
     if not data:
         return []

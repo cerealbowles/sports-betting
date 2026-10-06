@@ -200,6 +200,78 @@ class GamePrediction(db.Model):
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
+
+class PlayerGameStat(db.Model):
+  """One player's box score line from one finalized game — the local stats
+  warehouse this app's per-sport roster/model modules read from instead of
+  re-fetching a player's gamelog from the live API on every cache miss.
+  Sport-agnostic schema (a `sport` column, not a separate table per sport)
+  so the same table serves NBA now and MLB/NHL/NFL/etc. later — not every
+  column applies to every sport (e.g. `fga`/`fta` are basketball-specific),
+  so sport-specific modules are expected to only read/write the columns
+  they understand and leave the rest null. See nba_stats_db.py for the NBA
+  read/write layer and nba_stats_backfill.py for the initial backfill.
+  """
+  __tablename__ = 'player_game_stats'
+  id            = db.Column(db.Integer, primary_key=True)
+  sport         = db.Column(db.String(10), nullable=False, index=True)
+  game_id       = db.Column(db.String(20), nullable=False, index=True)   # source API's event/game id
+  game_date     = db.Column(db.String(10), nullable=False, index=True)   # YYYY-MM-DD, source's own game date
+  season        = db.Column(db.Integer)                                 # e.g. 2026 == the 2026-27 NBA season
+  game_type     = db.Column(db.String(12))                              # 'preseason' | 'regular' | 'postseason'
+  player_id     = db.Column(db.String(20), nullable=False, index=True)  # source API's athlete id
+  player_name   = db.Column(db.String(80), nullable=False)
+  team_id       = db.Column(db.String(20), nullable=False, index=True)
+  opponent_id   = db.Column(db.String(20))
+  is_home       = db.Column(db.Boolean)
+  starter       = db.Column(db.Boolean)
+  did_not_play  = db.Column(db.Boolean, default=False)
+  minutes       = db.Column(db.Float)
+  points        = db.Column(db.Float)
+  rebounds      = db.Column(db.Float)
+  assists       = db.Column(db.Float)
+  steals        = db.Column(db.Float)
+  blocks        = db.Column(db.Float)
+  turnovers     = db.Column(db.Float)
+  fouls         = db.Column(db.Float)
+  fga           = db.Column(db.Float)   # field goals attempted (basketball)
+  fgm           = db.Column(db.Float)
+  fta           = db.Column(db.Float)   # free throws attempted (basketball)
+  ftm           = db.Column(db.Float)
+  three_pa      = db.Column(db.Float)
+  three_pm      = db.Column(db.Float)
+  plus_minus    = db.Column(db.Float)
+  created_at    = db.Column(db.DateTime(timezone=True),
+                             default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('sport', 'game_id', 'player_id', name='uq_player_game'),)
+
+
+class TeamGameStat(db.Model):
+  """One team's result from one finalized game — the local equivalent of
+  each sport's live "season game log" fetch (e.g. nba_api._get_season_game_log),
+  kept here so a team's recent-form/PPG inputs can come from a DB query
+  instead of a live API call. Same sport-agnostic-table approach as
+  PlayerGameStat above."""
+  __tablename__ = 'team_game_stats'
+  id            = db.Column(db.Integer, primary_key=True)
+  sport         = db.Column(db.String(10), nullable=False, index=True)
+  game_id       = db.Column(db.String(20), nullable=False, index=True)
+  game_date     = db.Column(db.String(10), nullable=False, index=True)
+  season        = db.Column(db.Integer)
+  game_type     = db.Column(db.String(12))
+  team_id       = db.Column(db.String(20), nullable=False, index=True)
+  opponent_id   = db.Column(db.String(20))
+  is_home       = db.Column(db.Boolean)
+  points        = db.Column(db.Float)
+  points_allowed = db.Column(db.Float)
+  won           = db.Column(db.Boolean)
+  created_at    = db.Column(db.DateTime(timezone=True),
+                             default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('sport', 'game_id', 'team_id', name='uq_team_game'),)
+
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()

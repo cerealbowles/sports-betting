@@ -10,6 +10,7 @@ import nba_roster_api
 import nba_player_model
 import nba_ensemble_model
 import nba_boxscore_api
+import nba_stats_db
 import spread_proxy
 
 _ET = ZoneInfo('America/New_York')
@@ -589,6 +590,24 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                     actual = actual_by_id.get(row['id'])
                     if actual:
                         row['actual'] = actual
+
+            # Once Final, persist the box score into the local stats
+            # warehouse (nba_stats_db.py) — reuses the boxscore fetch above,
+            # so this costs no extra API calls. Idempotent (upsert), so it's
+            # fine that this runs on every _build_game() call for a Final
+            # game, not just the first time it goes Final (the 20-min
+            # _check_finalized_games cron and every real page visit both
+            # call this). Future reads (nba_roster_api.get_player_gamelog)
+            # use this table instead of re-fetching each player's gamelog
+            # from ESPN.
+            if status == 'Final' and boxscore:
+                home_score = float(home['score']) if home.get('score') is not None else None
+                away_score = float(away['score']) if away.get('score') is not None else None
+                game_type = nba_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
+                    event.get('season', {}).get('type'), 'regular')
+                nba_stats_db.ingest_game(
+                    event_id, game_date_et, _get_nba_season(), game_type,
+                    home.get('id'), away.get('id'), home_score, away_score, boxscore)
         except Exception:
             pass
 

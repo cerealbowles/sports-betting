@@ -86,9 +86,10 @@ def get_unavailable_player_ids(event_id):
 
 
 def get_live_boxscore(event_id):
-    """Returns {team_id: [{id, name, starter, minutes, points, rebounds,
-    assists, did_not_play}]} once the game has started (Live or Final);
-    {} pre-game or on failure. Player stats reflect the game's current
+    """Returns {team_id: [{id, name, starter, did_not_play, minutes, points,
+    rebounds, assists, steals, blocks, turnovers, fouls, plus_minus, fgm,
+    fga, three_pm, three_pa, ftm, fta}]} once the game has started (Live or
+    Final); {} pre-game or on failure. Player stats reflect the game's current
     state — call again (subject to the 120s cache TTL) to get updates
     during a live game."""
     data = _get(event_id)
@@ -108,6 +109,7 @@ def get_live_boxscore(event_id):
         idx = {label: i for i, label in enumerate(labels)}
 
         def _stat(stats, label, default=0.0):
+            """Plain numeric stat (MIN, PTS, REB, ...)."""
             i = idx.get(label)
             if i is None or i >= len(stats):
                 return default
@@ -115,6 +117,23 @@ def get_live_boxscore(event_id):
                 return float(stats[i])
             except (TypeError, ValueError):
                 return default
+
+        def _made_attempt(stats, label):
+            """'FG'/'3PT'/'FT' are made-attempt composites, e.g. '7-14' —
+            same shape as nba_roster_api._parse_game_stats handles for the
+            gamelog endpoint. Returns (made, attempted) floats, (0.0, 0.0)
+            on anything unparseable/missing."""
+            i = idx.get(label)
+            if i is None or i >= len(stats):
+                return 0.0, 0.0
+            raw = str(stats[i])
+            if '-' not in raw:
+                return 0.0, 0.0
+            try:
+                made, att = raw.split('-')
+                return float(made), float(att)
+            except (ValueError, TypeError):
+                return 0.0, 0.0
 
         rows = []
         for ath_entry in stat_groups[0].get('athletes', []):
@@ -125,6 +144,9 @@ def get_live_boxscore(event_id):
                 continue
             stats = ath_entry.get('stats', [])
             did_not_play = bool(ath_entry.get('didNotPlay'))
+            fgm, fga = (0.0, 0.0) if did_not_play else _made_attempt(stats, 'FG')
+            tpm, tpa = (0.0, 0.0) if did_not_play else _made_attempt(stats, '3PT')
+            ftm, fta = (0.0, 0.0) if did_not_play else _made_attempt(stats, 'FT')
             rows.append({
                 'id':            pid,
                 'name':          name,
@@ -134,6 +156,14 @@ def get_live_boxscore(event_id):
                 'points':        0.0 if did_not_play else _stat(stats, 'PTS'),
                 'rebounds':      0.0 if did_not_play else _stat(stats, 'REB'),
                 'assists':       0.0 if did_not_play else _stat(stats, 'AST'),
+                'steals':        0.0 if did_not_play else _stat(stats, 'STL'),
+                'blocks':        0.0 if did_not_play else _stat(stats, 'BLK'),
+                'turnovers':     0.0 if did_not_play else _stat(stats, 'TO'),
+                'fouls':         0.0 if did_not_play else _stat(stats, 'PF'),
+                'plus_minus':    0.0 if did_not_play else _stat(stats, '+/-'),
+                'fgm': fgm, 'fga': fga,
+                'three_pm': tpm, 'three_pa': tpa,
+                'ftm': ftm, 'fta': fta,
             })
         out[team_id] = rows
     return out
