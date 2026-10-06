@@ -2169,6 +2169,73 @@ def _upsert_predictions(schedule, sport='MLB'):
           pred.wind_dir = wx.get('wind_dir')
         changed = True
 
+      # Backfill the blended-ensemble spread/total TRACKING fields even for
+      # an already-resolved prediction (pred.home_won already set) — these
+      # are NEW columns added after this app already had months of
+      # predictions sitting with pred.home_won set, so the Preview-gated
+      # block above (which only ever runs ONCE, before a game starts) never
+      # gets a chance to fill them in for anything predicted before today.
+      # Purely additive: only fills a field that's still None, never
+      # overwrites an already-graded value, and doesn't touch home_prob/
+      # spread_cover_prob/etc. (those stay frozen at prediction time, same
+      # as always).
+      if model and pred.blended_spread_cover_prob is None and pred.spread_pick_line is not None:
+        pred.blended_spread_cover_prob = _margin_cover_prob(
+            sport, model.get('ensemble_margin'), pred.spread_pick_line)
+        if pred.blended_spread_cover_prob is not None:
+          changed = True
+      if model and pred.blended_total_proj is None and pred.total_pick_line is not None:
+        blended_total = model.get('blended_total')
+        if blended_total is not None:
+          pred.blended_total_proj      = blended_total
+          pred.blended_total_over_prob = _total_over_prob(sport, blended_total, pred.total_pick_line)
+          changed = True
+
+      # Grade the blended fields too, independent of whether pred.home_won
+      # was already set long before these columns existed — the team-only
+      # resolution block below only ever fires once (pred.home_won is None
+      # gate), so a blended field backfilled above on an already-resolved
+      # game would otherwise sit ungraded forever.
+      if (status == 'Final' and pred.home_score is not None and pred.away_score is not None
+          and pred.blended_spread_cover_prob is not None and pred.blended_spread_covered is None
+          and pred.spread_pick_line is not None):
+        margin       = pred.home_score - pred.away_score
+        cover_target = -pred.spread_pick_line
+        if margin == cover_target:
+          pred.blended_spread_pick_roi = 0.0
+        else:
+          pred.blended_spread_covered = margin > cover_target
+          b_pick_home    = pred.blended_spread_cover_prob >= 0.5
+          b_pick_correct = (b_pick_home == pred.blended_spread_covered)
+          b_price = pred.spread_home_price if b_pick_home else pred.spread_away_price
+          if b_price:
+            try:
+              o = int(b_price)
+              profit = o / 100.0 if o > 0 else 100.0 / (-o)
+              pred.blended_spread_pick_roi = round(profit if b_pick_correct else -1.0, 4)
+            except (TypeError, ValueError):
+              pass
+        changed = True
+
+      if (status == 'Final' and pred.total_actual is not None
+          and pred.blended_total_over_prob is not None and pred.blended_total_went_over is None
+          and pred.total_pick_line is not None):
+        if pred.total_actual == pred.total_pick_line:
+          pred.blended_total_pick_roi = 0.0
+        else:
+          pred.blended_total_went_over = pred.total_actual > pred.total_pick_line
+          b_pick_over    = pred.blended_total_over_prob >= 0.5
+          b_pick_correct = (b_pick_over == pred.blended_total_went_over)
+          b_price = pred.total_over_price if b_pick_over else pred.total_under_price
+          if b_price:
+            try:
+              o = int(b_price)
+              profit = o / 100.0 if o > 0 else 100.0 / (-o)
+              pred.blended_total_pick_roi = round(profit if b_pick_correct else -1.0, 4)
+            except (TypeError, ValueError):
+              pass
+        changed = True
+
       # Capture closing odds once game goes Live — best approximation of closing line
       if pred.home_won is None and status == 'Live' and pred.closing_home_odds is None:
         if odds.get('home_best') is not None:
