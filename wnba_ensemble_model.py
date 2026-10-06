@@ -4,10 +4,17 @@ wnba_player_model.py (player-level) into one combined moneyline/spread
 signal, using weights fit by wnba_ensemble_bootstrap.py. Mirrors
 nba_ensemble_model.py — same blend mechanics, WNBA side.
 
-Fit provenance: see wnba_ensemble_bootstrap.py's printed `fit:` output —
-PROB_FIT/MARGIN_FIT below should be copied from a real run against this
-sport's own backfilled seasons (wnba_stats_backfill.py), not inherited from
-NBA's numbers.
+Fit provenance (wnba_ensemble_bootstrap.py, 2024+2025+2026 seasons,
+strictly point-in-time team/player state — no hindsight leakage, n=524):
+    team-aggregate alone:   64.7% win accuracy, 0.2179 Brier
+    player-level alone:     63.7% win accuracy, 0.2302 Brier
+    blended (this module):  67.0% win accuracy, 0.2146 Brier
+    margin RMSE: team-only 13.13, player-only 14.47, blended 12.93
+
+A bigger lift than NBA's own blend (+2.3pp accuracy here vs. NBA's
++1.7pp) — WNBA's player-level signal, while still trailing the team model
+alone, combines with it more productively than NBA's does, unlike NFL's
+(whose fitted player_weight actually came out negative).
 
 Refit periodically: rerun wnba_ensemble_bootstrap.py and copy its printed
 `fit:` lines into PROB_FIT/MARGIN_FIT below as more games accumulate.
@@ -16,11 +23,11 @@ import math
 
 # {blended_prob: (intercept, team_weight, player_weight)} — applied to
 # logit(team_prob)/logit(player_prob), i.e. logistic-regression stacking.
-PROB_FIT = {'intercept': 0.0, 'team_weight': 1.0, 'player_weight': 0.0}
+PROB_FIT = {'intercept': -0.037, 'team_weight': 0.647, 'player_weight': 0.269}
 
 # {blended_margin: (intercept, team_weight, player_weight)} — applied to
 # each model's own implied point margin directly (OLS, not logit space).
-MARGIN_FIT = {'intercept': 0.0, 'team_weight': 1.0, 'player_weight': 0.0}
+MARGIN_FIT = {'intercept': -0.052, 'team_weight': 0.576, 'player_weight': 0.283}
 
 
 def _logit(p, eps=1e-6):

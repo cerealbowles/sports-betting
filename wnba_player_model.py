@@ -7,9 +7,12 @@ production from their own recent games, sums to a team score, and derives
 moneyline/spread/total from that — rather than team-season aggregates that
 can't see "this team is missing its best player tonight."
 
-UNVALIDATED — this has not been backtested yet (see wnba_player_bootstrap.py).
-Do not wire into the live app until a backtest shows it beats
-spread_proxy.py's documented 46.4% WNBA out-of-sample ATS figure.
+Fit provenance (wnba_player_bootstrap.py, 2024+2025+2026 seasons, strictly
+point-in-time player state — no hindsight leakage, n=524):
+    63.7% win accuracy, 0.2302 Brier (baseline 0.2482 if always picking the
+    majority outcome), margin RMSE 14.47 pts.
+See wnba_ensemble_model.py for the blended-with-team-model numbers, which
+is what this is actually wired into the live app via.
 
 Known simplifications (documented, not hidden):
   - No real pre-game confirmed-starters feed exists on ESPN's free API.
@@ -39,17 +42,16 @@ TEAM_GAME_MINUTES = 200.0  # 5 players x 40 min — WNBA quarters are 10 min
                             # post-hoc game-length change, not a pre-game
                             # projection input).
 
-# Placeholder until wnba_player_bootstrap.py fits a real residual std from
-# actual backtested margins — same normal-approximation pattern as
-# nba_player_model.py, just carrying its NBA-derived sigma over as a
-# starting prior rather than a WNBA-specific one (no WNBA backtest has been
-# run yet). Refresh this once wnba_player_bootstrap.py reports its own.
-DEFAULT_SIGMA = 14.734
+# Fit by wnba_player_bootstrap.py from actual backtested margins (residual
+# std) — see the module docstring's fit provenance above. Refresh this
+# periodically by rerunning that script.
+DEFAULT_SIGMA = 14.47
 
 # Real-world WNBA home-court point advantage (distinct from wnba_model.py's
-# own logit-space home-court term — this one's in raw points). Same
-# placeholder caveat as DEFAULT_SIGMA above — carried over from
-# nba_player_model.py's value, not yet WNBA-specific.
+# own logit-space home-court term — this one's in raw points). Not fit by
+# wnba_player_bootstrap.py (that script only reports a fitted sigma, not a
+# separate home-court term) — carried over from nba_player_model.py's value
+# as a reasonable starting prior, same role as LEAGUE_AVG_PPG below.
 HOME_COURT_POINTS = 2.7
 
 # Reference scoring environment used only to normalize the opponent-defense
