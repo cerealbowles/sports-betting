@@ -211,6 +211,16 @@ class PlayerGameStat(db.Model):
   so sport-specific modules are expected to only read/write the columns
   they understand and leave the rest null. See nba_stats_db.py for the NBA
   read/write layer and nba_stats_backfill.py for the initial backfill.
+
+  `stats_json` exists for sports whose box score doesn't fit a flat set of
+  columns at all — football's splits into ~10 independent categories
+  (passing/rushing/receiving/defensive/kicking/...) that vary entirely by
+  position, so exploding them into dedicated columns the way basketball's
+  fga/fgm/etc. above does would mean dozens of columns almost always null
+  for any given player. NFL (see nfl_stats_db.py) stores its full per-
+  category stat breakdown there instead and leaves the basketball-specific
+  columns null, the same "only use what applies" rule as the rest of this
+  table — just at the JSON-blob granularity instead of the column one.
   """
   __tablename__ = 'player_game_stats'
   id            = db.Column(db.Integer, primary_key=True)
@@ -241,6 +251,8 @@ class PlayerGameStat(db.Model):
   three_pa      = db.Column(db.Float)
   three_pm      = db.Column(db.Float)
   plus_minus    = db.Column(db.Float)
+  position      = db.Column(db.String(10))   # e.g. 'QB', 'WR' (football); null where not applicable
+  stats_json    = db.Column(db.Text)         # full per-category stat breakdown (football) — see class docstring
   created_at    = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -337,6 +349,8 @@ def ensure_column_exists():
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
+    _add('player_game_stats', 'position',          'TEXT DEFAULT NULL')
+    _add('player_game_stats', 'stats_json',        'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,

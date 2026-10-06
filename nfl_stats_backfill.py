@@ -3,8 +3,9 @@
 nfl_stats_backfill.py — One-time (and safely re-runnable) catch-up: walks
 ESPN's scoreboard week-by-week (same seasontype/week paging
 nfl_api._get_season_game_log's live fallback already uses) and ingests
-every completed game's final score into the local stats warehouse
-(app.py's TeamGameStat table, written via nfl_stats_db.ingest_team_game).
+every completed game's final score and full player box score into the
+local stats warehouse (app.py's TeamGameStat/PlayerGameStat tables,
+written via nfl_stats_db.ingest_team_game/ingest_player_stats).
 
 See nfl_stats_db.py's module docstring for why this exists: nfl_api.py's
 _build_game() ingests a game the moment it's built, but only for a week
@@ -37,6 +38,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import nfl_stats_db
+import nfl_boxscore_api
 
 ESPN_NFL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 _ET = ZoneInfo('America/New_York')
@@ -101,6 +103,11 @@ def backfill(season, week_start, week_end, seasontype=2, dry_run=False):
                 nfl_stats_db.ingest_team_game(
                     event.get('id'), game_date_et, season, game_type,
                     home_id, away_id, home_name, away_name, home_score, away_score)
+                player_boxscore = nfl_boxscore_api.get_live_boxscore(event.get('id'))
+                if player_boxscore:
+                    nfl_stats_db.ingest_player_stats(
+                        event.get('id'), game_date_et, season, game_type,
+                        home_id, away_id, player_boxscore)
             total_games += 1
 
         if not found_any and week > 3:

@@ -1,20 +1,26 @@
 """
-nfl_stats_db.py — Read/write layer for NFL's local stats warehouse, same
-TeamGameStat table (app.py) nba_stats_db.py writes to (sport-agnostic
-schema, see that table's docstring), just the NFL side of it.
+nfl_stats_db.py — Read/write layer for NFL's local stats warehouse: the
+same sport-agnostic PlayerGameStat/TeamGameStat tables (app.py)
+nba_stats_db.py writes to, just the NFL side of it.
 
-Team-level only for now — unlike NBA, this app has no per-player NFL
-model yet (no nfl_roster_api.py/nfl_player_model.py equivalent), so
-there's no live per-player gamelog fetch to replace here. What NFL does
-have is nfl_api._get_season_game_log(): an 18-week ESPN scoreboard walk,
-re-run on every 1-hour cache miss, just to get each team's season results
-for PPG/recent-form/rest-days — the exact same shape of waste the NBA
-team-level warehouse fixed. This module is that fix for NFL.
+Team-level (ingest_team_game/get_season_game_log_db) replaces
+nfl_api._get_season_game_log()'s 18-week live ESPN walk, re-run on every
+1-hour cache miss just for PPG/recent-form/rest-days inputs — a Final
+game's result never changes, so there's no reason to keep re-fetching it.
+
+Player-level (ingest_player_stats/get_player_gamelog_db) is new data this
+app didn't have before — there's no existing NFL player model consuming
+it yet (unlike NBA's nba_player_model.py), so this exists to actually
+have the per-player box score data stored and queryable ("play around
+with the data"), as the foundation for a player-level model later rather
+than something already wired into a live prediction path today.
 
 Same lazy `from app import ...` pattern as nba_stats_db.py and every
 *_backfill.py script — avoids a circular import with app.py, which
 imports nfl_api.py (and, transitively, this module) at module level.
 """
+import json
+
 GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
 
 
@@ -77,3 +83,80 @@ def get_season_game_log_db(season, game_type='regular'):
             'away_score': r.points_allowed,
             'home_won':   r.won,
         } for r in rows if r.team_name and r.opponent_name]
+
+
+def ingest_player_stats(event_id, game_date_et, season, game_type,
+                         home_id, away_id, boxscore):
+    """Upserts PlayerGameStat rows for every athlete in `boxscore` —
+    {team_id: [{id, name, position, categories}, ...]} as returned by
+    nfl_boxscore_api.parse_player_boxscore()/get_live_boxscore(). Each
+    player's full category breakdown (passing/rushing/receiving/etc.,
+    whichever categories they actually appeared in) is stored as JSON in
+    `stats_json` — see PlayerGameStat's class docstring in app.py for why
+    football doesn't get basketball's flat per-stat columns.
+
+    Idempotent — upserts on the (sport, game_id, player_id) unique
+    constraint, same as every other ingest_* function in this app's stats
+    warehouse."""
+    if not boxscore:
+        return
+    from app import app as flask_app, db, PlayerGameStat
+
+    with flask_app.app_context():
+        for team_id, opp_id, is_home in ((home_id, away_id, True), (away_id, home_id, False)):
+            rows = boxscore.get(team_id)
+            if rows is None:
+                continue
+            for r in rows:
+                existing = PlayerGameStat.query.filter_by(
+                    sport='NFL', game_id=event_id, player_id=r['id']).first()
+                target = existing or PlayerGameStat(sport='NFL', game_id=event_id, player_id=r['id'])
+                target.game_date   = game_date_et
+                target.season      = season
+                target.game_type   = game_type
+                target.player_name = r['name']
+                target.team_id     = team_id
+                target.opponent_id = opp_id
+                target.is_home     = is_home
+                target.position    = r.get('position')
+                target.stats_json  = json.dumps(r.get('categories', {}))
+                if not existing:
+                    db.session.add(target)
+        db.session.commit()
+
+
+def get_player_gamelog_db(player_id, before_date=None, limit=None):
+    """Returns this player's stored games, newest first: [{event_id, date,
+    team_id, opponent_id, is_home, position, categories}] where
+    `categories` is the parsed stats_json dict (e.g. {'passing': {'passingYards':
+    '299', ...}, ...}) — values come back as ESPN's own strings (e.g. '22/40'
+    completions/attempts composites aren't split out here the way NBA's
+    gamelog parsing splits made-attempt pairs; this is raw/exploratory data,
+    not yet feeding a model that would need them pre-parsed). [] if nothing
+    stored for this player yet."""
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        q = PlayerGameStat.query.filter_by(sport='NFL', player_id=player_id)
+        if before_date:
+            q = q.filter(PlayerGameStat.game_date < before_date)
+        q = q.order_by(PlayerGameStat.game_date.desc())
+        if limit:
+            q = q.limit(limit)
+        rows = q.all()
+        out = []
+        for r in rows:
+            try:
+                categories = json.loads(r.stats_json) if r.stats_json else {}
+            except (TypeError, ValueError):
+                categories = {}
+            out.append({
+                'event_id':    r.game_id,
+                'date':        r.game_date,
+                'team_id':     r.team_id,
+                'opponent_id': r.opponent_id,
+                'is_home':     r.is_home,
+                'position':    r.position,
+                'categories':  categories,
+            })
+        return out

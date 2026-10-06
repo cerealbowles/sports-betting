@@ -9,6 +9,7 @@ import odds_history
 import nfl_model
 import football_total_model
 import nfl_stats_db
+import nfl_boxscore_api
 
 _ET = ZoneInfo('America/New_York')
 
@@ -780,6 +781,17 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
                 event.get('id'), game_date_et, _get_nfl_season(), game_type,
                 home.get('id'), away.get('id'), home.get('name'), away.get('name'),
                 home_score, away_score)
+
+            # Player-level box score — reuses `summary` (already fetched
+            # above for weather/injuries), so this is zero extra API calls.
+            # See nfl_boxscore_api.py's module docstring for why football's
+            # box score is stored as JSON per player instead of NBA's flat
+            # stat columns.
+            player_boxscore = nfl_boxscore_api.parse_player_boxscore(summary)
+            if player_boxscore:
+                nfl_stats_db.ingest_player_stats(
+                    event.get('id'), game_date_et, _get_nfl_season(), game_type,
+                    home.get('id'), away.get('id'), player_boxscore)
         except Exception:
             pass
 
