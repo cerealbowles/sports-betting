@@ -3,6 +3,7 @@ import requests
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from dt_fmt import fmt as _fmt
 import odds_api
 import wnba_model
 import bball_total_model
@@ -728,9 +729,6 @@ def build_schedule_context(target_date=None):
 
     games = [_build_game(event, team_stats, game_log, wnba_odds_map, prior_stats, seeds) for event in today_events]
 
-    try:
-        date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')
-    except Exception:
-        date_display = today_str
+    date_display = _fmt(datetime.strptime(today_str, '%Y-%m-%d'), '%a, %b %-d')
 
     return [{'date': today_str, 'date_display': date_display, 'games': games}]

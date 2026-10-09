@@ -55,9 +55,9 @@
 <div class="day-header">
     <h2>{{ heading if heading else (open_bets | length ~ ' Open Bet' ~ ('s' if open_bets | length != 1 else '')) }}</h2>
     <span class="refresh-info">
-        {% if odds_last_fetch %}↻ {{ odds_last_fetch.strftime('%-I:%M%p') | lower }}{% else %}↻ —{% endif %}
+        {% if odds_last_fetch %}↻ {{ odds_last_fetch | fmt('%-I:%M%p') | lower }}{% else %}↻ —{% endif %}
         &nbsp;·&nbsp;
-        {% if odds_next_fetch %}⏱ {{ odds_next_fetch.strftime('%-I:%M%p') | lower }}{% else %}⏱ —{% endif %}
+        {% if odds_next_fetch %}⏱ {{ odds_next_fetch | fmt('%-I:%M%p') | lower }}{% else %}⏱ —{% endif %}
         ET
         &nbsp;
         <form method="post" action="{{ url_for('api_refresh_odds') }}" style="display:inline;">
@@ -82,7 +82,7 @@
              expanding the card — otherwise every open bet just looks like a plain matchup. -->
         <div class="game-header">
             <span class="bc-status" data-bet-id="{{ b.id }}"></span>
-            {% if b.eventstart %}<span class="game-time bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart.strftime('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
+            {% if b.eventstart %}<span class="game-time bc-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart | fmt('%-m/%-d %-I:%M%p') | lower }}</span>{% endif %}
             <span class="eb-type-badge eb-type-{{ eb_type_class }}">{{ eb_label }}</span>
             <div class="game-header-right">
                 {% if b.live_clv is not none %}

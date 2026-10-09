@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dt_fmt import fmt as _fmt
 import odds_api
 import injuries_api
 import nhl_model
@@ -782,9 +783,6 @@ def build_schedule_context(target_date=None):
             'linescore':     _get_period_linescore(game.get('id')) if status in ('Live', 'Final') else None,
         })
 
-    try:
-        date_display = datetime.strptime(today_str, '%Y-%m-%d').strftime('%a, %b %-d')
-    except Exception:
-        date_display = today_str
+    date_display = _fmt(datetime.strptime(today_str, '%Y-%m-%d'), '%a, %b %-d')
 
     return [{'date': today_str, 'date_display': date_display, 'games': games}]

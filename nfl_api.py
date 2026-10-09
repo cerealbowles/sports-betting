@@ -4,6 +4,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, date as _date
 from zoneinfo import ZoneInfo
+from dt_fmt import fmt as _fmt
 import odds_api
 import odds_history
 import nfl_model
@@ -942,10 +943,7 @@ def build_schedule_context():
     _prefetch_game_summaries(today_events)
     games = [_build_game(event, team_stats, game_log, nfl_odds_map, prior_stats) for event in today_events]
 
-    try:
-        date_display = datetime.now(_ET).strftime('%a, %b %-d')
-    except Exception:
-        date_display = today_str
+    date_display = _fmt(datetime.now(_ET), '%a, %b %-d')
 
     return [{'date': today_str, 'date_display': date_display, 'games': games}]
 
@@ -1056,10 +1054,7 @@ def build_week_schedule_context(week=None):
     today_str = _today_et()
     days = []
     for d in sorted(by_date.keys()):
-        try:
-            date_display = datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %-d')
-        except Exception:
-            date_display = d
+        date_display = _fmt(datetime.strptime(d, '%Y-%m-%d'), '%a, %b %-d')
         days.append({'date': d, 'date_display': date_display, 'games': by_date[d], 'is_today': d == today_str})
 
     return {
