@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}CFB Week {{ week_ctx.week }} — Spooky Sports{% endblock %}
+{% block title %}CFB Week {{ week_ctx.week }} — Dead Money{% endblock %}
 
 {% block head %}
 <style>
@@ -8,7 +8,7 @@
 .offseason-title { color: var(--silver); font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
 .offseason-sub   { color: var(--text-muted); font-size: 0.85rem; }
 .wind-mod    { color: #f59e0b; font-weight: 600; }
-.wind-strong { color: #ef4444; font-weight: 700; }
+.wind-strong { color: var(--loss); font-weight: 700; }
 .cfb-stats-row {
     font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;
     display: flex; gap: 8px; flex-wrap: wrap;
@@ -53,6 +53,12 @@
 {% block content %}
 <div class="schedule-body">
 
+
+{% set current_sport = 'CFB' %}
+{% include "_sport_pills.html" %}
+<h1>CFB after dark</h1>
+{% set _cfb_game_count = week_ctx.days | map(attribute='games') | map('length') | sum %}
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ _cfb_game_count }} game{{ 's' if _cfb_game_count != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %}</p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}

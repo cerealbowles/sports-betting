@@ -44,6 +44,7 @@ import football_total_model
 import hockey_total_model
 import mlb_total_model
 from zoneinfo import ZoneInfo
+from dt_fmt import fmt as _fmt
 
 _ET = ZoneInfo('America/New_York')
 
@@ -51,6 +52,7 @@ _ET = ZoneInfo('America/New_York')
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
 
 app = Flask(__name__)
+app.jinja_env.filters['fmt'] = _fmt
 
 # DB_PATH can be overridden via env var — used to mount a persistent Docker volume.
 # Defaults to ./instance/bets.db for local dev (matches Flask's default instance folder).
@@ -2065,10 +2067,7 @@ def _build_day_nav(offset):
     schedule data these APIs don't reasonably serve."""
     offset = max(-_DAY_NAV_RANGE, min(_DAY_NAV_RANGE, offset))
     target = datetime.now(_ET) + timedelta(days=offset)
-    try:
-        date_display = target.strftime('%a, %b %-d')
-    except Exception:
-        date_display = target.strftime('%Y-%m-%d')
+    date_display = _fmt(target, '%a, %b %-d')
     return {
         'offset':       offset,
         'date':         target.strftime('%Y-%m-%d'),
@@ -3511,10 +3510,7 @@ def index():
     unified_picks.sort(key=lambda p: -p['edge'])
     unified_picks = unified_picks[:12]
 
-    try:
-      today_display = today.strftime('%A, %B %-d')
-    except Exception:
-      today_display = today.strftime('%A, %B %d')
+    today_display = _fmt(today, '%A, %B %-d')
 
     _hub_cache['data'] = (sport_summaries, unified_picks, today_display)
     _hub_cache['ts'] = now
@@ -4384,7 +4380,7 @@ def _injury_last_refreshed(sport):
     return None
   if ts.tzinfo is None:
     ts = ts.replace(tzinfo=timezone.utc)
-  return ts.astimezone(_ET).strftime('%-I:%M %p ET')
+  return _fmt(ts.astimezone(_ET), '%-I:%M %p ET')
 
 
 app.jinja_env.globals['injury_last_refreshed'] = _injury_last_refreshed
@@ -6584,7 +6580,7 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             try:
                 dt = datetime.fromisoformat(
                     game.get('game_time_utc', '').replace('Z', '+00:00'))
-                time_str = dt.astimezone(_ET).strftime('%-I:%M %p ET')
+                time_str = _fmt(dt.astimezone(_ET), '%-I:%M %p ET')
             except Exception:
                 time_str = ''
 
@@ -6751,8 +6747,8 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             if gt_utc:
                 try:
                     from datetime import datetime as _dt
-                    gt_str = _dt.fromisoformat(gt_utc.replace('Z', '+00:00')) \
-                               .astimezone(_ET).strftime('%-I:%M %p')
+                    gt_str = _fmt(_dt.fromisoformat(gt_utc.replace('Z', '+00:00'))
+                                     .astimezone(_ET), '%-I:%M %p')
                 except Exception:
                     pass
             candidates.append({
@@ -6779,7 +6775,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             f"{i:>2}  {c['pick']:<4}  {c['opp']:<4}  {c['odds']:>5}  {c['unf']:>2}  {c['time']}"
         )
 
-    today_str   = datetime.now(_ET).strftime('%A, %b %-d')
+    today_str   = _fmt(datetime.now(_ET), '%A, %b %-d')
     description = '```\n' + '\n'.join(rows) + '\n```'
     # Discord embed description limit is 4096 chars
     if len(description) > 3900:

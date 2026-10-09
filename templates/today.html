@@ -1,15 +1,79 @@
 {% extends "base.html" %}
-{% block title %}Today — Spooky Sports{% endblock %}
+{% block title %}Today — Dead Money{% endblock %}
 
 {% block content %}
+{% set _flavor_lines = [
+    'The board is restless tonight.',
+    'Something wicked this way covers.',
+    'The spirits favor the underdog.',
+    'Lines are shifting in the dark.',
+    'The house always has a tell.',
+    'Fresh bones, fresh edges.'
+] %}
+{% set _flavor = _flavor_lines[(sport_summaries | map(attribute='games_today') | sum) % (_flavor_lines | length)] %}
+{% set _games_tonight = sport_summaries | map(attribute='games_today') | sum %}
+{% set _strong_count = top_picks | selectattr('k_label', 'in', ['A', 'Strong']) | list | length %}
+{% set _avg_edge = ((top_picks | sum(attribute='edge')) / (top_picks | length)) if top_picks else 0 %}
 <div class="schedule-body">
 
-<div class="day-header">
-    <h2>{{ today_display }}</h2>
+<div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
+    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}</span>
+    <h1 style="margin:0;">{{ _flavor }}</h1>
 </div>
+
+{% if top_picks %}
+{% set _lock = top_picks[0] %}
+<div class="card" style="position:relative; overflow:hidden; background:var(--card-2nd); border-color:var(--border-warn); display:flex; flex-direction:column; gap:16px; padding:24px 28px;">
+    <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-family:var(--font-cond); font-size:0.78rem; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--orange);">Lock of the Night</span>
+        <span class="kelly-verdict {{ _lock.k_cls }}">{{ _lock.k_label }}</span>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 24px;">
+        <span style="font-family:var(--font-cond); font-size:2.6rem; font-weight:700; line-height:0.95; color:var(--orange);">{{ _lock.pick_label }}</span>
+        <span style="font-size:0.95rem; color:var(--silver);">{{ _lock.sport }} {{ _lock.market }} · {{ _lock.matchup }}{% if _lock.game_time_utc %} · <span class="game-time" data-utc="{{ _lock.game_time_utc }}">—</span>{% endif %}</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; max-width:420px;">
+        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
+            <span class="stat-label" style="font-size:0.64rem;">Odds</span>
+            <span class="mono" style="font-weight:700;">{{ '+' if _lock.amer_odds > 0 }}{{ _lock.amer_odds }}</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
+            <span class="stat-label" style="font-size:0.64rem;">Edge</span>
+            <span class="mono" style="font-weight:700; color:var(--win);">{{ '+' if _lock.edge > 0 }}{{ _lock.edge }}%</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
+            <span class="stat-label" style="font-size:0.64rem;">EV</span>
+            <span class="mono" style="font-weight:700; color:var(--win);">{{ '+' if _lock.ev_pct > 0 }}{{ _lock.ev_pct }}%</span>
+        </div>
+    </div>
+    <div>
+        <a href="{{ _lock.href }}" class="btn-place-bet" style="display:inline-block; width:auto; text-decoration:none; padding:10px 20px;">View full breakdown →</a>
+    </div>
+</div>
+
+<div class="dashboard">
+    <div class="stat-card">
+        <span class="stat-label">Games tonight</span>
+        <span class="stat-value">{{ _games_tonight }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Picks</span>
+        <span class="stat-value">{{ top_picks | length }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Strong plays</span>
+        <span class="stat-value" style="color:var(--win);">{{ _strong_count }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Avg edge</span>
+        <span class="stat-value" style="color:var(--win);">{{ '+' if _avg_edge > 0 }}{{ '%.1f' % _avg_edge }}%</span>
+    </div>
+</div>
+{% endif %}
 
 {% include "_today_best_bets.html" %}
 
+<h2>The Slate</h2>
 <div class="hub-sport-grid">
 {% for s in sport_summaries %}
 <a class="card hub-sport-card" href="{{ s.href }}">
@@ -19,7 +83,7 @@
         <span class="game-count">{{ s.games_today }} game{{ 's' if s.games_today != 1 }}</span>
     </div>
     {% if not s.top_picks %}
-    <p class="hub-sport-empty">{{ 'No games today' if s.games_today == 0 else 'No positive-edge picks right now' }}</p>
+    <p class="hub-sport-empty">{{ 'Dead quiet. No games tonight.' if s.games_today == 0 else 'No positive-edge picks right now' }}</p>
     {% else %}
     <ul class="hub-sport-picks">
     {% for p in s.top_picks %}

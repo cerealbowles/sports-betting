@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dt_fmt import fmt as _fmt
 
 # All three major North American leagues schedule by US Eastern time.
 # Using UTC here caused the page to flip to "tomorrow" around 8pm in Colorado.
@@ -856,7 +857,7 @@ def build_schedule_context(target_date=None):
         date_str = date_obj['date']
         try:
             dt           = datetime.strptime(date_str, '%Y-%m-%d')
-            date_display = dt.strftime('%a, %b %-d')
+            date_display = _fmt(dt, '%a, %b %-d')
         except Exception:
             date_display = date_str
 
@@ -1029,10 +1030,7 @@ def build_schedule_context(target_date=None):
                 'games':        games,
             })
 
-    try:
-        refreshed_at = datetime.now(_ET).strftime('%-I:%M %p ET')
-    except ValueError:
-        refreshed_at = datetime.now(_ET).strftime('%I:%M %p ET').lstrip('0')
+    refreshed_at = _fmt(datetime.now(_ET), '%-I:%M %p ET')
     for day in result:
         day['refreshed_at'] = refreshed_at
     return result

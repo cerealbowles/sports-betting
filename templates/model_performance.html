@@ -1,16 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Model — {{ sport }} — Spooky Sports{% endblock %}
+{% block title %}Model — {{ sport }} — Dead Money{% endblock %}
 
 {% block head %}
 <style>
-.bet-type-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.bet-type-tabs {
+    display: flex; gap: 2px; margin-bottom: 14px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px;
+}
 .bet-type-tab {
-    flex: 1; text-align: center; padding: 8px 10px; border-radius: var(--radius-sm);
-    background: var(--bg-card-2); border: 1px solid var(--border);
-    color: var(--text-muted); font-size: 0.8rem; font-weight: 700;
+    flex: 1; text-align: center; padding: 9px 10px; border-radius: 9px;
+    background: transparent; border: none;
+    color: var(--text-muted); font-family: var(--font-cond); font-size: 0.85rem; font-weight: 600;
     text-decoration: none;
 }
-.bet-type-tab.active { background: var(--orange); border-color: var(--orange); color: #fff; }
+.bet-type-tab.active { background: var(--nav-active-bg); color: #fff; font-weight: 700; }
+.calib-table th, .factor-corr, .factor-n, .pred-score, .grade-badge, .lift-badge, .ts-badge { font-family: var(--font-mono); }
 
 .perf-grid {
     display: grid;
@@ -31,13 +35,13 @@
     border-bottom: 1px solid var(--border); background: var(--bg-card-2);
     white-space: nowrap;
 }
-.calib-table td { padding: 7px 10px; border-bottom: 1px solid rgba(0,0,0,0.05); color: var(--text); vertical-align: middle; white-space: nowrap; }
+.calib-table td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text); vertical-align: middle; white-space: nowrap; }
 .calib-table tr:last-child td { border-bottom: none; }
 .calib-table tr.empty-bucket td { color: var(--text-muted); }
-.calib-bar-wrap { width: 160px; height: 8px; background: rgba(0,0,0,0.06); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+.calib-bar-wrap { width: 160px; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
 .calib-bar { height: 100%; border-radius: 4px; }
-.calib-bar-pred { background: rgba(37,99,235,0.4); }
-.calib-bar-act  { background: rgba(21,128,61,0.6); }
+.calib-bar-pred { background: rgba(96,165,250,0.4); }
+.calib-bar-act  { background: rgba(168,240,122,0.6); }
 @media (max-width: 500px) {
     .calib-bar-wrap { display: none; }
     .calib-table td, .calib-table th { padding: 6px 8px; font-size: 0.78rem; }
@@ -46,13 +50,13 @@
 .factor-bar-row { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; padding: 5px 0; border-bottom: 1px solid var(--border); }
 .factor-bar-row:last-child { border-bottom: none; }
 .factor-label { width: 160px; flex-shrink: 0; color: var(--text-muted); font-size: 0.75rem; }
-.factor-bar-outer { flex: 1; height: 10px; background: rgba(0,0,0,0.06); border-radius: 5px; overflow: hidden; }
+.factor-bar-outer { flex: 1; height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; }
 .factor-bar-inner { height: 100%; border-radius: 5px; min-width: 2px; }
-.fcorr-pos { background: rgba(21,128,61,0.55); }
-.fcorr-neg { background: rgba(185,28,28,0.55); }
+.fcorr-pos { background: rgba(168,240,122,0.55); }
+.fcorr-neg { background: rgba(255,178,122,0.55); }
 .factor-corr { width: 48px; text-align: right; font-weight: 700; font-size: 0.75rem; flex-shrink: 0; }
-.fcorr-pos-text { color: #15803d; }
-.fcorr-neg-text { color: #b91c1c; }
+.fcorr-pos-text { color: var(--win); }
+.fcorr-neg-text { color: var(--loss); }
 .factor-n { width: 32px; text-align: right; font-size: 0.68rem; color: var(--text-muted); flex-shrink: 0; }
 
 .pred-card { border-bottom: 1px solid var(--border); padding: 10px 0; }
@@ -64,7 +68,7 @@
 .ts-badge {
     display: inline-block; font-size: 0.67rem; font-weight: 700;
     padding: 1px 5px; border-radius: 3px; margin-left: 4px;
-    background: rgba(0,0,0,0.06); color: var(--text);
+    background: rgba(255,255,255,0.06); color: var(--text);
 }
 .pred-score { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
 .result-correct { color: var(--win); font-weight: 700; font-size: 0.78rem; white-space: nowrap; }
@@ -87,7 +91,7 @@
 .pred-factor-row {
     display: flex; align-items: center; gap: 6px;
     font-size: 0.75rem; padding: 3px 0;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .pred-factor-row:last-child { border-bottom: none; }
 .pf-ico { width: 14px; flex-shrink: 0; text-align: center; font-size: 0.7rem; }
@@ -96,22 +100,22 @@
 .pf-label { flex: 1; color: var(--text); }
 .pf-dir   { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; }
 .pf-val   { font-size: 0.68rem; font-weight: 700; width: 50px; text-align: right; flex-shrink: 0; }
-.pf-pos   { color: #15803d; }
-.pf-neg   { color: #b91c1c; }
+.pf-pos   { color: var(--win); }
+.pf-neg   { color: var(--loss); }
 
 .section-note { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; }
 .score-badge {
     font-size: 0.68rem; font-weight: 700; padding: 1px 6px; border-radius: 3px;
-    background: rgba(0,0,0,0.05); color: var(--silver); margin-left: 4px;
+    background: rgba(255,255,255,0.05); color: var(--silver); margin-left: 4px;
 }
 
-.calib-err-pos { color: #b91c1c; font-weight: 600; }
-.calib-err-neg { color: #92400e; font-weight: 600; }
-.calib-err-ok  { color: #15803d; font-weight: 600; }
+.calib-err-pos { color: var(--loss); font-weight: 600; }
+.calib-err-neg { color: var(--warn-text); font-weight: 600; }
+.calib-err-ok  { color: var(--win); font-weight: 600; }
 
 /* ── Grade badge column ── */
 .grade-col-th { width: 36px; padding: 0 !important; border-bottom: 1px solid var(--border); background: var(--bg-card-2); }
-.grade-badge-cell { padding: 6px 8px 6px 4px !important; border-bottom: 1px solid rgba(0,0,0,0.05); }
+.grade-badge-cell { padding: 6px 8px 6px 4px !important; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .grade-perf-table tr:last-child .grade-badge-cell { border-bottom: none; }
 .grade-badge {
     display: inline-block;
@@ -119,19 +123,19 @@
     width: 26px; text-align: center;
     padding: 2px 0; border-radius: 4px;
 }
-.grade-A { background: rgba(21,128,61,0.12); color: #15803d; }
-.grade-B { background: rgba(234,88,12,0.12); color: #ea580c; }
-.grade-C { background: rgba(100,116,139,0.12); color: #64748b; }
-.grade-- { background: rgba(0,0,0,0.05); color: var(--text-muted); }
+.grade-A { background: rgba(168,240,122,0.12); color: var(--win); }
+.grade-B { background: rgba(255,196,107,0.12); color: var(--warn-text); }
+.grade-C { background: rgba(154,147,173,0.12); color: var(--text-muted); }
+.grade-- { background: rgba(255,255,255,0.05); color: var(--text-muted); }
 
 .lift-badge {
     display: inline-block;
     font-size: 0.72rem; font-weight: 700;
     padding: 1px 5px; border-radius: 3px;
 }
-.lift-pos  { background: rgba(21,128,61,0.10);  color: #15803d; }
-.lift-neg  { background: rgba(185,28,28,0.10);  color: #b91c1c; }
-.lift-zero { background: rgba(0,0,0,0.05);      color: var(--text-muted); }
+.lift-pos  { background: rgba(168,240,122,0.10);  color: var(--win); }
+.lift-neg  { background: rgba(255,178,122,0.10);  color: var(--loss); }
+.lift-zero { background: rgba(255,255,255,0.05);      color: var(--text-muted); }
 
 /* ── Zone dividers ── */
 .zone-divider {
@@ -181,9 +185,9 @@
 {% block content %}
 
 
-<div class="section-header" style="margin-bottom: 10px;">
-    <h2>Model Performance</h2>
-    <span class="small">{{ sport }} · predictions vs outcomes</span>
+<div class="section-header" style="display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:4px; margin-bottom: 14px;">
+    <span style="font-family:var(--font-cond); font-size:0.78rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ sport }} · predictions vs outcomes</span>
+    <h1 style="margin:0;">The Autopsy</h1>
 </div>
 
 {% set _bt_qs = request.args.to_dict() %}
@@ -614,7 +618,7 @@
         {% for r in rank_stats %}
         <tr>
             <td class="grade-badge-cell">
-                <span class="grade-badge" style="background:rgba(0,0,0,0.05);color:var(--text);font-size:0.72rem;width:34px;">{{ r.rank }}</span>
+                <span class="grade-badge" style="background:rgba(255,255,255,0.05);color:var(--text);font-size:0.72rem;width:34px;">{{ r.rank }}</span>
             </td>
             <td>{{ r.count }}</td>
             <td>
@@ -678,7 +682,7 @@
       <tr>
         <th rowspan="2" style="text-align:left;padding:5px 10px;vertical-align:bottom;">Bucket</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--orange);">Trust Score</th>
-        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--green, #4ade80);">Sharp Score</th>
+        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--green, var(--win));">Sharp Score</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--blue);">Experimental</th>
       </tr>
       <tr>
@@ -1094,7 +1098,7 @@
             </td>
         </tr>
         {% for bg in fd.by_grade %}
-        <tr style="background:rgba(0,0,0,0.02);">
+        <tr style="background:rgba(255,255,255,0.02);">
             <td style="padding-left:20px;color:var(--text-muted);font-size:0.78rem;">
                 <span class="grade-badge grade-{{ bg.grade | replace('–','-') }}" style="font-size:0.68rem;">{{ bg.grade }}</span>
                 {{ fd.type }}
@@ -1102,7 +1106,7 @@
             <td style="font-size:0.78rem;color:var(--text-muted);">{{ bg.count }}</td>
             <td>
                 {% if bg.avg_roi is not none %}
-                <span class="score-badge" style="font-size:0.72rem;{% if bg.avg_roi > 0 %}color:#15803d{% else %}color:#b91c1c{% endif %}">{{ '+' if bg.avg_roi > 0 }}{{ bg.avg_roi }}%</span>
+                <span class="score-badge" style="font-size:0.72rem;{% if bg.avg_roi > 0 %}color:var(--win){% else %}color:var(--loss){% endif %}">{{ '+' if bg.avg_roi > 0 }}{{ bg.avg_roi }}%</span>
                 {% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
             </td>
             <td>—</td>

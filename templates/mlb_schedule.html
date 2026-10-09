@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}MLB Today — Spooky Sports{% endblock %}
+{% block title %}MLB Today — Dead Money{% endblock %}
 
 {% block head %}
 <style>
@@ -22,7 +22,7 @@
 .linescore th:last-child, .linescore td:last-child { border-right: none; }
 .linescore thead th { color: var(--text-muted); font-weight: 600; background: var(--bg-card-2); }
 .linescore .ls-team { text-align: left; font-weight: 700; color: var(--text); width: 44px; }
-.linescore .ls-total { font-weight: 700; color: var(--text); background: rgba(0,0,0,0.025); border-left: 1px solid var(--border); }
+.linescore .ls-total { font-weight: 700; color: var(--text); background: rgba(255,255,255,0.025); border-left: 1px solid var(--border); }
 .linescore thead .ls-total { border-left: 1px solid var(--border); }
 .linescore td { color: var(--silver); }
 .linescore .ls-active { color: var(--win); font-weight: 700; }
@@ -59,8 +59,8 @@
     padding: 2px 6px; border-radius: 4px;
     font-size: 0.66rem; font-weight: 700; line-height: 1.4;
 }
-.start-w { background: rgba(21,128,61,0.10);  color: var(--win);    border: 1px solid rgba(21,128,61,0.25); }
-.start-l { background: rgba(185,28,28,0.08);  color: var(--loss);   border: 1px solid rgba(185,28,28,0.22); }
+.start-w { background: rgba(168,240,122,0.10);  color: var(--win);    border: 1px solid rgba(168,240,122,0.25); }
+.start-l { background: rgba(255,178,122,0.08);  color: var(--loss);   border: 1px solid rgba(255,178,122,0.22); }
 .start-n { background: rgba(55,65,81,0.07);   color: var(--silver); border: 1px solid rgba(55,65,81,0.16); }
 
 .batting-row {
@@ -94,15 +94,15 @@
     min-width: 1.5em; padding: 2px 4px; border-radius: 4px;
     text-align: center; white-space: nowrap; letter-spacing: 0;
 }
-.kelly-strong { background: rgba(21,128,61,0.15);  color: #15803d; border: 1px solid rgba(21,128,61,0.30); }
-.kelly-value  { background: rgba(34,197,94,0.10);  color: #16a34a; border: 1px solid rgba(34,197,94,0.22); }
-.kelly-lean   { background: rgba(245,158,11,0.15); color: #b45309; border: 1px solid rgba(245,158,11,0.25); }
-.ts-high   { background: rgba(21,128,61,0.15);  color: #15803d; border: 1px solid rgba(21,128,61,0.30); }
-.ts-mid    { background: rgba(234,88,12,0.12);  color: #ea580c; border: 1px solid rgba(234,88,12,0.25); }
-.ts-low    { background: rgba(245,158,11,0.12); color: #b45309; border: 1px solid rgba(245,158,11,0.22); }
-.ts-skip   { background: rgba(0,0,0,0.05);      color: var(--text-muted); border: 1px solid var(--border); }
+.kelly-strong { background: #1d3318; color: var(--win); border: 1px solid rgba(168,240,122,0.3); }
+.kelly-value  { background: var(--purple-dim); color: var(--purple-text); border: 1px solid rgba(203,184,255,0.25); }
+.kelly-lean   { background: var(--warn-bg); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.25); }
+.ts-high   { background: #1d3318; color: var(--win); border: 1px solid rgba(168,240,122,0.3); }
+.ts-mid    { background: var(--warn-bg); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.25); }
+.ts-low    { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
+.ts-skip   { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 .wind-mod    { color: #f59e0b; font-weight: 600; }
-.wind-strong { color: #ef4444; font-weight: 700; }
+.wind-strong { color: var(--loss); font-weight: 700; }
 @media (max-width: 600px) {
     .rec-col-hide { display: none; }
 }
@@ -112,6 +112,11 @@
 {% block content %}
 {% from "_edge_star.html" import edge_star, edge_pick %}
 <div class="schedule-body">
+
+{% set current_sport = 'MLB' %}
+{% include "_sport_pills.html" %}
+<h1>MLB after dark</h1>
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ schedule[0].games|length if schedule else 0 }} game{{ 's' if not schedule or schedule[0].games|length != 1 }}{% if best_bets is defined %} · {{ best_bets|length }} pick{{ 's' if best_bets|length != 1 }}{% endif %}</p>
 
 {% set nav_endpoint = 'mlb_schedule' %}
 {% include "_day_nav.html" %}
@@ -133,8 +138,8 @@
   </div>
 
   <!-- Refresh progress modal -->
-  <div id="refreshModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:320px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+  <div id="refreshModal" style="display:none;position:fixed;inset:0;background:rgba(255,255,255,0.55);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:320px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(255,255,255,0.4);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <h3 id="refreshModalTitle" style="margin:0;font-size:0.95rem;font-weight:700;">Refreshing…</h3>
         <button onclick="closeRefreshModal()" style="background:none;border:none;color:var(--text-muted);font-size:1.2rem;cursor:pointer;padding:2px 6px;line-height:1;">×</button>
@@ -183,7 +188,7 @@
         data-edge="{{ b.adj_edge }}"
         data-status="{{ b.status }}"
         data-sp-confirmed="{{ '1' if b.sp_confirmed else '0' }}"
-        style="border-bottom:1px solid var(--border);{% if b.status in ('Live', 'Final') %}opacity:0.60;{% elif unf < 30 %}opacity:0.55;{% endif %}{% if not b.sp_confirmed %}opacity:0.50;border-left:3px solid #f59e0b;background:rgba(245,158,11,0.05);{% elif b.adj_edge <= 0 %}border-left:3px solid var(--loss);background:rgba(239,68,68,0.05);{% endif %}"
+        style="border-bottom:1px solid var(--border);{% if b.status in ('Live', 'Final') %}opacity:0.60;{% elif unf < 30 %}opacity:0.55;{% endif %}{% if not b.sp_confirmed %}opacity:0.50;border-left:3px solid #f59e0b;background:rgba(245,158,11,0.05);{% elif b.adj_edge <= 0 %}border-left:3px solid var(--loss);background:rgba(255,178,122,0.05);{% endif %}"
         title="{{ 'Both starting pitchers not yet announced — sorted below confirmed games until they are' if not b.sp_confirmed else ('Negative model edge — the market is pricing this pick more heavily than the model\'s own probability supports (paying above model fair value), not necessarily favoring the other side' if b.adj_edge <= 0 else '') }}">
       <td class="rec-num" style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;">{{ loop.index }}</td>
       <td style="padding:6px 8px;font-weight:600;">
@@ -197,7 +202,7 @@
       </td>
       <td style="padding:6px 8px;white-space:nowrap;">
         {% if b.status == 'Live' %}
-          <span style="color:#4ade80;font-weight:700;font-size:0.72rem;">● Live</span>
+          <span style="color:var(--win);font-weight:700;font-size:0.72rem;">● Live</span>
         {% elif b.status == 'Final' %}
           <span style="color:var(--text-muted);font-size:0.72rem;">Final{% if b.outcome %} <span style="font-weight:700;color:{% if b.outcome == 'W' %}var(--win){% else %}var(--loss){% endif %};">{{ b.outcome }}</span>{% endif %}</span>
         {% elif b.game_time_utc %}
@@ -764,7 +769,7 @@ function startRefresh(type) {
             var doneIcon = _currentRow.querySelector('.rfi');
             doneIcon.style.animation = 'none';
             doneIcon.textContent = '✓';
-            doneIcon.style.color = '#4ade80';
+            doneIcon.style.color = 'var(--win)';
             _currentRow.querySelector('.rft').style.opacity = '1';
             _currentRow = null;
         }
@@ -792,14 +797,14 @@ function _makeRow(text, status) {
         icon.style.animation = 'rfi-spin 1s linear infinite';
     } else if (status === 'error') {
         icon.textContent = '✗';
-        icon.style.color  = '#f87171';
+        icon.style.color  = 'var(--loss)';
     }
 
     var label = document.createElement('span');
     label.className = 'rft';
     label.textContent = text;
     label.style.opacity = status === 'running' ? '0.65' : '1';
-    label.style.color   = status === 'error' ? '#f87171' : 'var(--text)';
+    label.style.color   = status === 'error' ? 'var(--loss)' : 'var(--text)';
 
     row.appendChild(icon);
     row.appendChild(label);
@@ -890,7 +895,7 @@ document.addEventListener('keydown', function(e) {
       _tt.style.cssText = [
         'position:fixed', 'z-index:9999', 'pointer-events:none',
         'background:#12121e', 'border:1px solid #3a3a4a', 'border-radius:8px',
-        'padding:10px 12px 8px', 'box-shadow:0 6px 24px rgba(0,0,0,0.65)',
+        'padding:10px 12px 8px', 'box-shadow:0 6px 24px rgba(255,255,255,0.65)',
         'display:none',
       ].join(';');
       document.body.appendChild(_tt);

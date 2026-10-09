@@ -1,9 +1,14 @@
 {% extends "base.html" %}
-{% block title %}NFL Week {{ week_ctx.week }} — Spooky Sports{% endblock %}
+{% block title %}NFL Week {{ week_ctx.week }} — Dead Money{% endblock %}
 
 {% block content %}
 <div class="schedule-body">
 
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+<h1>NFL after dark</h1>
+{% set _nfl_game_count = week_ctx.days | map(attribute='games') | map('length') | sum %}
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ _nfl_game_count }} game{{ 's' if _nfl_game_count != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %}</p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}

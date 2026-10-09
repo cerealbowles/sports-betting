@@ -3,14 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{% block title %}Spooky Sports{% endblock %}</title>
+    <title>{% block title %}Dead Money{% endblock %}</title>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ styles_version }}">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-    <meta name="theme-color" content="#FB4F14">
+    <meta name="theme-color" content="#ff7a1a">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-title" content="Spooky Sports">
+    <meta name="apple-mobile-web-app-title" content="Dead Money">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
 {% set _embed = request.args.get('embed') == '1' %}
@@ -35,7 +38,7 @@
 {% set _today_href = url_for('index') %}
 {% set _today_active = request.endpoint == 'index' %}
 {% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings'} %}
-{% set _page_label = 'Today' if _today_active else (_sport_switch_active if request.endpoint in _nav_schedule_endpoints.values() else _page_labels.get(request.endpoint, 'Spooky Sports')) %}
+{% set _page_label = 'Today' if _today_active else (_sport_switch_active if request.endpoint in _nav_schedule_endpoints.values() else _page_labels.get(request.endpoint, 'Dead Money')) %}
 <div class="container">
 
 {# Hidden globals for the inline bet-slip Kelly calc on CFB/NFL game cards
@@ -46,12 +49,28 @@
 <span id="global_percent_cap_value" style="display:none;">{{ global_exposure.percent_bankroll if global_exposure else 0.02 }}</span>
 
     {% if not _embed %}
-    <div class="topbar">
-        <a href="{{ _today_href }}" class="topbar-page">{{ _page_label }}</a>
+    <header class="topbar">
+        <a href="{{ _today_href }}" class="brand-link" aria-label="Dead Money — home">
+            <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C7 2 3.5 5.6 3.5 10.2c0 2.6 1.2 4.6 3 5.8V19a1 1 0 0 0 1 1H9v-2h1.5v2h3v-2H15v2h1.5a1 1 0 0 0 1-1v-3c1.8-1.2 3-3.2 3-5.8C20.5 5.6 17 2 12 2zM8.5 9.3a2.1 2.1 0 1 0 0 4.2a2.1 2.1 0 1 0 0-4.2zM15.5 9.3a2.1 2.1 0 1 0 0 4.2a2.1 2.1 0 1 0 0-4.2zM12 13.6l-1.2 2.2h2.4z"></path></svg>
+            <span class="brand-word">Dead Money</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Main">
+            <div class="nav-main">
+                <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>Tonight</a>
+                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v4a2 2 0 0 0 0 4v4H3v-4a2 2 0 0 0 0-4z"></path><path d="M13 7v12"></path></svg>Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</a>
+                <a href="{{ url_for('bet_sheet') }}"{% if request.endpoint == 'bet_sheet' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18"></path></svg>Sheet{% if nav_sheet_count %} ({{ nav_sheet_count }}){% endif %}</a>
+                <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18"></path><path d="M5 16l5-6 4 3 6-8"></path></svg>Model</a>
+                <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>History</a>
+                <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>Settings</a>
+            </div>
+        </nav>
+
         <div class="topbar-right">
             {% if global_exposure %}
             <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
                 <span class="exposure-item">
+                    <span class="exposure-label">Bankroll</span>
                     <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
                 </span>
             </div>
@@ -76,20 +95,7 @@
             </div>
             {% endif %}
         </div>
-    </div>
-
-    <nav class="site-nav">
-        <div class="nav-row-top">
-            <div class="nav-main">
-                <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}>📅 Today</a>
-                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}>💰 Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</a>
-                <a href="{{ url_for('bet_sheet') }}"{% if request.endpoint == 'bet_sheet' %} class="active"{% endif %}>🧾 Sheet{% if nav_sheet_count %} ({{ nav_sheet_count }}){% endif %}</a>
-                <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}>📈 Model</a>
-                <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}>📜 History</a>
-                <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}>⚙️ Settings</a>
-            </div>
-        </div>
-    </nav>
+    </header>
     {% endif %}
 
     {% block content %}{% endblock %}
@@ -99,22 +105,22 @@
 {% if not _embed %}
 <nav class="bottom-tab-bar" aria-label="Primary">
     <a href="{{ _today_href }}" class="btb-item{% if _today_active %} active{% endif %}">
-        <span class="btb-icon">📅</span><span class="btb-label">Today</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg><span class="btb-label">Tonight</span>
     </a>
     <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint == 'bets_page' %} active{% endif %}">
-        <span class="btb-icon">💰</span><span class="btb-label">Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v4a2 2 0 0 0 0 4v4H3v-4a2 2 0 0 0 0-4z"></path><path d="M13 7v12"></path></svg><span class="btb-label">Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</span>
     </a>
     <a href="{{ url_for('bet_sheet') }}" class="btb-item{% if request.endpoint == 'bet_sheet' %} active{% endif %}">
-        <span class="btb-icon">🧾</span><span class="btb-label">Sheet{% if nav_sheet_count %} ({{ nav_sheet_count }}){% endif %}</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18"></path></svg><span class="btb-label">Sheet{% if nav_sheet_count %} ({{ nav_sheet_count }}){% endif %}</span>
     </a>
     <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
-        <span class="btb-icon">📈</span><span class="btb-label">Model</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18"></path><path d="M5 16l5-6 4 3 6-8"></path></svg><span class="btb-label">Model</span>
     </a>
     <a href="{{ url_for('history') }}" class="btb-item{% if request.endpoint == 'history' %} active{% endif %}">
-        <span class="btb-icon">📜</span><span class="btb-label">History</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span class="btb-label">History</span>
     </a>
     <a href="{{ url_for('settings_page') }}" class="btb-item{% if request.endpoint == 'settings_page' %} active{% endif %}">
-        <span class="btb-icon">⚙️</span><span class="btb-label">Settings</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg><span class="btb-label">Settings</span>
     </a>
 </nav>
 
