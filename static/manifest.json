@@ -1,13 +1,13 @@
 {
-  "name": "Spooky Sports",
-  "short_name": "Spooky Sports",
+  "name": "Dead Money",
+  "short_name": "Dead Money",
   "description": "Colorado · Kelly Criterion Tracker",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#EDEEF0",
-  "theme_color": "#FB4F14",
+  "background_color": "#0b0a10",
+  "theme_color": "#ff7a1a",
   "icons": [
     {
       "src": "/static/icons/icon-192.png",

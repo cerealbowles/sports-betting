@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}History — Spooky Sports{% endblock %}
+{% block title %}History — Dead Money{% endblock %}
 {% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>{% endblock %}
 
 {% block content %}
@@ -11,6 +11,17 @@
     {% if imported == 0 and skipped == 0 %}Nothing imported — check your CSV.{% endif %}
 </div>
 {% endif %}
+
+<div class="day-header" style="display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:16px; border:none; padding:0; margin:4px 0 16px;">
+    <div style="display:flex; flex-direction:column; gap:4px;">
+        <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ stats.total_closed }} bets closed · {{ stats.wins }}W {{ stats.losses }}L{% if stats.cashouts %} {{ stats.cashouts }}CO{% endif %}</span>
+        <h1 style="margin:0;">The Graveyard</h1>
+    </div>
+    <div style="display:flex; gap:10px;">
+        <button type="button" class="secondary" style="width:auto;" onclick="document.querySelector('.import-card').open = true; document.querySelector('.import-card').scrollIntoView({behavior:'smooth'});">Import CSV</button>
+        <button type="button" class="btn-place-bet" style="width:auto; padding:0 18px;" onclick="openAddClosedModal()">+ Add past bet</button>
+    </div>
+</div>
 
 <!-- Stat summary -->
 <div class="dashboard" style="margin-bottom:14px;">
@@ -49,8 +60,7 @@
 <!-- Closed Bets table -->
 <div class="card">
     <div class="section-header">
-        <h2>Closed Bets</h2>
-        <button class="secondary small" onclick="openAddClosedModal()">+ Add Past Bet</button>
+        <h2>Headstones</h2>
     </div>
 
     <!-- Filter bar -->
@@ -87,23 +97,23 @@
                 <div>{{ cb.name }}{% if cb.sport %}<span class="small" style="color:var(--blue); margin-left:6px;">{{ cb.sport }}</span>{% endif %}</div>
                 {% if cb.notes %}<div class="small" style="color:var(--text-muted); margin-top:2px;">{{ cb.notes[:80] }}{% if cb.notes|length > 80 %}…{% endif %}</div>{% endif %}
             </td>
-            <td>{{ '%.2f' % (cb.stake / unit_size) }}u</td>
+            <td class="mono">{{ '%.2f' % (cb.stake / unit_size) }}u</td>
             <td>
               {% if cb.outcome == 'cashout' %}
-                <span class="badge" style="background:rgba(99,102,241,0.15);color:#6366f1;border:1px solid rgba(99,102,241,0.35);">CO</span>
+                <span class="badge" style="background:var(--purple-dim);color:var(--purple-text);border:1px solid rgba(203,184,255,0.3);">CO</span>
               {% elif cb.outcome == 'win' %}
                 <span class="badge badge-win">WIN</span>
               {% else %}
                 <span class="badge badge-loss">LOSS</span>
               {% endif %}
             </td>
-            <td class="{{ 'status-win' if cb.profit >= 0 else 'status-loss' }}">
+            <td class="mono {{ 'status-win' if cb.profit >= 0 else 'status-loss' }}">
               {{ '+' if cb.profit > 0 }}{{ '%.2f' % (cb.profit / unit_size) }}u
               {% if cb.outcome == 'cashout' and cb.cashout_amount is not none %}
                 <div class="small" style="color:var(--text-muted);font-weight:400;">${{ '%.2f' % cb.cashout_amount }} rcvd</div>
               {% endif %}
             </td>
-            <td class="small">
+            <td class="small mono">
                 {% if cb.clv is not none %}
                 <span class="{{ 'status-win' if cb.clv >= 0 else 'status-loss' }}">{{ '+' if cb.clv >= 0 }}{{ cb.clv }}%</span>
                 {% else %}<span style="color:var(--border-strong);">—</span>{% endif %}
@@ -356,21 +366,24 @@ if (table) {
   var wins   = _pd.wins;
   var losses = _pd.losses;
 
-  Chart.defaults.color       = '#94A3B8';
-  Chart.defaults.borderColor = 'rgba(148,163,184,0.08)';
-  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+  Chart.defaults.color       = '#9a93ad';
+  Chart.defaults.borderColor = 'rgba(154,147,173,0.12)';
+  Chart.defaults.font.family = "'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
   Chart.defaults.font.size   = 11;
 
+  // Canvas fillStyle/strokeStyle can't resolve CSS custom properties (var()) —
+  // these must be literal colors, kept in sync with the --win/--loss/--orange
+  // tokens in static/styles.css by hand.
   var C = {
-    orange:    '#FB4F14', orangeDim: 'rgba(251,79,20,0.22)',
-    blue:      '#2563EB', blueDim:   'rgba(37,99,235,0.22)',
-    green:     '#22c55e', greenDim:  'rgba(34,197,94,0.18)',
-    red:       '#ef4444', redDim:    'rgba(239,68,68,0.18)',
-    muted:     '#94A3B8',
+    orange:    '#ff7a1a', orangeDim: 'rgba(255,122,26,0.22)',
+    blue:      '#60A5FA', blueDim:   'rgba(96,165,250,0.22)',
+    green:     '#a8f07a', greenDim:  'rgba(168,240,122,0.18)',
+    red:       '#ffb27a', redDim:    'rgba(255,178,122,0.18)',
+    muted:     '#9a93ad',
   };
   var tip = {
-    backgroundColor: '#0F1117', borderColor: 'rgba(0,0,0,0.35)', borderWidth: 1,
-    titleColor: '#E2E8F0', bodyColor: '#94A3B8', padding: 10, cornerRadius: 6,
+    backgroundColor: '#13111a', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
+    titleColor: '#ece8f4', bodyColor: '#9a93ad', padding: 10, cornerRadius: 6,
   };
 
   /* 1. Cumulative P&L (units) */
@@ -388,7 +401,7 @@ if (table) {
           borderColor: C.orange, borderWidth: 2,
           backgroundColor: function(ctx) {
             var g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-            g.addColorStop(0, 'rgba(251,79,20,0.22)'); g.addColorStop(1, 'rgba(251,79,20,0.02)');
+            g.addColorStop(0, 'rgba(255,122,26,0.22)'); g.addColorStop(1, 'rgba(255,122,26,0.02)');
             return g;
           },
           fill: true, tension: 0.35,
@@ -419,7 +432,7 @@ if (table) {
       data: {
         labels: ['Wins', 'Losses'],
         datasets: [{ data: [wins, losses],
-          backgroundColor: ['rgba(34,197,94,0.25)', 'rgba(239,68,68,0.25)'],
+          backgroundColor: ['rgba(168,240,122,0.25)', 'rgba(255,178,122,0.25)'],
           borderColor: [C.green, C.red], borderWidth: 2, hoverOffset: 6 }]
       },
       options: {
@@ -560,7 +573,7 @@ if (table) {
             borderColor: C.orange, borderWidth: 2, borderDash: [5, 3],
             pointRadius: 0, fill: false, tension: 0.35, order: 1 },
           { label: '+2% benchmark', data: Array(n).fill(2), type: 'line',
-            borderColor: 'rgba(34,197,94,0.28)', borderWidth: 1, borderDash: [3, 4],
+            borderColor: 'rgba(168,240,122,0.28)', borderWidth: 1, borderDash: [3, 4],
             pointRadius: 0, fill: false, order: 3 },
           { label: '0% (market)', data: Array(n).fill(0), type: 'line',
             borderColor: 'rgba(148,163,184,0.28)', borderWidth: 1,

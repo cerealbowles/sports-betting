@@ -1,0 +1,10 @@
+{# Inline sport-switch row for the top of each sport's schedule page, matching
+   the mockup's "sport pill-tabs" above the date-nav. Distinct from the header's
+   sport-switch dropdown (base.html) — this is always-visible, page-local nav.
+   Expects `current_sport` (e.g. 'NBA') set by the including page. #}
+{% set _sp_list = [('MLB','mlb_schedule'), ('NHL','nhl_schedule'), ('NFL','nfl_schedule'), ('CFB','cfb_schedule'), ('NBA','nba_schedule'), ('WNBA','wnba_schedule')] %}
+<div role="group" aria-label="Sport" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;">
+{% for label, endpoint in _sp_list %}
+<a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if label == current_sport else '' }}" style="text-decoration:none;">{{ label }}</a>
+{% endfor %}
+</div>

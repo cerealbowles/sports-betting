@@ -1,9 +1,14 @@
 {% extends "base.html" %}
-{% block title %}NBA Today — Spooky Sports{% endblock %}
+{% block title %}NBA Today — Dead Money{% endblock %}
 
 {% block content %}
 {% from "_edge_star.html" import edge_star, edge_pick %}
 <div class="schedule-body">
+
+{% set current_sport = 'NBA' %}
+{% include "_sport_pills.html" %}
+<h1>NBA after dark</h1>
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ schedule[0].games|length if schedule else 0 }} game{{ 's' if not schedule or schedule[0].games|length != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %}</p>
 
 {% set nav_endpoint = 'nba_schedule' %}
 {% include "_day_nav.html" %}

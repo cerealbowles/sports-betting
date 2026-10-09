@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Bet Sheet — Spooky Sports{% endblock %}
+{% block title %}Bet Sheet — Dead Money{% endblock %}
 
 {% block content %}
 {% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀', 'WNBA': '🏀'} %}
@@ -53,9 +53,9 @@
         <span style="font-size:0.62rem;font-weight:700;color:var(--text-muted);margin-left:4px;text-transform:uppercase;">{{ d.bet_type }}</span>
         {% if d.eventstart %}<span class="game-time" data-utc="{{ d.eventstart.isoformat() }}{{ '' if d.eventstart.tzinfo else 'Z' }}" style="display:block;font-size:0.7rem;color:var(--text-muted);">—</span>{% endif %}
       </td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if (d.odds | american_odds) and (d.odds | american_odds) > 0 }}{{ d.odds | american_odds }}</td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if d.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if d.ev_pct > 0 }}{{ d.ev_pct }}%</td>
-      <td style="padding:6px 8px;text-align:right;">${{ '%.2f' % d.stake }}</td>
+      <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if (d.odds | american_odds) and (d.odds | american_odds) > 0 }}{{ d.odds | american_odds }}</td>
+      <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if d.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if d.ev_pct > 0 }}{{ d.ev_pct }}%</td>
+      <td class="mono" style="padding:6px 8px;text-align:right;">${{ '%.2f' % d.stake }}</td>
       <td style="padding:6px 8px;text-align:right;">
         <button type="button" class="stake-quick-btn" onclick="fetch('{{ url_for('bet_sheet_remove', draft_id=d.id) }}', {method:'POST', body:new URLSearchParams({next:'/bet_sheet'})}).then(function(){location.reload();})">Remove</button>
       </td>
