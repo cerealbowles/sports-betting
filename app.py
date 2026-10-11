@@ -30,6 +30,7 @@ import nhl_api
 import nhl_model
 import nfl_api
 import nfl_model
+import nfl_fantasy
 import cfb_api
 import cfb_model
 import nba_api
@@ -5858,6 +5859,40 @@ def nfl_schedule():
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
                          sync_next='/nfl'))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/lineup')
+def nfl_lineup():
+  """Weekly salary-cap lineup builder — see nfl_fantasy.py's module
+  docstring for the engine (synthetic salaries, fitted projections, exact
+  ILP optimizer). `games` (optional query param): comma-separated game_ids
+  to restrict the player pool to — this is how "only the 1pm/4pm slate"
+  (or any other subset) gets expressed; omitted/empty means every game in
+  the week is eligible."""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_schedule_context(week)
+
+  all_games = [g for day in week_ctx['days'] for g in day['games']]
+  if 'filtered' in request.args:
+    selected_ids = set(request.args.getlist('games'))
+  else:
+    selected_ids = {g['game_id'] for g in all_games}
+  selected_games = [g for g in all_games if g['game_id'] in selected_ids]
+
+  pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
+  nfl_fantasy.assign_salaries(pool)
+  optimal = nfl_fantasy.optimize_lineup(pool) if pool else None
+
+  pool_by_position = defaultdict(list)
+  for p in pool:
+    pool_by_position[p['position']].append(p)
+  for players in pool_by_position.values():
+    players.sort(key=lambda p: p['projection'], reverse=True)
+
+  resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
+                         all_games=all_games, selected_ids=selected_ids,
+                         pool_by_position=pool_by_position, optimal=optimal,
+                         salary_cap=nfl_fantasy.SALARY_CAP))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/cfb')
