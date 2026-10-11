@@ -19,6 +19,7 @@ Same lazy `from app import ...` pattern as nba_stats_db.py and every
 imports nfl_api.py (and, transitively, this module) at module level.
 """
 import json
+from collections import defaultdict
 
 GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
 
@@ -234,6 +235,108 @@ def get_team_games_with_players_db(team_id, before_date=None, limit=5):
         })
 
     return [by_game[gid] for gid in game_order[:limit]]
+
+
+def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date):
+    """Batched read for nfl_fantasy.build_player_pool(): everything it
+    needs for a whole week's worth of teams/players in exactly THREE
+    queries (one InjuryStatus, one TeamGameStat, one PlayerGameStat) inside
+    a single app context, instead of the dozens-to-hundreds of tiny
+    single-row queries a naive per-player/per-team loop would issue (one
+    `with flask_app.app_context()` per call adds up fast across a full
+    slate's roster, and was confirmed live to exhaust this app's small
+    SQLAlchemy connection pool when the background cache-warmer thread is
+    also busy).
+
+    Returns {
+      'unavailable':   {team_id: {player_id, ...}},
+      'player_games':  {player_id: [{categories}, ...]},  # newest first
+      'team_games':    {team_id: [{points_allowed, player_rows: [{categories}, ...]}, ...]},
+                        # newest first, capped to the last `window` games —
+                        # one entry per game, player_rows being that team's
+                        # own players' box-score rows for it. Shape doubles
+                        # as both nfl_player_model.parse_team_game_aggregate's
+                        # input (via player_rows) and nfl_fantasy.
+                        # aggregate_dst_game's (ditto, plus points_allowed).
+    }
+    All grouping/aggregation beyond this (rolling averages, offense/
+    defense grades, DST scoring) is pure-Python work the caller does with
+    nfl_player_model/nfl_fantasy — no further DB calls needed."""
+    from app import app as flask_app, InjuryStatus, TeamGameStat, PlayerGameStat
+
+    window = 5  # matches nfl_player_model.QB_WINDOW/DEF_WINDOW and nfl_fantasy.ROLLING_WINDOW
+    team_ids = list(team_ids)
+    player_ids = list(player_ids)
+
+    with flask_app.app_context():
+        inj_rows = (InjuryStatus.query
+                    .filter(InjuryStatus.sport == 'NFL', InjuryStatus.team_id.in_(team_ids),
+                            InjuryStatus.date <= as_of_date)
+                    .order_by(InjuryStatus.date.desc())
+                    .all()) if team_ids else []
+
+        team_rows = (TeamGameStat.query
+                     .filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id.in_(team_ids))
+                     .order_by(TeamGameStat.game_date.desc())
+                     .all()) if team_ids else []
+
+        player_rows = (PlayerGameStat.query
+                       .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.player_id.in_(player_ids))
+                       .order_by(PlayerGameStat.game_date.desc())
+                       .all()) if player_ids else []
+
+        team_player_rows = (PlayerGameStat.query
+                            .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.team_id.in_(team_ids))
+                            .order_by(PlayerGameStat.game_date.desc())
+                            .all()) if team_ids else []
+
+    # Latest-per-player injury status, same "first row seen wins" rule as
+    # get_latest_injury_status (date-desc order), bucketed by team.
+    unavailable = defaultdict(set)
+    seen_player_status = {}
+    for r in inj_rows:
+        if r.player_id in seen_player_status:
+            continue
+        seen_player_status[r.player_id] = r.status
+        if r.status.lower() in _OUT_STATUSES:
+            unavailable[r.team_id].add(r.player_id)
+
+    def _cats(stats_json):
+        try:
+            return json.loads(stats_json) if stats_json else {}
+        except (TypeError, ValueError):
+            return {}
+
+    player_games = defaultdict(list)
+    for r in player_rows:
+        player_games[r.player_id].append({'categories': _cats(r.stats_json)})
+
+    # Each team's most recent `window` game_ids, in order — TeamGameStat
+    # has exactly one row per (team, game), already date-desc, so this is
+    # just a straight slice per team.
+    recent_game_ids = defaultdict(list)
+    points_allowed_by_game = {}
+    for r in team_rows:
+        if len(recent_game_ids[r.team_id]) < window:
+            recent_game_ids[r.team_id].append(r.game_id)
+        points_allowed_by_game[(r.team_id, r.game_id)] = r.points_allowed
+
+    rows_by_team_game = defaultdict(list)
+    for r in team_player_rows:
+        rows_by_team_game[(r.team_id, r.game_id)].append({'categories': _cats(r.stats_json)})
+
+    team_games = {}
+    for team_id, game_ids in recent_game_ids.items():
+        team_games[team_id] = [{
+            'points_allowed': points_allowed_by_game.get((team_id, gid)),
+            'player_rows': rows_by_team_game.get((team_id, gid), []),
+        } for gid in game_ids]
+
+    return {
+        'unavailable': dict(unavailable),
+        'player_games': dict(player_games),
+        'team_games': team_games,
+    }
 
 
 def get_schedule_db(season, game_type='regular'):

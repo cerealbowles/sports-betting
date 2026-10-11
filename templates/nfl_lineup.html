@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}NFL Lineup Builder — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.dfs-subhead { margin: -8px 0 16px; color: var(--text-muted); font-size: 0.85rem; }
+.dfs-game-picker { margin-bottom: 16px; }
+.dfs-game-picker-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px; font-family: var(--font-cond); font-weight: 700;
+}
+.dfs-game-picker-actions button {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: var(--radius-sm); padding: 4px 10px; font-size: 0.75rem; margin-left: 6px; cursor: pointer;
+}
+.dfs-game-picker-actions button:hover { color: var(--text); border-color: var(--border-strong); }
+.dfs-game-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.dfs-game-check {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 0.82rem; cursor: pointer;
+}
+.dfs-game-check input { accent-color: var(--orange); }
+.dfs-game-check .game-time { margin-left: auto; color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono); }
+.dfs-apply-btn {
+    background: var(--orange); color: #fff; border: none; border-radius: var(--radius-sm);
+    padding: 9px 18px; font-weight: 700; font-family: var(--font-cond); cursor: pointer;
+}
+.dfs-apply-btn:hover { filter: brightness(1.08); }
+.dfs-optimal-card { margin-bottom: 16px; }
+.dfs-optimal-hdr {
+    display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 12px;
+}
+.dfs-optimal-hdr h2 { font-family: var(--font-display); font-size: 1.3rem; }
+.dfs-cap-meter { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); }
+.dfs-cap-meter strong { color: var(--text); }
+.dfs-slot-badge {
+    display: inline-block; min-width: 38px; text-align: center; padding: 2px 6px;
+    border-radius: 6px; background: var(--purple-dim); color: var(--purple-text);
+    font-size: 0.68rem; font-weight: 700; font-family: var(--font-mono);
+}
+.dfs-pool-section { margin-bottom: 18px; }
+.dfs-pool-pos-hdr {
+    font-family: var(--font-cond); font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; font-size: 0.78rem; letter-spacing: 0.6px; margin: 14px 0 6px;
+}
+.dfs-note { color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin-top: 18px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+<h1>Salary Cap Lineup Builder</h1>
+<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap.</p>
+
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('nfl_lineup', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week_ctx.week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('nfl_lineup', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+{% if not all_games %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🏈</div>
+    <div class="offseason-title">No games found for Week {{ week_ctx.week }}</div>
+</div>
+{% else %}
+
+<form method="get" action="{{ url_for('nfl_lineup') }}" class="card dfs-game-picker" id="dfs-game-form">
+    <input type="hidden" name="week" value="{{ week_ctx.week }}">
+    <input type="hidden" name="filtered" value="1">
+    <div class="dfs-game-picker-hdr">
+        <span>Games in this slate ({{ selected_ids|length }}/{{ all_games|length }})</span>
+        <span class="dfs-game-picker-actions">
+            <button type="button" onclick="dfsToggleAll(true)">All</button>
+            <button type="button" onclick="dfsToggleAll(false)">None</button>
+        </span>
+    </div>
+    <div class="dfs-game-list">
+    {% for g in all_games %}
+        <label class="dfs-game-check">
+            <input type="checkbox" name="games" value="{{ g.game_id }}"{% if g.game_id in selected_ids %} checked{% endif %}>
+            <span>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</span>
+            <span class="game-time" data-utc="{{ g.game_time_utc }}">—</span>
+        </label>
+    {% endfor %}
+    </div>
+    <button type="submit" class="dfs-apply-btn">Update Pool</button>
+</form>
+
+{% if not selected_ids %}
+<div class="card">No games selected — check at least one game above to build a pool.</div>
+{% elif not optimal %}
+<div class="card">Not enough eligible players in the selected games to fill a full lineup (need at least 1 QB, 2 RB, 3 WR, 1 TE and 1 DST across the games picked, each with enough stored game history to project). Try selecting more games.</div>
+{% else %}
+<div class="card dfs-optimal-card">
+    <div class="dfs-optimal-hdr">
+        <h2>Optimal Lineup</h2>
+        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts</span>
+    </div>
+    <table class="table">
+        <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th></tr></thead>
+        <tbody>
+        {% for p in optimal.lineup %}
+        <tr>
+            <td><span class="dfs-slot-badge">{{ p.slot }}</span></td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.team }}</td>
+            <td>{{ p.opponent }}</td>
+            <td>${{ '{:,}'.format(p.salary) }}</td>
+            <td>{{ p.projection }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if pool_by_position %}
+<div class="dfs-pool-section">
+{% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+{% if pool_by_position.get(position) %}
+<div class="dfs-pool-pos-hdr">{{ position }} ({{ pool_by_position[position]|length }})</div>
+<table class="table">
+    <thead><tr><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th></tr></thead>
+    <tbody>
+    {% for p in pool_by_position[position] %}
+    <tr>
+        <td>{{ p.name }}</td>
+        <td>{{ p.team }}</td>
+        <td>{{ p.opponent }}</td>
+        <td>${{ '{:,}'.format(p.salary) }}</td>
+        <td>{{ p.projection }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endfor %}
+</div>
+{% endif %}
+
+<p class="dfs-note">
+    Salaries are synthetic — ranked by this week's own projections within each position, not real FanDuel prices.
+    Projections are fit from this app's stored game history (recent scoring pace + opponent unit strength); a player
+    with no stored games (true rookies, first game back from a long absence) won't appear in the pool at all.
+    DST scoring covers sacks, interceptions, defensive touchdowns, and points allowed — fumble recoveries, safeties,
+    and blocked kicks aren't tracked by the underlying data source and are left out.
+</p>
+
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+function dfsToggleAll(checked) {
+    document.querySelectorAll('#dfs-game-form input[type=checkbox]').forEach(function(cb) { cb.checked = checked; });
+}
+</script>
+{% endblock %}
