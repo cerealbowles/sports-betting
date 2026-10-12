@@ -1,0 +1,37 @@
+{# Shared "How is this calculated?" explainer for the NFL lineup builder —
+   included by both nfl_lineup.html and nfl_recap.html. Expects
+   `methodology` (nfl_fantasy.methodology_context()'s dict) in context.
+   Reuses _nba_lineups.html's <details>/.lineup-details expand pattern
+   (same global CSS, static/styles.css) rather than inventing a new
+   toggle — every number below is read straight from the dict so it can't
+   drift from nfl_fantasy.py's actual constants. #}
+<div class="lineup-section">
+<details class="lineup-details">
+<summary class="lineup-summary">How is this calculated?</summary>
+<div style="padding: 12px; font-size: 0.82rem; color: var(--text); line-height: 1.6;">
+
+<p><strong>Scoring</strong> (FanDuel's standard rules) — passing {{ methodology.scoring.pass_yd }} pt/yd, {{ methodology.scoring.pass_td }} pt/TD, {{ methodology.scoring.pass_int }} pt/INT; rushing &amp; receiving {{ methodology.scoring.rush_yd }} pt/yd, {{ methodology.scoring.rush_td }} pt/TD, {{ methodology.scoring.reception }} pt/reception; fumbles lost {{ methodology.scoring.fumble_lost }} pts; return TDs {{ methodology.scoring.return_td }} pts. Team DST: {{ methodology.scoring.dst_sack }} pt/sack, {{ methodology.scoring.dst_int }} pts/INT, {{ methodology.scoring.dst_td }} pts/defensive TD, plus a points-allowed bonus (up to +{{ methodology.scoring.dst_pa_tiers[0][1] }} for a shutout, down to {{ methodology.scoring.dst_pa_tiers[-1][1] }} for 35+ allowed).</p>
+
+<p><strong>Projections</strong> — each position group (QB, RB, WR/TE combined, and DST) gets its own fitted formula: <code>projected = intercept + a×(recent average) + b×(opponent's unit grade)</code>, fit by linear regression over every stored game since 2024 — no leakage, each game trained only on data strictly before it. Real backtested accuracy vs. a naive "just use the recent average" baseline:</p>
+
+<table class="table">
+    <thead><tr><th>Position</th><th>Sample</th><th>MAE (fit)</th><th>MAE (recent-avg only)</th></tr></thead>
+    <tbody>
+    {% for bucket, label in [('QB', 'QB'), ('RB', 'RB'), ('REC', 'WR / TE'), ('DST', 'DST')] %}
+    {% set f = methodology.projection_fit.get(bucket) %}
+    {% if f %}
+    <tr><td>{{ label }}</td><td>{{ f.n }}</td><td>{{ f.mae }}</td><td>{{ f.baseline_mae }}</td></tr>
+    {% endif %}
+    {% endfor %}
+    </tbody>
+</table>
+
+<p><strong>Salaries are synthetic</strong>, not real FanDuel prices — within each position, a player's salary is their percentile rank by projection <em>that week</em>, mapped onto a price band ({% for pos, band in methodology.salary_bands.items() %}{{ pos }} ${{ '{:,}'.format(band[0]) }}–${{ '{:,}'.format(band[1]) }}{{ ', ' if not loop.last }}{% endfor %}). A player with no stored game history (true rookies, first game back from a long absence) has no projection and simply doesn't appear in the pool.</p>
+
+<p><strong>Optimizer</strong> — an exact integer program (not a greedy pick) selects the highest-scoring lineup under the ${{ '{:,}'.format(methodology.salary_cap) }} cap: {{ methodology.roster_requirements.QB }} QB, {{ methodology.roster_requirements.RB }} RB, {{ methodology.roster_requirements.WR }} WR, {{ methodology.roster_requirements.TE }} TE, 1 FLEX (RB/WR/TE), {{ methodology.roster_requirements.DST }} DST.</p>
+
+<p style="color: var(--text-muted);">DST scoring covers sacks, interceptions, defensive touchdowns, and points allowed — fumble recoveries, safeties, and blocked kicks aren't tracked by the underlying data source and are left out.</p>
+
+</div>
+</details>
+</div>

@@ -156,6 +156,45 @@ def compute_dst_fantasy_points(points_allowed, dst_agg):
     return round(pts, 2)
 
 
+def compute_actual_week_points(week_games):
+    """week_games: ALL of one (completed) week's games, nfl_api.
+    build_week_schedule_context()'s shape — each needs 'game_id' and
+    'home'/'away', each of those needing 'id'/'score'. Returns
+    (player_actual, dst_actual): {player_id: pts} / {team_id: pts} — the
+    REAL FanDuel points everyone who recorded a box score in any of these
+    games actually scored, via nfl_stats_db.get_game_boxscore_db(). Used
+    by nfl_recap.py to score a past week's lineup against what really
+    happened, as opposed to project_points()'s forward-looking estimate.
+
+    A player/team absent from these dicts simply didn't appear in that
+    game's stored box score (inactive, didn't suit up that week) — the
+    caller should treat that as a real 0, not a missing-data gap, since
+    "didn't play" IS the real DFS outcome for a bench/inactive roster
+    pick."""
+    player_actual, dst_actual = {}, {}
+    for game in week_games:
+        game_id = game.get('game_id')
+        if not game_id:
+            continue
+        boxscore = nfl_stats_db.get_game_boxscore_db(game_id)
+        home, away = game.get('home', {}), game.get('away', {})
+        for team, opp in ((home, away), (away, home)):
+            team_id = team.get('id')
+            if not team_id:
+                continue
+            rows = boxscore.get(team_id, [])
+            for row in rows:
+                pid = row.get('id')
+                if pid:
+                    player_actual[pid] = compute_fantasy_points(row.get('categories', {}))
+            try:
+                points_allowed = float(opp.get('score'))
+            except (TypeError, ValueError):
+                points_allowed = None
+            dst_actual[team_id] = compute_dst_fantasy_points(points_allowed, aggregate_dst_game(rows))
+    return player_actual, dst_actual
+
+
 # ── Position bucketing from box-score role (NOT roster position) ──────────
 #
 # Used only by nfl_fantasy_bootstrap.py's historical backtest, where a
@@ -219,6 +258,28 @@ PROJECTION_FIT = {
     'REC': {'intercept': 2.6139, 'recent_avg': 0.6573, 'opp_grade': -0.6837},
     'DST': {'intercept': 9.7173, 'recent_avg': 0.2378, 'opp_grade': -5.6024},
 }
+
+# Same fit run as PROJECTION_FIT above — n = usable training rows, mae =
+# this fit's in-sample mean absolute error (fantasy points/game), baseline_
+# mae = the naive "just use the recent average, no opponent term" MAE.
+# Kept as structured data (not just a code comment) so templates/
+# _nfl_methodology.html can render real numbers instead of hand-typed
+# prose that could drift from the code — see projection_fit_summary().
+PROJECTION_FIT_QUALITY = {
+    'QB':  {'n': 1035, 'mae': 6.20, 'baseline_mae': 6.75},
+    'RB':  {'n': 2270, 'mae': 5.00, 'baseline_mae': 5.08},
+    'REC': {'n': 6232, 'mae': 4.00, 'baseline_mae': 4.07},
+    'DST': {'n': 1022, 'mae': 3.79, 'baseline_mae': 4.20},
+}
+
+
+def projection_fit_summary():
+    """PROJECTION_FIT merged with PROJECTION_FIT_QUALITY per bucket — the
+    single source templates/_nfl_methodology.html reads, so the
+    coefficients and their backtested accuracy can't drift apart from
+    each other or from what nfl_fantasy_bootstrap.py actually printed."""
+    return {b: {**fit, **PROJECTION_FIT_QUALITY.get(b, {})} for b, fit in PROJECTION_FIT.items()}
+
 
 ROSTER_BUCKET = {'QB': 'QB', 'RB': 'RB', 'WR': 'REC', 'TE': 'REC'}
 
@@ -293,6 +354,28 @@ def assign_salaries(pool):
     return pool
 
 
+def methodology_context():
+    """Everything templates/_nfl_methodology.html needs to render its
+    'How is this calculated?' panel straight from this module's actual
+    constants — the template never hand-types a number, so it can't drift
+    out of sync with the code the way a prose explanation would. Shared by
+    /nfl/lineup and /nfl/recap (both pass this into their template)."""
+    return {
+        'scoring': {
+            'pass_yd': PASS_YD, 'pass_td': PASS_TD, 'pass_int': PASS_INT,
+            'rush_yd': RUSH_YD, 'rush_td': RUSH_TD,
+            'recv_yd': RECV_YD, 'recv_td': RECV_TD, 'reception': RECEPTION,
+            'fumble_lost': FUMBLE_LOST, 'return_td': RETURN_TD,
+            'dst_sack': DST_SACK, 'dst_int': DST_INT, 'dst_td': DST_TD,
+            'dst_pa_tiers': DST_POINTS_ALLOWED_TIERS,
+        },
+        'projection_fit': projection_fit_summary(),
+        'salary_bands': SALARY_BANDS,
+        'salary_cap': SALARY_CAP,
+        'roster_requirements': ROSTER_REQUIREMENTS,
+    }
+
+
 # ── Lineup optimizer ────────────────────────────────────────────────────
 #
 # FanDuel NFL "Classic" roster: QB, RB, RB, WR, WR, WR, TE, FLEX
@@ -311,13 +394,24 @@ def _today_et():
     return datetime.now(_ET).strftime('%Y-%m-%d')
 
 
-def build_player_pool(games):
+def build_player_pool(games, before_date=None):
     """games: the week's SELECTED games (the ones checked in the UI), each
     the dict shape nfl_api._build_game() returns — needs 'home'/'away',
     each with 'id'/'name'/'abbrev'. Returns one row per eligible
     player/DST: [{'id', 'name', 'team', 'opponent', 'position',
     'projection'}, ...] — 'salary' isn't set yet, see assign_salaries()
     (needs the whole pool built first to rank within each position).
+
+    `before_date` (optional, YYYY-MM-DD): restricts both the injury-status
+    snapshot and every player/team's game history to strictly before this
+    date — the no-leakage cutoff nfl_recap.py uses to reconstruct what a
+    PAST week's pool would genuinely have looked like pre-kickoff. None
+    (the default) means "as of today," what the live /nfl/lineup page
+    wants. Roster/position still always comes from nfl_roster_api's
+    CURRENT-roster snapshot regardless of `before_date` — there's no
+    historical roster lookback available from this app's data sources, a
+    real fidelity gap for old weeks that's documented, not fixed, by
+    nfl_recap.py's caller.
 
     A player/DST is simply absent from the pool (not included with a
     placeholder) when there's no usable projection for them — no stored
@@ -338,7 +432,7 @@ def build_player_pool(games):
     30+ teams sequentially is an unacceptable page-load wait)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    today = _today_et()
+    as_of = before_date or _today_et()
     team_opp = {}  # team_id -> (opp_id, team_dict, opp_dict)
     for game in games:
         home, away = game.get('home', {}), game.get('away', {})
@@ -362,7 +456,7 @@ def build_player_pool(games):
 
     all_team_ids = set(team_opp) | {opp_id for opp_id, _, _ in team_opp.values()}
     all_player_ids = [p['id'] for players in roster_by_team.values() for p in players]
-    data = nfl_stats_db.get_fantasy_pool_data_db(all_team_ids, all_player_ids, today)
+    data = nfl_stats_db.get_fantasy_pool_data_db(all_team_ids, all_player_ids, as_of, before_date=before_date)
     unavailable, player_games, team_games = data['unavailable'], data['player_games'], data['team_games']
 
     def _unit_grades(team_id):
@@ -404,12 +498,23 @@ def build_player_pool(games):
     return pool
 
 
-def optimize_lineup(pool, cap=SALARY_CAP):
+def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
     """pool: [{'id', 'name', 'team', 'position', 'salary', 'projection'}, ...]
     (one row per eligible player/DST, already projected+salaried). Returns
     {'lineup': [...], 'total_salary': int, 'total_projection': float} for
-    the optimal lineup under `cap`, or None if no feasible lineup exists
-    (e.g. too few players at some position in the selected games)."""
+    the lineup that maximizes `objective` (a key present on every pool
+    entry — 'projection' for the live page's normal "best projected
+    lineup," or 'actual' for nfl_recap.py's hindsight "best possible
+    lineup" over the SAME pool/salaries) under `cap`, or None if no
+    feasible lineup exists (e.g. too few players at some position in the
+    selected games).
+
+    `total_projection` is always summed from 'projection' regardless of
+    `objective` — this is what lets a caller compare "what this lineup was
+    projected to score" against what it actually scored even when it was
+    chosen to maximize something else. `total_actual` is included only
+    when every pool entry carries an 'actual' key (nfl_recap.py's pools
+    do; the live page's don't, so this is a no-op there)."""
     import pulp
 
     if not pool:
@@ -419,7 +524,7 @@ def optimize_lineup(pool, cap=SALARY_CAP):
     x = {p['id']: pulp.LpVariable(f"x_{p['id']}", cat='Binary') for p in pool}
     by_id = {p['id']: p for p in pool}
 
-    prob += pulp.lpSum(p['projection'] * x[p['id']] for p in pool)
+    prob += pulp.lpSum(p[objective] * x[p['id']] for p in pool)
     prob += pulp.lpSum(p['salary'] * x[p['id']] for p in pool) <= cap
 
     for position, count in ROSTER_REQUIREMENTS.items():
@@ -446,12 +551,15 @@ def optimize_lineup(pool, cap=SALARY_CAP):
         return None
 
     lineup = [by_id[pid] for pid, var in x.items() if var.value() == 1]
-    return {
+    result = {
         'lineup': _label_slots(lineup),
         'total_salary': sum(p['salary'] for p in lineup),
         'total_projection': round(sum(p['projection'] for p in lineup), 2),
         'cap': cap,
     }
+    if all('actual' in p for p in pool):
+        result['total_actual'] = round(sum(p.get('actual', 0.0) for p in lineup), 2)
+    return result
 
 
 def _label_slots(lineup):

@@ -237,7 +237,7 @@ def get_team_games_with_players_db(team_id, before_date=None, limit=5):
     return [by_game[gid] for gid in game_order[:limit]]
 
 
-def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date):
+def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date, before_date=None):
     """Batched read for nfl_fantasy.build_player_pool(): everything it
     needs for a whole week's worth of teams/players in exactly THREE
     queries (one InjuryStatus, one TeamGameStat, one PlayerGameStat) inside
@@ -247,6 +247,14 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date):
     slate's roster, and was confirmed live to exhaust this app's small
     SQLAlchemy connection pool when the background cache-warmer thread is
     also busy).
+
+    `before_date` (optional, YYYY-MM-DD): when given, restricts the
+    TeamGameStat/PlayerGameStat reads to games strictly before it — the
+    no-leakage cutoff nfl_recap.py needs to reconstruct what a PAST week's
+    pool would have looked like using only data that existed before that
+    week started. None (the default, what the live /nfl/lineup page uses)
+    means "everything stored so far," identical to this function's
+    original behavior.
 
     Returns {
       'unavailable':   {team_id: {player_id, ...}},
@@ -275,20 +283,22 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date):
                     .order_by(InjuryStatus.date.desc())
                     .all()) if team_ids else []
 
-        team_rows = (TeamGameStat.query
-                     .filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id.in_(team_ids))
-                     .order_by(TeamGameStat.game_date.desc())
-                     .all()) if team_ids else []
+        team_q = TeamGameStat.query.filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id.in_(team_ids))
+        if before_date:
+            team_q = team_q.filter(TeamGameStat.game_date < before_date)
+        team_rows = team_q.order_by(TeamGameStat.game_date.desc()).all() if team_ids else []
 
-        player_rows = (PlayerGameStat.query
-                       .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.player_id.in_(player_ids))
-                       .order_by(PlayerGameStat.game_date.desc())
-                       .all()) if player_ids else []
+        player_q = PlayerGameStat.query.filter(PlayerGameStat.sport == 'NFL',
+                                                PlayerGameStat.player_id.in_(player_ids))
+        if before_date:
+            player_q = player_q.filter(PlayerGameStat.game_date < before_date)
+        player_rows = player_q.order_by(PlayerGameStat.game_date.desc()).all() if player_ids else []
 
-        team_player_rows = (PlayerGameStat.query
-                            .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.team_id.in_(team_ids))
-                            .order_by(PlayerGameStat.game_date.desc())
-                            .all()) if team_ids else []
+        team_player_q = PlayerGameStat.query.filter(PlayerGameStat.sport == 'NFL',
+                                                     PlayerGameStat.team_id.in_(team_ids))
+        if before_date:
+            team_player_q = team_player_q.filter(PlayerGameStat.game_date < before_date)
+        team_player_rows = team_player_q.order_by(PlayerGameStat.game_date.desc()).all() if team_ids else []
 
     # Latest-per-player injury status, same "first row seen wins" rule as
     # get_latest_injury_status (date-desc order), bucketed by team.

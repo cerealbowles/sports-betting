@@ -8,7 +8,7 @@
 {% include "_sport_pills.html" %}
 <h1>NFL after dark</h1>
 {% set _nfl_game_count = week_ctx.days | map(attribute='games') | map('length') | sum %}
-<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ _nfl_game_count }} game{{ 's' if _nfl_game_count != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %} · <a href="{{ url_for('nfl_lineup', week=week_ctx.week) }}" class="refresh-link">🏆 Lineup Builder</a></p>
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ _nfl_game_count }} game{{ 's' if _nfl_game_count != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %} · <a href="{{ url_for('nfl_lineup', week=week_ctx.week) }}" class="refresh-link">🏆 Lineup Builder</a> · <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">📊 Season Recap</a></p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
