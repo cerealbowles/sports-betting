@@ -36,7 +36,7 @@ captured — confirmed live against a real box score (see this module's
 sibling PR description for the exact category/key names).
 """
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import nfl_player_model as pm
@@ -354,7 +354,7 @@ def assign_salaries(pool):
     return pool
 
 
-def methodology_context(salary_cap=None, roster_requirements=None):
+def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0):
     """Everything templates/_nfl_methodology.html needs to render its
     'How is this calculated?' panel straight from this module's actual
     constants — the template never hand-types a number, so it can't drift
@@ -364,7 +364,8 @@ def methodology_context(salary_cap=None, roster_requirements=None):
     `salary_cap`/`roster_requirements` default to this module's standard
     constants (what /nfl/recap always uses); /nfl/lineup passes its active
     user-adjusted values so the panel reflects whatever actually produced
-    the lineup on screen."""
+    the lineup on screen. `stack_min` likewise defaults to 0 (off, what
+    /nfl/recap always gets)."""
     return {
         'scoring': {
             'pass_yd': PASS_YD, 'pass_td': PASS_TD, 'pass_int': PASS_INT,
@@ -378,6 +379,58 @@ def methodology_context(salary_cap=None, roster_requirements=None):
         'salary_bands': SALARY_BANDS,
         'salary_cap': salary_cap if salary_cap is not None else SALARY_CAP,
         'roster_requirements': roster_requirements or ROSTER_REQUIREMENTS,
+        'stack_min': stack_min,
+    }
+
+
+# ── News-sentiment signal (queryable only — see nfl_news.py/news_sentiment.py) ──
+#
+# Backstory: a separate backtest (not in this codebase) found winning DFS
+# lineups structurally need ~3 of 9 slots filled by players below the
+# 80th percentile of that week's pre-game projection — "surprise" plays
+# that are genuinely hard to predict from projection alone. This doesn't
+# feed projections, salaries, or optimize_lineup() — it's a read-side join
+# over data that already exists, meant to be queried manually (or by a
+# future player-detail view) while deciding whether a sub-80th-percentile
+# player might have a reason behind an eventual breakout. Whether this is
+# ever worth automating into project_points() depends on what
+# nfl_news_backtest.py's sub-80th-percentile correlation slice shows.
+SURPRISE_PERCENTILE_THRESHOLD = 0.80
+
+
+def surprise_play_signal(pool, player_id, lookback_days=10):
+    """Joins one player's position in an already-built+salaried `pool`
+    (see build_player_pool()/assign_salaries()) with their recent
+    news-sentiment history. `pool` must be the same week's full pool —
+    percentile is only meaningful relative to that week's own slate, the
+    same reasoning assign_salaries() uses for salary synthesis.
+
+    Returns None if player_id isn't in pool, else:
+    {player_id, name, position, team, opponent, projection, percentile,
+     is_surprise_candidate, sentiment_score, article_count, recent_articles}
+    sentiment_score is the mean of get_daily_sentiment()'s daily means over
+    `lookback_days`, or None if nothing matched that player recently."""
+    player = next((p for p in pool if p['id'] == player_id), None)
+    if player is None:
+        return None
+
+    same_position = [p['projection'] for p in pool if p['position'] == player['position']]
+    n = len(same_position)
+    percentile = (sum(1 for v in same_position if v <= player['projection']) - 1) / (n - 1) if n > 1 else 1.0
+
+    end = datetime.now(_ET).strftime('%Y-%m-%d')
+    start = (datetime.now(_ET) - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+    daily = nfl_stats_db.get_daily_sentiment(player_id=player_id, start=start, end=end)
+    mean_score = sum(d['mean_score'] for d in daily) / len(daily) if daily else None
+
+    return {
+        'player_id': player_id, 'name': player['name'], 'position': player['position'],
+        'team': player['team'], 'opponent': player['opponent'], 'projection': player['projection'],
+        'percentile': round(percentile, 3),
+        'is_surprise_candidate': percentile < SURPRISE_PERCENTILE_THRESHOLD,
+        'sentiment_score': mean_score,
+        'article_count': sum(d['article_count'] for d in daily),
+        'recent_articles': nfl_stats_db.get_player_articles(player_id=player_id, limit=5),
     }
 
 
@@ -559,7 +612,7 @@ def build_player_pool(games, before_date=None):
     return pool
 
 
-def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection'):
+def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection', stack_min=0):
     """pool: [{'id', 'name', 'team', 'position', 'salary', 'projection'}, ...]
     (one row per eligible player/DST, already projected+salaried). Returns
     {'lineup': [...], 'total_salary': int, 'total_projection': float} for
@@ -574,6 +627,26 @@ def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='p
     REQUIREMENTS (what nfl_recap.py's two call sites always get, by not
     passing this — recap evaluates every week against the same standard
     roster for consistency). /nfl/lineup passes the user's adjusted counts.
+
+    `stack_min` (default 0, off): correlated-upside "stack" tactic for
+    large-field, top-heavy tournaments (pointless in a cash game, where
+    floor matters more than ceiling). Backtested two directions against 39
+    weeks of this app's own stored history before shipping either:
+    requiring the QB's team to ALSO include a pass-catcher underperformed
+    the no-stack baseline (mean actual pts/week 81.0 vs. 86.9, fewer
+    ceiling weeks too) — it rigidly forces a specific low-flexibility
+    WR/TE onto whichever QB got picked, regardless of that week's real
+    value. The REVERSE direction backtested better and is what this
+    implements: per team, if its TOP-projected WR/TE (or top `stack_min`
+    of them, for stack_min>1 — only stack_min=1 was directly backtested;
+    higher values are an untested but directional extension) already earns
+    a roster spot on pure value, that team's QB is required too — mean
+    91.5 vs. 86.9 baseline, MORE ceiling weeks (7/39 vs. 6/39 scoring
+    >=110). It only ever activates when the catcher pick was already good,
+    instead of rigidly forcing one. A team with no QB in the pool just
+    makes its own top catcher(s) unpickable rather than failing the whole
+    solve, so this degrades gracefully instead of blowing up a thin
+    selected-games pool.
 
     `total_projection` is always summed from 'projection' regardless of
     `objective` — this is what lets a caller compare "what this lineup was
@@ -615,6 +688,18 @@ def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='p
     flex_total = sum(roster_requirements.get(pos, 0) for pos in FLEX_POSITIONS) + roster_requirements.get('FLEX', 0)
     flex_players = [p for p in pool if p['position'] in FLEX_POSITIONS]
     prob += pulp.lpSum(x[p['id']] for p in flex_players) == flex_total
+
+    if stack_min > 0:
+        teams = {p['team'] for p in pool}
+        for team in teams:
+            qbs = [p for p in pool if p['position'] == 'QB' and p['team'] == team]
+            catchers = [p for p in pool if p['position'] in ('WR', 'TE') and p['team'] == team]
+            if not catchers:
+                continue
+            top_catchers = sorted(catchers, key=lambda p: p['projection'], reverse=True)[:stack_min]
+            qb_sum = pulp.lpSum(x[p['id']] for p in qbs)
+            for catcher in top_catchers:
+                prob += qb_sum >= x[catcher['id']]
 
     status = prob.solve(pulp.PULP_CBC_CMD(msg=0))
     if pulp.LpStatus[status] != 'Optimal':

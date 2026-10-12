@@ -125,6 +125,9 @@
                 <button type="button" onclick="document.getElementById('dfs-cap-input').value=80000">$80K</button>
                 <button type="button" onclick="document.getElementById('dfs-cap-input').value=100000">$100K</button>
             </span>
+            <label class="dfs-settings-field" title="Require this many WR/TE from the same team as your QB — the standard GPP 'stack' tactic: when the QB has a big passing game, his pass-catchers' lines move with it, raising your lineup's ceiling together instead of each player's upside being an independent coin flip. 0 = off; matters for large-field, top-heavy tournaments, not cash games.">
+                🔗 Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}">
+            </label>
         </div>
     </div>
 
@@ -165,10 +168,11 @@
 {% elif not optimal %}
 <div class="card">Not enough eligible players in the selected games to fill a full lineup (need at least {{ roster_requirements_summary }} across the games picked, each with enough stored game history to project). Try selecting more games, or lowering the roster requirements above.</div>
 {% else %}
+{% set qb_team = optimal.lineup | selectattr('slot', 'equalto', 'QB') | map(attribute='team') | list | first %}
 <div class="card dfs-optimal-card">
     <div class="dfs-optimal-hdr">
         <h2>Optimal Lineup</h2>
-        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts</span>
+        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts{% if stack_min %} · 🔗 stacked with {{ qb_team }}{% endif %}</span>
     </div>
     <table class="table">
         <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th></tr></thead>
@@ -176,7 +180,7 @@
         {% for p in optimal.lineup %}
         <tr>
             <td><span class="dfs-slot-badge">{{ p.slot }}</span></td>
-            <td>{{ p.name }}</td>
+            <td>{{ p.name }}{% if stack_min and p.team == qb_team and p.slot in ('WR', 'TE') %} <span title="Stacked with the QB">🔗</span>{% endif %}</td>
             <td>{{ p.team }}</td>
             <td>{{ p.opponent }}</td>
             <td>${{ '{:,}'.format(p.salary) }}</td>

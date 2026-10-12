@@ -5912,9 +5912,10 @@ def nfl_lineup():
   ILP optimizer). `games` (optional query param): comma-separated game_ids
   to restrict the player pool to — this is how "only the 1pm/4pm slate"
   (or any other subset) gets expressed; omitted/empty means every game in
-  the week is eligible. `cap` and `req_<pos>` (optional): override the
-  salary cap / roster position counts for this request only — nothing is
-  persisted, each is just a query param on the same form/page-reload.
+  the week is eligible. `cap`, `req_<pos>`, and `stack_min` (optional):
+  override the salary cap / roster position counts / QB-stack requirement
+  for this request only — nothing is persisted, each is just a query param
+  on the same form/page-reload.
 
   Uses nfl_api.build_week_games_light() rather than build_week_schedule_
   context() — this page never renders odds/model/weather/injury data, so
@@ -5952,22 +5953,26 @@ def nfl_lineup():
     pos: _clamp(request.args.get(f'req_{pos.lower()}', type=int), 0, 6, nfl_fantasy.ROSTER_REQUIREMENTS[pos])
     for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
   }
+  stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
 
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
   nfl_fantasy.assign_salaries(pool)
-  optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements) if pool else None
+  optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements,
+                                          stack_min=stack_min) if pool else None
 
   pool.sort(key=lambda p: p['projection'], reverse=True)
 
   req_parts = [f"{count} {pos}" for pos, count in roster_requirements.items() if count > 0]
   roster_requirements_summary = (', '.join(req_parts[:-1]) + ' and ' + req_parts[-1]) if len(req_parts) > 1 else (req_parts[0] if req_parts else 'no players')
+  if stack_min:
+    roster_requirements_summary += f", with at least {stack_min} WR/TE from the QB's own team"
 
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
                          pool=pool, optimal=optimal,
-                         salary_cap=salary_cap, roster_requirements=roster_requirements,
+                         salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
                          roster_requirements_summary=roster_requirements_summary,
-                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements)))
+                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min)))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/recap')
