@@ -343,6 +343,47 @@ class InjuryStatus(db.Model):
   __table_args__ = (db.UniqueConstraint('sport', 'date', 'player_id', name='uq_injury_status'),)
 
 
+class NewsSentiment(db.Model):
+  """One row per (article, matched player-or-team) — NOT a daily upsert
+  snapshot like InjuryStatus above, because several articles can land for
+  the same player on the same day with different sentiment, and
+  collapsing them into one row per day would throw that signal away. The
+  (source, url, player_id) unique constraint instead makes re-running
+  nfl_news.py's ingestion over an overlapping lookback window idempotent —
+  an already-seen article/player pair is simply skipped, not merged.
+
+  team_id/player_id are both nullable: a team-only mention (no specific
+  player identified) stores player_id=None. sentiment_score comes from
+  news_sentiment.score_text() — a hand-maintained keyword lexicon, not an
+  LLM call or trained model (see that module's docstring for why) —
+  bounded to roughly [-1, 1]. matched_terms_json records exactly which
+  lexicon phrases fired, purely for auditing a score after the fact.
+
+  Built for the same reason InjuryStatus was: there's no retroactive
+  history (RSS/news endpoints are current-state-only), so this only
+  starts accumulating real backtestable data from whenever ingestion
+  first runs forward — see nfl_news_backtest.py.
+  """
+  __tablename__ = 'news_sentiment'
+  id                 = db.Column(db.Integer, primary_key=True)
+  sport              = db.Column(db.String(10), nullable=False, index=True)
+  date               = db.Column(db.String(10), nullable=False, index=True)   # YYYY-MM-DD ET, ingestion date
+  published_at       = db.Column(db.DateTime(timezone=True))                  # article's own pubDate, if known
+  team_id            = db.Column(db.String(20), index=True)
+  player_id          = db.Column(db.String(20), index=True)
+  player_name        = db.Column(db.String(80))
+  source             = db.Column(db.String(40), nullable=False)
+  headline           = db.Column(db.String(300), nullable=False)
+  url                = db.Column(db.String(500), nullable=False)
+  raw_snippet        = db.Column(db.Text)
+  sentiment_score    = db.Column(db.Float, nullable=False)
+  matched_terms_json = db.Column(db.Text, default='[]')
+  created_at         = db.Column(db.DateTime(timezone=True),
+                                  default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('source', 'url', 'player_id', name='uq_news_article_player'),)
+
+
 class NflRecapWeek(db.Model):
   """One already-completed NFL week's permanently-settled season-recap
   result — see nfl_recap.py for the compute flow. A past week's outcome
@@ -7250,6 +7291,22 @@ def _nhl_stats_self_heal():
         pass
 
 
+def _ingest_nfl_news():
+    """Daily news-sentiment ingestion (nfl_news.py) — fetches ESPN's news
+    JSON + the configured RSS feeds, matches to players/teams, scores, and
+    persists. 48h lookback (vs. the ~24h gap between runs) so a missed day
+    (restart, deploy) doesn't leave a gap — safe to overlap since
+    nfl_stats_db.ingest_news_sentiment() dedupes by (source, url,
+    player_id). Swallows exceptions same as the stats self-heal jobs below:
+    a dead/renamed RSS feed or a transient fetch failure shouldn't take
+    down the scheduler thread."""
+    try:
+        import nfl_news
+        nfl_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
 def _start_cache_warmer():
     from apscheduler.schedulers.background import BackgroundScheduler
     from zoneinfo import ZoneInfo
@@ -7287,6 +7344,15 @@ def _start_cache_warmer():
                       hour=5, minute=30,
                       timezone=ZoneInfo('America/New_York'),
                       id='nhl_stats_self_heal')
+    # News-sentiment ingestion — 7 am ET daily, after the stats self-heal
+    # block above so the warehouse it joins against (player/team game
+    # stats) is already caught up for the morning. No retroactive history
+    # exists for this one (nfl_news_backtest.py's own message says so) —
+    # this is what actually starts that history accumulating.
+    scheduler.add_job(_ingest_nfl_news, 'cron',
+                      hour=7, minute=0,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nfl_news_ingest')
     # Pace-stats-only pre-warm — every 20 min, much more often than the full
     # warmer above since it's cheap (no DB writes) and the whole point is
     # shrinking the window a cold/expired pace cache can sit in.

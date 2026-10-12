@@ -472,3 +472,90 @@ def get_unavailable_player_ids(team_id, date_et):
     reasoning as nba_roster_api.get_active_roster)."""
     statuses = get_latest_injury_status(team_id, date_et)
     return {pid for pid, status in statuses.items() if status.lower() in _OUT_STATUSES}
+
+
+def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date_et,
+                           matches, score, matched_terms):
+    """Persists one article's sentiment score once per matched player/team
+    (see nfl_news.match_players() for `matches`' shape: [{'player_id',
+    'team_id', 'player_name'}, ...] — a team-only mention has
+    player_id=None). Skips any (source, url, player_id) combo already
+    stored, so re-running nfl_news.py's ingestion over an overlapping
+    lookback window never duplicates a row — same idempotence goal as
+    ingest_injury_report above, just event-level instead of daily-upsert
+    (see NewsSentiment's docstring in app.py for why). `matched_terms`:
+    [(phrase, weight), ...] from news_sentiment.score_text(), stored as
+    JSON purely so a score can be audited back to the lexicon entries that
+    produced it. Returns the number of rows actually inserted."""
+    if not matches:
+        return 0
+    from app import app as flask_app, db, NewsSentiment
+
+    inserted = 0
+    with flask_app.app_context():
+        for m in matches:
+            pid = m.get('player_id')
+            existing = NewsSentiment.query.filter_by(source=source, url=url, player_id=pid).first()
+            if existing:
+                continue
+            db.session.add(NewsSentiment(
+                sport='NFL', date=date_et, published_at=published_at,
+                team_id=m.get('team_id'), player_id=pid, player_name=m.get('player_name'),
+                source=source, headline=headline, url=url, raw_snippet=raw_snippet,
+                sentiment_score=score, matched_terms_json=json.dumps(matched_terms),
+            ))
+            inserted += 1
+        db.session.commit()
+    return inserted
+
+
+def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, sport='NFL'):
+    """Returns [{'date', 'mean_score', 'article_count'}], one row per
+    calendar date that has at least one matched article, aggregated over
+    every NewsSentiment row for this player (or team, for team-level
+    mentions) in [start, end]. Raw per-article rows (get_player_articles
+    below) stay the source of truth — this is the "one number per day"
+    shape nfl_news_backtest.py and nfl_fantasy.surprise_play_signal() want
+    without re-aggregating themselves. [] if nothing matched yet."""
+    from app import app as flask_app, NewsSentiment
+
+    with flask_app.app_context():
+        q = NewsSentiment.query.filter_by(sport=sport)
+        if player_id:
+            q = q.filter_by(player_id=player_id)
+        if team_id:
+            q = q.filter_by(team_id=team_id)
+        if start:
+            q = q.filter(NewsSentiment.date >= start)
+        if end:
+            q = q.filter(NewsSentiment.date <= end)
+        rows = q.order_by(NewsSentiment.date.asc()).all()
+        scores_by_date = defaultdict(list)
+        for r in rows:
+            scores_by_date[r.date].append(r.sentiment_score)
+
+    return [{'date': d, 'mean_score': sum(scores) / len(scores), 'article_count': len(scores)}
+            for d, scores in sorted(scores_by_date.items())]
+
+
+def get_player_articles(player_id=None, team_id=None, limit=20, sport='NFL'):
+    """Returns the most recently published matched articles, newest first:
+    [{'date', 'published_at', 'headline', 'url', 'source', 'sentiment_score',
+    'matched_terms'}]. This is the raw listing a future player-detail view
+    (or manual spot-checking during ingestion verification) reads directly,
+    as opposed to get_daily_sentiment()'s aggregated numbers."""
+    from app import app as flask_app, NewsSentiment
+
+    with flask_app.app_context():
+        q = NewsSentiment.query.filter_by(sport=sport)
+        if player_id:
+            q = q.filter_by(player_id=player_id)
+        if team_id:
+            q = q.filter_by(team_id=team_id)
+        rows = (q.order_by(NewsSentiment.date.desc(), NewsSentiment.created_at.desc())
+                .limit(limit).all())
+        return [{
+            'date': r.date, 'published_at': r.published_at, 'headline': r.headline, 'url': r.url,
+            'source': r.source, 'sentiment_score': r.sentiment_score,
+            'matched_terms': json.loads(r.matched_terms_json or '[]'),
+        } for r in rows]
