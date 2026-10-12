@@ -509,14 +509,26 @@ def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date
     return inserted
 
 
-def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, sport='NFL'):
+def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, sport='NFL', only_matched=True):
     """Returns [{'date', 'mean_score', 'article_count'}], one row per
     calendar date that has at least one matched article, aggregated over
     every NewsSentiment row for this player (or team, for team-level
     mentions) in [start, end]. Raw per-article rows (get_player_articles
     below) stay the source of truth — this is the "one number per day"
     shape nfl_news_backtest.py and nfl_fantasy.surprise_play_signal() want
-    without re-aggregating themselves. [] if nothing matched yet."""
+    without re-aggregating themselves. [] if nothing matched yet.
+
+    `only_matched` (default True): skip articles where CORE_LEXICON/the
+    sport's overlay didn't actually recognize any phrase (matched_terms_
+    json == '[]', score exactly 0.0 — news_sentiment.score_text()'s
+    guaranteed shape for "nothing fired", not a judgment call). Confirmed
+    live this matters a lot: most matched articles are routine team news
+    (signings, roster moves, historical honors) the lexicon has no terms
+    for at all, not genuinely neutral injury/performance coverage — averaging
+    those in as literal 0.0s dilutes every player's score toward zero
+    rather than leaving it unmeasured, which is the wrong failure mode.
+    Pass False to see the raw average including unscored articles (e.g.
+    auditing ingestion coverage, not judging sentiment)."""
     from app import app as flask_app, NewsSentiment
 
     with flask_app.app_context():
@@ -529,6 +541,8 @@ def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, spor
             q = q.filter(NewsSentiment.date >= start)
         if end:
             q = q.filter(NewsSentiment.date <= end)
+        if only_matched:
+            q = q.filter(NewsSentiment.matched_terms_json != '[]')
         rows = q.order_by(NewsSentiment.date.asc()).all()
         scores_by_date = defaultdict(list)
         for r in rows:
@@ -538,7 +552,7 @@ def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, spor
             for d, scores in sorted(scores_by_date.items())]
 
 
-def get_player_articles(player_id=None, team_id=None, start=None, end=None, limit=20, sport='NFL'):
+def get_player_articles(player_id=None, team_id=None, start=None, end=None, limit=20, sport='NFL', only_matched=True):
     """Returns the most recently published matched articles, newest first:
     [{'date', 'published_at', 'headline', 'url', 'source', 'sentiment_score',
     'matched_terms'}]. This is the raw listing the NFL player-detail view
@@ -546,7 +560,10 @@ def get_player_articles(player_id=None, team_id=None, start=None, end=None, limi
     aggregated numbers. `start`/`end` (optional, 'YYYY-MM-DD', inclusive):
     scopes to a specific week's article window instead of just "most
     recent" — the detail view needs this to make sense for a past/future
-    week, not only whatever's most recent right now."""
+    week, not only whatever's most recent right now. `only_matched`
+    (default True): see get_daily_sentiment()'s docstring — same filter,
+    same reasoning (most matched-to-a-player articles are routine team
+    news the lexicon has no terms for at all, not neutral coverage)."""
     from app import app as flask_app, NewsSentiment
 
     with flask_app.app_context():
@@ -559,6 +576,8 @@ def get_player_articles(player_id=None, team_id=None, start=None, end=None, limi
             q = q.filter(NewsSentiment.date >= start)
         if end:
             q = q.filter(NewsSentiment.date <= end)
+        if only_matched:
+            q = q.filter(NewsSentiment.matched_terms_json != '[]')
         rows = (q.order_by(NewsSentiment.date.desc(), NewsSentiment.created_at.desc())
                 .limit(limit).all())
         return [{
