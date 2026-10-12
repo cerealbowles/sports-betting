@@ -538,12 +538,15 @@ def get_daily_sentiment(player_id=None, team_id=None, start=None, end=None, spor
             for d, scores in sorted(scores_by_date.items())]
 
 
-def get_player_articles(player_id=None, team_id=None, limit=20, sport='NFL'):
+def get_player_articles(player_id=None, team_id=None, start=None, end=None, limit=20, sport='NFL'):
     """Returns the most recently published matched articles, newest first:
     [{'date', 'published_at', 'headline', 'url', 'source', 'sentiment_score',
-    'matched_terms'}]. This is the raw listing a future player-detail view
-    (or manual spot-checking during ingestion verification) reads directly,
-    as opposed to get_daily_sentiment()'s aggregated numbers."""
+    'matched_terms'}]. This is the raw listing the NFL player-detail view
+    (/nfl/player/<id>) reads directly, as opposed to get_daily_sentiment()'s
+    aggregated numbers. `start`/`end` (optional, 'YYYY-MM-DD', inclusive):
+    scopes to a specific week's article window instead of just "most
+    recent" — the detail view needs this to make sense for a past/future
+    week, not only whatever's most recent right now."""
     from app import app as flask_app, NewsSentiment
 
     with flask_app.app_context():
@@ -552,6 +555,10 @@ def get_player_articles(player_id=None, team_id=None, limit=20, sport='NFL'):
             q = q.filter_by(player_id=player_id)
         if team_id:
             q = q.filter_by(team_id=team_id)
+        if start:
+            q = q.filter(NewsSentiment.date >= start)
+        if end:
+            q = q.filter(NewsSentiment.date <= end)
         rows = (q.order_by(NewsSentiment.date.desc(), NewsSentiment.created_at.desc())
                 .limit(limit).all())
         return [{

@@ -1,0 +1,67 @@
+{# Player-detail bottom-sheet body — rendered by app.py's nfl_player_detail()
+   route and fetched into the shared gameDetailsSheet by
+   templates/nfl_players.html's openPlayerDetail() JS. A standalone HTML
+   fragment, not a full page: no {% extends %}, this gets dropped straight
+   into #gameDetailsSheetBody's innerHTML. #}
+{% if not player %}
+<div style="padding: 24px; text-align: center; color: var(--text-muted);">Couldn't find that player in this week's pool.</div>
+{% else %}
+<div style="padding: 16px 20px 24px;">
+
+    <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px;">
+        <h2 style="font-family: var(--font-display); font-size: 1.4rem;">{{ player.name }}</h2>
+        <span class="dfs-cap-meter"><strong>{{ player.projection }}</strong> proj pts</span>
+    </div>
+    <div style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 16px;">
+        <span class="dfs-slot-badge">{{ player.position }}</span>
+        {{ player.team }} vs {{ player.opponent }}
+        {% if position_rank %} · ranked <strong style="color: var(--text);">{{ player.position }}{{ position_rank }}</strong> this week{% endif %}
+    </div>
+
+    {% if is_dst %}
+    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">Team defense game logs aren't shown here yet — projections are still built from this team's stored game history, same as for individual players.</p>
+    {% elif gamelog %}
+    <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Recent games</div>
+    <table class="table" style="margin-bottom: 16px;">
+        <thead><tr><th>Date</th><th>Opp</th><th>Fantasy Pts</th></tr></thead>
+        <tbody>
+        {% for g in gamelog %}
+        <tr>
+            <td>{{ g.date }}</td>
+            <td>{{ 'vs' if g.is_home else '@' }} {{ g.opponent }}</td>
+            <td>{{ g.fantasy_points }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for this player yet.</p>
+    {% endif %}
+
+    <div class="dfs-pool-pos-hdr">
+        News coverage, Week {{ week_start }} – {{ week_end }}
+        {% if sentiment_score is not none %}
+        <span style="font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-muted);">
+            · sentiment {{ '%+.2f' % sentiment_score }}
+        </span>
+        {% endif %}
+    </div>
+    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. See <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">past weeks' results</a> for how projections alone have performed.</p>
+
+    {% if not articles %}
+    <p style="color: var(--text-muted); font-size: 0.82rem;">No matched articles in this window.</p>
+    {% else %}
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+        {% for a in articles %}
+        <a href="{{ a.url }}" target="_blank" rel="noopener" style="display: block; padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); text-decoration: none;">
+            <div style="font-size: 0.84rem; line-height: 1.35;">{{ a.headline }}</div>
+            <div style="margin-top: 4px; font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">
+                {{ a.date }} · {{ a.source }} · sentiment {{ '%+.2f' % a.sentiment_score }}
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</div>
+{% endif %}

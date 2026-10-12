@@ -32,6 +32,7 @@ import nfl_api
 import nfl_model
 import nfl_fantasy
 import nfl_recap
+import nfl_stats_db
 import cfb_api
 import cfb_model
 import nba_api
@@ -6034,6 +6035,120 @@ def nfl_recap_page():
                          season=season, weeks=weeks,
                          methodology=nfl_fantasy.methodology_context()))
   return _set_last_sport_cookie(resp, 'NFL')
+
+NFL_PLAYER_ARTICLE_LOOKBACK_DAYS = 10  # matches nfl_fantasy.surprise_play_signal()'s own default
+
+_nfl_team_abbrev_cache = {'data': None, 'ts': 0}
+
+def _nfl_team_abbrev_map():
+  """team_id -> abbreviation, cached 24h — PlayerGameStat only stores a
+  numeric opponent_id, so the player-detail gamelog table needs this just
+  for display. Reuses nfl_news._fetch_espn_teams() (already built for the
+  news pipeline's own team matching) rather than a second ESPN teams
+  fetch living somewhere else."""
+  now = time.time()
+  if _nfl_team_abbrev_cache['data'] is None or now - _nfl_team_abbrev_cache['ts'] > 86400:
+    try:
+      import nfl_news
+      teams = nfl_news._fetch_espn_teams()
+      if teams:
+        _nfl_team_abbrev_cache['data'] = {t['id']: t.get('abbreviation') or t.get('shortDisplayName') or '' for t in teams}
+        _nfl_team_abbrev_cache['ts'] = now
+    except Exception:
+      pass
+  return _nfl_team_abbrev_cache['data'] or {}
+
+@app.route('/nfl/players')
+def nfl_players():
+  """Player rankings for one NFL week — every skill player/DST in that
+  week's full slate (no game-subset picker, unlike /nfl/lineup; this page
+  answers "who's projected well this week," it doesn't build a lineup),
+  sorted by projected FanDuel points, filterable/sortable/searchable
+  client-side same as the lineup builder's pool table. Clicking a name
+  fetches /nfl/player/<id> into the shared bottom sheet (base.html's
+  gameDetailsSheet, reused for its slide-up chrome — see this page's
+  own openPlayerDetail() JS, which populates it via fetch rather than
+  the game-card pattern's "move an existing DOM node" trick, since
+  pre-rendering a hidden detail panel for every one of a few hundred
+  players up front would be wasteful.)"""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_games_light(week)
+  games = week_ctx['games']
+
+  pool = nfl_fantasy.build_player_pool(games) if games else []
+  by_position = defaultdict(list)
+  for p in pool:
+    by_position[p['position']].append(p)
+  for players in by_position.values():
+    players.sort(key=lambda p: p['projection'], reverse=True)
+    for i, p in enumerate(players, start=1):
+      p['position_rank'] = i
+  pool.sort(key=lambda p: p['projection'], reverse=True)
+
+  resp = make_response(render_template('nfl_players.html', week_ctx=week_ctx, subnav_sport='NFL', pool=pool))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/player/<player_id>')
+def nfl_player_detail(player_id):
+  """HTML fragment (not a full page) rendered into the shared bottom
+  sheet by templates/nfl_players.html's openPlayerDetail() JS. `week`
+  (query param, optional): which week's slate/projection/article-window
+  to show, same default as /nfl/players.
+
+  Articles/sentiment are scoped to a window ending at that week's games
+  and starting NFL_PLAYER_ARTICLE_LOOKBACK_DAYS before them — deliberately
+  NOT nfl_fantasy.surprise_play_signal()'s "last N days from right now"
+  convention, since that would show the wrong window entirely for a
+  past or future week; this needs to make sense under the page's own
+  week nav, not just for the live current week.
+
+  Display-only, same as surprise_play_signal(): the sentiment score and
+  article list are shown as context next to the projection, they don't
+  feed into it — confirmed as this feature's scope, not an oversight.
+  DST entries use their team_id (parsed from the pool id's 'DST_<id>'
+  shape) for team-level sentiment/articles instead of a player gamelog,
+  since nfl_stats_db.get_player_gamelog_db() has nothing to return for a
+  team defense."""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_games_light(week)
+  games = week_ctx['games']
+
+  pool = nfl_fantasy.build_player_pool(games) if games else []
+  player = next((p for p in pool if p['id'] == player_id), None)
+  if player is None:
+    return render_template('_nfl_player_detail.html', player=None)
+
+  same_position = sorted((p for p in pool if p['position'] == player['position']),
+                          key=lambda p: p['projection'], reverse=True)
+  position_rank = next((i for i, p in enumerate(same_position, start=1) if p['id'] == player_id), None)
+
+  is_dst = player['position'] == 'DST'
+  gamelog = []
+  if not is_dst:
+    team_abbrevs = _nfl_team_abbrev_map()
+    for g in nfl_stats_db.get_player_gamelog_db(player_id, limit=8):
+      gamelog.append({
+        'date': g['date'], 'is_home': g['is_home'],
+        'opponent': team_abbrevs.get(g['opponent_id'], g['opponent_id']),
+        'fantasy_points': nfl_fantasy.compute_fantasy_points(g['categories']),
+      })
+
+  if games:
+    week_dates = [nfl_api._event_date_et(g['game_time_utc']) for g in games]
+    week_start, week_end = min(week_dates), max(week_dates)
+  else:
+    week_start = week_end = datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
+  article_start = (datetime.strptime(week_start, '%Y-%m-%d')
+                    - timedelta(days=NFL_PLAYER_ARTICLE_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+
+  lookup = {'team_id': player_id[len('DST_'):]} if is_dst else {'player_id': player_id}
+  daily = nfl_stats_db.get_daily_sentiment(start=article_start, end=week_end, **lookup)
+  sentiment_score = sum(d['mean_score'] for d in daily) / len(daily) if daily else None
+  articles = nfl_stats_db.get_player_articles(start=article_start, end=week_end, limit=10, **lookup)
+
+  return render_template('_nfl_player_detail.html', player=player, position_rank=position_rank,
+                          is_dst=is_dst, gamelog=gamelog, sentiment_score=sentiment_score,
+                          articles=articles, week_start=week_start, week_end=week_end)
 
 @app.route('/cfb')
 def cfb_schedule():

@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}NFL Players — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.plyr-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.plyr-toolbar .filter-input { flex: 1 1 200px; min-width: 160px; }
+.plyr-sort-th { cursor: pointer; user-select: none; }
+.plyr-sort-th:hover { color: var(--text); }
+.plyr-sort-arrow { font-size: 0.7rem; }
+.plyr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 14px 0; text-align: center; }
+.plyr-name-link {
+    background: none; border: none; padding: 0; margin: 0; color: var(--text); font: inherit;
+    cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px;
+}
+.plyr-name-link:hover { color: var(--orange); }
+.plyr-rank-badge {
+    display: inline-block; min-width: 2.2em; text-align: center; font-family: var(--font-mono); font-size: 0.72rem;
+    font-weight: 700; padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+<h1>Players</h1>
+<p class="dfs-subhead">Projected FanDuel points for every skill player and DST in this week's slate, fit from this app's own stored stats. Click a name for their recent game log and any news coverage.</p>
+
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('nfl_players', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week_ctx.week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('nfl_players', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+{% if not pool %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🏈</div>
+    <div class="offseason-title">No projectable players for Week {{ week_ctx.week }}</div>
+    <div class="offseason-sub">Either there are no games this week, or there's not enough stored game history yet.</div>
+</div>
+{% else %}
+
+<div class="card">
+    <div class="plyr-toolbar">
+        <input type="search" id="plyr-search" class="filter-input" placeholder="Search player or team…" oninput="plyrApplyFilters()">
+        <div class="sport-chip-bar" id="plyr-pos-filter">
+            <button type="button" class="sport-chip sport-chip-active" data-pos="ALL" onclick="plyrFilterPos('ALL', this)">All <span class="sport-chip-count">{{ pool|length }}</span></button>
+            {% for pos in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+            {% set cnt = pool | selectattr('position', 'equalto', pos) | list | length %}
+            {% if cnt %}
+            <button type="button" class="sport-chip" data-pos="{{ pos }}" onclick="plyrFilterPos('{{ pos }}', this)">{{ pos }} <span class="sport-chip-count">{{ cnt }}</span></button>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    <table class="table" id="plyr-table">
+        <thead>
+        <tr>
+            <th class="plyr-sort-th" data-sort-key="rank">Rank <span class="plyr-sort-arrow"></span></th>
+            <th>Player</th>
+            <th>Pos</th>
+            <th class="plyr-sort-th" data-sort-key="team">Team <span class="plyr-sort-arrow"></span></th>
+            <th>Opp</th>
+            <th class="plyr-sort-th" data-sort-key="proj">Proj Pts <span class="plyr-sort-arrow"></span></th>
+        </tr>
+        </thead>
+        <tbody id="plyr-tbody">
+        {% for p in pool %}
+        <tr data-position="{{ p.position }}" data-name="{{ p.name|lower }}" data-team="{{ p.team|lower }}" data-rank="{{ p.position_rank }}" data-proj="{{ p.projection }}">
+            <td><span class="plyr-rank-badge">{{ p.position }}{{ p.position_rank }}</span></td>
+            <td><button type="button" class="plyr-name-link" onclick="openPlayerDetail('{{ p.id }}', {{ week_ctx.week }})">{{ p.name }}</button></td>
+            <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
+            <td>{{ p.team }}</td>
+            <td>{{ p.opponent }}</td>
+            <td>{{ p.projection }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p id="plyr-empty" class="plyr-empty" hidden>No players match your filters.</p>
+</div>
+
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Position chip filter + name/team search ── */
+var plyrPos = 'ALL';
+function plyrFilterPos(pos, btn) {
+    plyrPos = pos;
+    document.querySelectorAll('#plyr-pos-filter .sport-chip').forEach(function(c) { c.classList.remove('sport-chip-active'); });
+    btn.classList.add('sport-chip-active');
+    plyrApplyFilters();
+}
+function plyrApplyFilters() {
+    var searchEl = document.getElementById('plyr-search');
+    var q = searchEl ? searchEl.value.toLowerCase().trim() : '';
+    var rows = document.querySelectorAll('#plyr-tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var matchesPos = plyrPos === 'ALL' || row.getAttribute('data-position') === plyrPos;
+        var matchesSearch = !q || row.dataset.name.indexOf(q) !== -1 || row.dataset.team.indexOf(q) !== -1;
+        var show = matchesPos && matchesSearch;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    var empty = document.getElementById('plyr-empty');
+    if (empty) empty.hidden = visible !== 0;
+}
+
+/* ── Click-to-sort columns ── */
+(function() {
+    var table = document.getElementById('plyr-table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths = table.querySelectorAll('.plyr-sort-th');
+    if (!tbody || !ths.length) return;
+
+    var sortKey = 'proj', sortDir = -1;
+
+    function applySort() {
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort(function(a, b) {
+            var av = a.dataset[sortKey], bv = b.dataset[sortKey];
+            if (sortKey === 'team') return av.localeCompare(bv) * sortDir;
+            return ((parseFloat(av) || 0) - (parseFloat(bv) || 0)) * sortDir;
+        });
+        rows.forEach(function(row) { tbody.appendChild(row); });
+        ths.forEach(function(th) {
+            var arrow = th.querySelector('.plyr-sort-arrow');
+            if (th.dataset.sortKey === sortKey) {
+                th.style.color = 'var(--text)';
+                if (arrow) arrow.textContent = sortDir > 0 ? ' ▲' : ' ▼';
+            } else {
+                th.style.color = '';
+                if (arrow) arrow.textContent = '';
+            }
+        });
+    }
+
+    ths.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var key = th.dataset.sortKey;
+            if (key === sortKey) {
+                sortDir *= -1;
+            } else {
+                sortKey = key;
+                sortDir = key === 'team' ? 1 : -1;
+            }
+            applySort();
+        });
+    });
+
+    applySort();
+}());
+
+/* ── Player detail: reuses base.html's shared bottom sheet (gameDetailsSheet/
+   Overlay), same slide-up chrome as a game card's details — but populated
+   via fetch() + innerHTML rather than the game-card pattern's "move an
+   existing DOM node" trick, since pre-rendering a hidden detail panel for
+   every player up front would be wasteful. Closing reuses main.js's
+   existing closeGameDetails()/closeGameDetailsOutside() unchanged — they
+   don't care what's inside the sheet, and openDetailsKey is deliberately
+   left untouched here so that close path's "restore the moved node" step
+   stays a no-op for player details. */
+function openPlayerDetail(playerId, week) {
+    var body = document.getElementById('gameDetailsSheetBody');
+    var overlay = document.getElementById('gameDetailsOverlay');
+    if (!body || !overlay) return;
+    body.innerHTML = '<p class="plyr-empty">Loading…</p>';
+    overlay.style.display = 'flex';
+    overlay.offsetHeight; // force reflow so the slide-up transition runs
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    fetch('/nfl/player/' + encodeURIComponent(playerId) + '?week=' + week)
+        .then(function(r) { return r.text(); })
+        .then(function(html) { body.innerHTML = html; })
+        .catch(function() { body.innerHTML = '<p class="plyr-empty">Couldn\'t load player details.</p>'; });
+}
+</script>
+{% endblock %}
