@@ -5912,32 +5912,62 @@ def nfl_lineup():
   ILP optimizer). `games` (optional query param): comma-separated game_ids
   to restrict the player pool to — this is how "only the 1pm/4pm slate"
   (or any other subset) gets expressed; omitted/empty means every game in
-  the week is eligible."""
-  week = request.args.get('week', type=int)
-  week_ctx = nfl_api.build_week_schedule_context(week)
+  the week is eligible. `cap` and `req_<pos>` (optional): override the
+  salary cap / roster position counts for this request only — nothing is
+  persisted, each is just a query param on the same form/page-reload.
 
-  all_games = [g for day in week_ctx['days'] for g in day['games']]
+  Uses nfl_api.build_week_games_light() rather than build_week_schedule_
+  context() — this page never renders odds/model/weather/injury data, so
+  there's no reason to pay for the full /nfl pipeline (that function's own
+  docstring attributes ~3.3s of a ~5.6s cold load to work this page
+  doesn't use at all)."""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_games_light(week)
+
+  all_games = week_ctx['games']
   if 'filtered' in request.args:
     selected_ids = set(request.args.getlist('games'))
   else:
     selected_ids = {g['game_id'] for g in all_games}
   selected_games = [g for g in all_games if g['game_id'] in selected_ids]
 
+  # Group games into DFS slate windows (Thursday, international, Sunday
+  # 1pm/4pm, Sunday/Monday night) so the picker can offer a one-click
+  # "select all in this group" per window instead of one flat checklist.
+  slot_buckets = defaultdict(list)
+  for g in all_games:
+    slot_key, _ = nfl_fantasy.classify_slate_slot(g['game_time_utc'])
+    slot_buckets[slot_key].append(g)
+  games_by_slot = [
+    {'key': key, 'label': label, 'games': slot_buckets[key]}
+    for key, label in nfl_fantasy.SLOT_ORDER if slot_buckets.get(key)
+  ]
+
+  def _clamp(val, lo, hi, default):
+    return default if val is None else max(lo, min(hi, val))
+
+  salary_cap = _clamp(request.args.get('cap', type=int), 20000, 200000, nfl_fantasy.SALARY_CAP)
+  salary_cap = int(round(salary_cap / nfl_fantasy.SALARY_STEP)) * nfl_fantasy.SALARY_STEP
+  roster_requirements = {
+    pos: _clamp(request.args.get(f'req_{pos.lower()}', type=int), 0, 6, nfl_fantasy.ROSTER_REQUIREMENTS[pos])
+    for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
+  }
+
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
   nfl_fantasy.assign_salaries(pool)
-  optimal = nfl_fantasy.optimize_lineup(pool) if pool else None
+  optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements) if pool else None
 
-  pool_by_position = defaultdict(list)
-  for p in pool:
-    pool_by_position[p['position']].append(p)
-  for players in pool_by_position.values():
-    players.sort(key=lambda p: p['projection'], reverse=True)
+  pool.sort(key=lambda p: p['projection'], reverse=True)
+
+  req_parts = [f"{count} {pos}" for pos, count in roster_requirements.items() if count > 0]
+  roster_requirements_summary = (', '.join(req_parts[:-1]) + ' and ' + req_parts[-1]) if len(req_parts) > 1 else (req_parts[0] if req_parts else 'no players')
 
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
-                         all_games=all_games, selected_ids=selected_ids,
-                         pool_by_position=pool_by_position, optimal=optimal,
-                         salary_cap=nfl_fantasy.SALARY_CAP,
-                         methodology=nfl_fantasy.methodology_context()))
+                         all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
+                         pool=pool, optimal=optimal,
+                         salary_cap=salary_cap, roster_requirements=roster_requirements,
+                         roster_requirements_summary=roster_requirements_summary,
+                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements)))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/recap')

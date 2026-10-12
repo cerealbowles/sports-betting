@@ -35,10 +35,41 @@
 .dfs-cap-meter { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); }
 .dfs-cap-meter strong { color: var(--text); }
 .dfs-pool-section { margin-bottom: 18px; }
-.dfs-pool-pos-hdr {
-    font-family: var(--font-cond); font-weight: 700; color: var(--text-muted);
-    text-transform: uppercase; font-size: 0.78rem; letter-spacing: 0.6px; margin: 14px 0 6px;
+
+/* ── Slate-window grouping (Thursday / international / 1pm / 4pm / SNF / MNF) ── */
+.dfs-slot-group { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.dfs-slot-group:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.dfs-slot-group-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px; font-family: var(--font-cond); font-weight: 700; font-size: 0.88rem;
 }
+.dfs-slot-count { color: var(--text-muted); font-weight: 400; }
+
+/* ── Roster & cap settings ── */
+.dfs-settings { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 16px; }
+.dfs-settings-hdr { font-family: var(--font-cond); font-weight: 700; font-size: 0.82rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.dfs-settings-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+.dfs-settings-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-cond); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.dfs-settings-field input {
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); padding: 6px 8px; font-size: 0.85rem; font-family: var(--font-mono);
+}
+.dfs-settings-field input[type=number] { width: 64px; }
+.dfs-cap-field input { width: 100px; }
+.dfs-cap-presets { display: flex; gap: 4px; }
+.dfs-cap-presets button {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: var(--radius-sm); padding: 6px 9px; font-size: 0.72rem; cursor: pointer; font-family: var(--font-mono);
+}
+.dfs-cap-presets button:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* ── Unified player pool table ── */
+.dfs-pool-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.dfs-pool-toolbar .filter-input { flex: 1 1 200px; min-width: 160px; }
+.dfs-sort-th { cursor: pointer; user-select: none; }
+.dfs-sort-th:hover { color: var(--text); }
+.dfs-sort-arrow { font-size: 0.7rem; }
+.dfs-pool-empty { color: var(--text-muted); font-size: 0.85rem; padding: 14px 0; text-align: center; }
 </style>
 {% endblock %}
 
@@ -77,29 +108,62 @@
 <form method="get" action="{{ url_for('nfl_lineup') }}" class="card dfs-game-picker" id="dfs-game-form">
     <input type="hidden" name="week" value="{{ week_ctx.week }}">
     <input type="hidden" name="filtered" value="1">
+
+    <div class="dfs-settings">
+        <div class="dfs-settings-hdr">Roster &amp; Cap Settings</div>
+        <div class="dfs-settings-row">
+            <label class="dfs-settings-field">QB<input type="number" name="req_qb" min="0" max="6" value="{{ roster_requirements.QB }}"></label>
+            <label class="dfs-settings-field">RB<input type="number" name="req_rb" min="0" max="6" value="{{ roster_requirements.RB }}"></label>
+            <label class="dfs-settings-field">WR<input type="number" name="req_wr" min="0" max="6" value="{{ roster_requirements.WR }}"></label>
+            <label class="dfs-settings-field">TE<input type="number" name="req_te" min="0" max="6" value="{{ roster_requirements.TE }}"></label>
+            <label class="dfs-settings-field">FLEX<input type="number" name="req_flex" min="0" max="6" value="{{ roster_requirements.FLEX }}"></label>
+            <label class="dfs-settings-field">DST<input type="number" name="req_dst" min="0" max="6" value="{{ roster_requirements.DST }}"></label>
+            <label class="dfs-settings-field dfs-cap-field">Salary Cap<input type="number" name="cap" id="dfs-cap-input" step="100" min="20000" max="200000" value="{{ salary_cap }}"></label>
+            <span class="dfs-cap-presets">
+                <button type="button" onclick="document.getElementById('dfs-cap-input').value=60000">$60K</button>
+                <button type="button" onclick="document.getElementById('dfs-cap-input').value=70000">$70K</button>
+                <button type="button" onclick="document.getElementById('dfs-cap-input').value=80000">$80K</button>
+                <button type="button" onclick="document.getElementById('dfs-cap-input').value=100000">$100K</button>
+            </span>
+        </div>
+    </div>
+
     <div class="dfs-game-picker-hdr">
         <span>Games in this slate ({{ selected_ids|length }}/{{ all_games|length }})</span>
         <span class="dfs-game-picker-actions">
-            <button type="button" onclick="dfsToggleAll(true)">All</button>
-            <button type="button" onclick="dfsToggleAll(false)">None</button>
+            <button type="button" onclick="dfsToggleGroup(true)">All</button>
+            <button type="button" onclick="dfsToggleGroup(false)">None</button>
         </span>
     </div>
-    <div class="dfs-game-list">
-    {% for g in all_games %}
-        <label class="dfs-game-check">
-            <input type="checkbox" name="games" value="{{ g.game_id }}"{% if g.game_id in selected_ids %} checked{% endif %}>
-            <span>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</span>
-            <span class="game-time" data-utc="{{ g.game_time_utc }}">—</span>
-        </label>
-    {% endfor %}
+
+    {% for group in games_by_slot %}
+    <div class="dfs-slot-group">
+        <div class="dfs-slot-group-hdr">
+            <span>{{ group.label }} <span class="dfs-slot-count">({{ group.games|length }})</span></span>
+            <span class="dfs-game-picker-actions">
+                <button type="button" onclick="dfsToggleGroup(true, '{{ group.key }}')">All</button>
+                <button type="button" onclick="dfsToggleGroup(false, '{{ group.key }}')">None</button>
+            </span>
+        </div>
+        <div class="dfs-game-list">
+        {% for g in group.games %}
+            <label class="dfs-game-check">
+                <input type="checkbox" name="games" value="{{ g.game_id }}" data-slot="{{ group.key }}"{% if g.game_id in selected_ids %} checked{% endif %}>
+                <span>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</span>
+                <span class="game-time" data-utc="{{ g.game_time_utc }}">—</span>
+            </label>
+        {% endfor %}
+        </div>
     </div>
-    <button type="submit" class="dfs-apply-btn">Update Pool</button>
+    {% endfor %}
+
+    <button type="submit" class="dfs-apply-btn" style="margin-top:14px;">Update Pool</button>
 </form>
 
 {% if not selected_ids %}
 <div class="card">No games selected — check at least one game above to build a pool.</div>
 {% elif not optimal %}
-<div class="card">Not enough eligible players in the selected games to fill a full lineup (need at least 1 QB, 2 RB, 3 WR, 1 TE and 1 DST across the games picked, each with enough stored game history to project). Try selecting more games.</div>
+<div class="card">Not enough eligible players in the selected games to fill a full lineup (need at least {{ roster_requirements_summary }} across the games picked, each with enough stored game history to project). Try selecting more games, or lowering the roster requirements above.</div>
 {% else %}
 <div class="card dfs-optimal-card">
     <div class="dfs-optimal-hdr">
@@ -124,27 +188,45 @@
 </div>
 {% endif %}
 
-{% if pool_by_position %}
-<div class="dfs-pool-section">
-{% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
-{% if pool_by_position.get(position) %}
-<div class="dfs-pool-pos-hdr">{{ position }} ({{ pool_by_position[position]|length }})</div>
-<table class="table">
-    <thead><tr><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th></tr></thead>
-    <tbody>
-    {% for p in pool_by_position[position] %}
-    <tr>
-        <td>{{ p.name }}</td>
-        <td>{{ p.team }}</td>
-        <td>{{ p.opponent }}</td>
-        <td>${{ '{:,}'.format(p.salary) }}</td>
-        <td>{{ p.projection }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% endif %}
-{% endfor %}
+{% if pool %}
+<div class="card dfs-pool-section">
+    <div class="dfs-pool-toolbar">
+        <input type="search" id="dfs-pool-search" class="filter-input" placeholder="Search player or team…" oninput="dfsApplyPoolFilters()">
+        <div class="sport-chip-bar" id="dfs-pos-filter">
+            <button type="button" class="sport-chip sport-chip-active" data-pos="ALL" onclick="dfsFilterPos('ALL', this)">All <span class="sport-chip-count">{{ pool|length }}</span></button>
+            {% for pos in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+            {% set cnt = pool | selectattr('position', 'equalto', pos) | list | length %}
+            {% if cnt %}
+            <button type="button" class="sport-chip" data-pos="{{ pos }}" onclick="dfsFilterPos('{{ pos }}', this)">{{ pos }} <span class="sport-chip-count">{{ cnt }}</span></button>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    <table class="table" id="dfs-pool-table">
+        <thead>
+        <tr>
+            <th>Player</th>
+            <th>Pos</th>
+            <th class="dfs-sort-th" data-sort-key="team">Team <span class="dfs-sort-arrow"></span></th>
+            <th>Opp</th>
+            <th class="dfs-sort-th" data-sort-key="salary">Salary <span class="dfs-sort-arrow"></span></th>
+            <th class="dfs-sort-th" data-sort-key="proj">Proj <span class="dfs-sort-arrow"></span></th>
+        </tr>
+        </thead>
+        <tbody id="dfs-pool-tbody">
+        {% for p in pool %}
+        <tr data-position="{{ p.position }}" data-name="{{ p.name|lower }}" data-team="{{ p.team|lower }}" data-salary="{{ p.salary }}" data-proj="{{ p.projection }}">
+            <td>{{ p.name }}</td>
+            <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
+            <td>{{ p.team }}</td>
+            <td>{{ p.opponent }}</td>
+            <td>${{ '{:,}'.format(p.salary) }}</td>
+            <td>{{ p.projection }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p id="dfs-pool-empty" class="dfs-pool-empty" hidden>No players match your filters.</p>
 </div>
 {% endif %}
 
@@ -166,8 +248,81 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
         el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
     } catch(e) {}
 });
-function dfsToggleAll(checked) {
-    document.querySelectorAll('#dfs-game-form input[type=checkbox]').forEach(function(cb) { cb.checked = checked; });
+
+/* ── Game picker: global "All"/"None" and per-slot-group "All"/"None" ── */
+function dfsToggleGroup(checked, slot) {
+    var selector = '#dfs-game-form input[type=checkbox]' + (slot ? '[data-slot="' + slot + '"]' : '');
+    document.querySelectorAll(selector).forEach(function(cb) { cb.checked = checked; });
 }
+
+/* ── Player pool: position chip filter + name/team search ── */
+var dfsPoolPos = 'ALL';
+function dfsFilterPos(pos, btn) {
+    dfsPoolPos = pos;
+    document.querySelectorAll('#dfs-pos-filter .sport-chip').forEach(function(c) { c.classList.remove('sport-chip-active'); });
+    btn.classList.add('sport-chip-active');
+    dfsApplyPoolFilters();
+}
+function dfsApplyPoolFilters() {
+    var searchEl = document.getElementById('dfs-pool-search');
+    var q = searchEl ? searchEl.value.toLowerCase().trim() : '';
+    var rows = document.querySelectorAll('#dfs-pool-tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var matchesPos = dfsPoolPos === 'ALL' || row.getAttribute('data-position') === dfsPoolPos;
+        var matchesSearch = !q || row.dataset.name.indexOf(q) !== -1 || row.dataset.team.indexOf(q) !== -1;
+        var show = matchesPos && matchesSearch;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    var empty = document.getElementById('dfs-pool-empty');
+    if (empty) empty.hidden = visible !== 0;
+}
+
+/* ── Player pool: click-to-sort columns ── */
+(function() {
+    var table = document.getElementById('dfs-pool-table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths = table.querySelectorAll('.dfs-sort-th');
+    if (!tbody || !ths.length) return;
+
+    var sortKey = 'proj', sortDir = -1;
+
+    function applySort() {
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort(function(a, b) {
+            var av = a.dataset[sortKey], bv = b.dataset[sortKey];
+            if (sortKey === 'team') return av.localeCompare(bv) * sortDir;
+            return ((parseFloat(av) || 0) - (parseFloat(bv) || 0)) * sortDir;
+        });
+        rows.forEach(function(row) { tbody.appendChild(row); });
+        ths.forEach(function(th) {
+            var arrow = th.querySelector('.dfs-sort-arrow');
+            if (th.dataset.sortKey === sortKey) {
+                th.style.color = 'var(--text)';
+                if (arrow) arrow.textContent = sortDir > 0 ? ' ▲' : ' ▼';
+            } else {
+                th.style.color = '';
+                if (arrow) arrow.textContent = '';
+            }
+        });
+    }
+
+    ths.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var key = th.dataset.sortKey;
+            if (key === sortKey) {
+                sortDir *= -1;
+            } else {
+                sortKey = key;
+                sortDir = key === 'team' ? 1 : -1;
+            }
+            applySort();
+        });
+    });
+
+    applySort();
+}());
 </script>
 {% endblock %}

@@ -28,7 +28,7 @@
 
 <p><strong>Salaries are synthetic</strong>, not real FanDuel prices — within each position, a player's salary is their percentile rank by projection <em>that week</em>, mapped onto a price band ({% for pos, band in methodology.salary_bands.items() %}{{ pos }} ${{ '{:,}'.format(band[0]) }}–${{ '{:,}'.format(band[1]) }}{{ ', ' if not loop.last }}{% endfor %}). A player with no stored game history (true rookies, first game back from a long absence) has no projection and simply doesn't appear in the pool.</p>
 
-<p><strong>Optimizer</strong> — an exact integer program (not a greedy pick) selects the highest-scoring lineup under the ${{ '{:,}'.format(methodology.salary_cap) }} cap: {{ methodology.roster_requirements.QB }} QB, {{ methodology.roster_requirements.RB }} RB, {{ methodology.roster_requirements.WR }} WR, {{ methodology.roster_requirements.TE }} TE, 1 FLEX (RB/WR/TE), {{ methodology.roster_requirements.DST }} DST.</p>
+<p><strong>Optimizer</strong> — an exact integer program (not a greedy pick) selects the highest-scoring lineup under the ${{ '{:,}'.format(methodology.salary_cap) }} cap: {{ methodology.roster_requirements.QB }} QB, {{ methodology.roster_requirements.RB }} RB, {{ methodology.roster_requirements.WR }} WR, {{ methodology.roster_requirements.TE }} TE, {{ methodology.roster_requirements.FLEX }} FLEX (RB/WR/TE), {{ methodology.roster_requirements.DST }} DST.</p>
 
 <p style="color: var(--text-muted);">DST scoring covers sacks, interceptions, defensive touchdowns, and points allowed — fumble recoveries, safeties, and blocked kicks aren't tracked by the underlying data source and are left out.</p>
 

@@ -354,12 +354,17 @@ def assign_salaries(pool):
     return pool
 
 
-def methodology_context():
+def methodology_context(salary_cap=None, roster_requirements=None):
     """Everything templates/_nfl_methodology.html needs to render its
     'How is this calculated?' panel straight from this module's actual
     constants — the template never hand-types a number, so it can't drift
     out of sync with the code the way a prose explanation would. Shared by
-    /nfl/lineup and /nfl/recap (both pass this into their template)."""
+    /nfl/lineup and /nfl/recap (both pass this into their template).
+
+    `salary_cap`/`roster_requirements` default to this module's standard
+    constants (what /nfl/recap always uses); /nfl/lineup passes its active
+    user-adjusted values so the panel reflects whatever actually produced
+    the lineup on screen."""
     return {
         'scoring': {
             'pass_yd': PASS_YD, 'pass_td': PASS_TD, 'pass_int': PASS_INT,
@@ -371,8 +376,8 @@ def methodology_context():
         },
         'projection_fit': projection_fit_summary(),
         'salary_bands': SALARY_BANDS,
-        'salary_cap': SALARY_CAP,
-        'roster_requirements': ROSTER_REQUIREMENTS,
+        'salary_cap': salary_cap if salary_cap is not None else SALARY_CAP,
+        'roster_requirements': roster_requirements or ROSTER_REQUIREMENTS,
     }
 
 
@@ -386,8 +391,64 @@ def methodology_context():
 # of rosters) are tiny for an ILP solver — exact, instant, no custom DP to
 # get subtly wrong.
 SALARY_CAP = 60000
-ROSTER_REQUIREMENTS = {'QB': 1, 'RB': 2, 'WR': 3, 'TE': 1, 'DST': 1}
+# 'FLEX' is an explicit count here (not folded into the RB/WR/TE counts)
+# so the lineup builder's roster-settings UI can adjust it independently —
+# optimize_lineup()/_label_slots() both special-case the 'FLEX' key rather
+# than treating it as a real pool position.
+ROSTER_REQUIREMENTS = {'QB': 1, 'RB': 2, 'WR': 3, 'TE': 1, 'FLEX': 1, 'DST': 1}
 FLEX_POSITIONS = {'RB', 'WR', 'TE'}
+
+# ── Slate grouping for the lineup builder's game picker ─────────────────
+# Buckets a game's ESPN UTC kickoff into the slate groupings DFS players
+# think in terms of. Thursday/Friday/Saturday/Monday are whole-day buckets;
+# Sunday is split by ET kickoff hour. Hour cutoffs (11/15/18 ET) aren't
+# exact to the minute — just enough to split the slate the way real NFL
+# kickoff windows fall (9:30am international, 1:00/1:05pm, 4:05/4:25pm,
+# ~8:20pm Sunday night, ~8:15pm Monday).
+SLOT_ORDER = [
+    ('thu',   'Thursday Night'),
+    ('fri',   'Friday'),
+    ('sat',   'Saturday'),
+    ('intl',  'International (Early)'),
+    ('early', 'Sunday 1:00 PM'),
+    ('late',  'Sunday 4:00 PM'),
+    ('snf',   'Sunday Night'),
+    ('mnf',   'Monday Night'),
+    ('other', 'Other'),
+]
+
+
+def classify_slate_slot(game_time_utc):
+    """Buckets a game's ESPN UTC kickoff timestamp (ISO-8601 string) into
+    one of SLOT_ORDER's (key, label) pairs. Malformed/missing timestamps
+    fall into 'other'."""
+    try:
+        dt = datetime.fromisoformat(game_time_utc.replace('Z', '+00:00')).astimezone(_ET)
+    except (ValueError, AttributeError, TypeError):
+        return 'other', dict(SLOT_ORDER)['other']
+
+    weekday = dt.weekday()  # Mon=0 ... Sun=6
+    hour = dt.hour + dt.minute / 60
+    if weekday == 3:
+        key = 'thu'
+    elif weekday == 4:
+        key = 'fri'
+    elif weekday == 5:
+        key = 'sat'
+    elif weekday == 6:
+        if hour < 11:
+            key = 'intl'
+        elif hour < 15:
+            key = 'early'
+        elif hour < 18:
+            key = 'late'
+        else:
+            key = 'snf'
+    elif weekday == 0:
+        key = 'mnf'
+    else:
+        key = 'other'
+    return key, dict(SLOT_ORDER)[key]
 
 
 def _today_et():
@@ -498,7 +559,7 @@ def build_player_pool(games, before_date=None):
     return pool
 
 
-def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
+def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection'):
     """pool: [{'id', 'name', 'team', 'position', 'salary', 'projection'}, ...]
     (one row per eligible player/DST, already projected+salaried). Returns
     {'lineup': [...], 'total_salary': int, 'total_projection': float} for
@@ -508,6 +569,11 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
     lineup" over the SAME pool/salaries) under `cap`, or None if no
     feasible lineup exists (e.g. too few players at some position in the
     selected games).
+
+    `roster_requirements` defaults to the module's standard ROSTER_
+    REQUIREMENTS (what nfl_recap.py's two call sites always get, by not
+    passing this — recap evaluates every week against the same standard
+    roster for consistency). /nfl/lineup passes the user's adjusted counts.
 
     `total_projection` is always summed from 'projection' regardless of
     `objective` — this is what lets a caller compare "what this lineup was
@@ -520,6 +586,8 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
     if not pool:
         return None
 
+    roster_requirements = roster_requirements or ROSTER_REQUIREMENTS
+
     prob = pulp.LpProblem('nfl_dfs_lineup', pulp.LpMaximize)
     x = {p['id']: pulp.LpVariable(f"x_{p['id']}", cat='Binary') for p in pool}
     by_id = {p['id']: p for p in pool}
@@ -527,12 +595,14 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
     prob += pulp.lpSum(p[objective] * x[p['id']] for p in pool)
     prob += pulp.lpSum(p['salary'] * x[p['id']] for p in pool) <= cap
 
-    for position, count in ROSTER_REQUIREMENTS.items():
+    for position, count in roster_requirements.items():
+        if position == 'FLEX':  # not a real pool position — handled below
+            continue
         players = [p for p in pool if p['position'] == position]
         # QB/DST have no flex-style "extra" slot, so they're pinned exactly
         # at their roster count — RB/WR/TE instead get a >= floor here, with
         # the flex_total constraint below pinning their COMBINED count
-        # (including the one flex bonus) exactly. Without this QB/DST
+        # (including the FLEX slot(s)) exactly. Without this QB/DST
         # distinction, the optimizer is free to roster two QBs or two DSTs
         # in place of a FLEX pick whenever that happens to score better per
         # dollar — confirmed live against a real pool before adding this.
@@ -542,7 +612,7 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
         else:
             prob += op == count
 
-    flex_total = sum(ROSTER_REQUIREMENTS[pos] for pos in FLEX_POSITIONS) + 1  # +1 for the FLEX slot itself
+    flex_total = sum(roster_requirements.get(pos, 0) for pos in FLEX_POSITIONS) + roster_requirements.get('FLEX', 0)
     flex_players = [p for p in pool if p['position'] in FLEX_POSITIONS]
     prob += pulp.lpSum(x[p['id']] for p in flex_players) == flex_total
 
@@ -552,7 +622,7 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
 
     lineup = [by_id[pid] for pid, var in x.items() if var.value() == 1]
     result = {
-        'lineup': _label_slots(lineup),
+        'lineup': _label_slots(lineup, roster_requirements),
         'total_salary': sum(p['salary'] for p in lineup),
         'total_projection': round(sum(p['projection'] for p in lineup), 2),
         'cap': cap,
@@ -562,23 +632,24 @@ def optimize_lineup(pool, cap=SALARY_CAP, objective='projection'):
     return result
 
 
-def _label_slots(lineup):
+def _label_slots(lineup, roster_requirements=None):
     """Tags each player in an optimizer-chosen lineup with which roster
-    SLOT they fill — QB/RB/WR/TE/DST are unambiguous from ROSTER_
-    REQUIREMENTS alone, but the one "extra" RB/WR/TE beyond those minimums
-    is the FLEX, and the optimizer itself has no notion of which one that
-    is (it only knows the aggregate FLEX_POSITIONS count constraint).
-    Returns the lineup sorted into QB, RB, RB, WR, WR, WR, TE, FLEX, DST
+    SLOT they fill — QB/RB/WR/TE/DST are unambiguous from roster_
+    requirements alone, but the "extra" RB/WR/TE beyond those minimums
+    are FLEX, and the optimizer itself has no notion of which ones those
+    are (it only knows the aggregate FLEX_POSITIONS count constraint).
+    Returns the lineup sorted into QB, RB..., WR..., TE..., FLEX..., DST...
     order for display."""
+    roster_requirements = roster_requirements or ROSTER_REQUIREMENTS
     by_position = defaultdict(list)
     for p in lineup:
         by_position[p['position']].append(p)
 
     ordered = []
     for position in ('QB', 'RB', 'WR', 'TE'):
-        for _ in range(ROSTER_REQUIREMENTS[position]):
+        for _ in range(roster_requirements.get(position, 0)):
             ordered.append({**by_position[position].pop(0), 'slot': position})
-    for position in ('RB', 'WR', 'TE'):  # whatever's left here is the FLEX (exactly one, total)
+    for position in ('RB', 'WR', 'TE'):  # whatever's left here fills the FLEX slot(s)
         for p in by_position[position]:
             ordered.append({**p, 'slot': 'FLEX'})
     for p in by_position['DST']:

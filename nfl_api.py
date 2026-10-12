@@ -1065,3 +1065,67 @@ def build_week_schedule_context(week=None):
         'next_week':       week + 1 if week < _REG_SEASON_WEEKS else None,
         'days':            days,
     }
+
+
+def build_week_games_light(week=None):
+    """Minimal version of build_week_schedule_context() for callers that only
+    need game_id/home/away/kickoff time — no model, no odds, no weather/
+    injuries, no DB ensemble-blend queries. Used by /nfl/lineup, which never
+    renders any of the heavier output: its template only ever reads
+    g.game_id/g.home/g.away/g.game_time_utc/g.status off each game dict, so
+    building the full _build_game() result for every game in the week (the
+    dominant cost of a cold /nfl page load — see build_week_schedule_context's
+    per-game weather/injury prefetch and ensemble-blend DB queries) is pure
+    waste here. Shares the same scoreboard cache key/TTL as the full
+    function, so this never duplicates the ESPN fetch build_week_schedule_
+    context (or the background warmer) already did for the same week."""
+    season, current_week = get_current_week()
+    if week is None:
+        week = current_week
+    week = max(1, min(_REG_SEASON_WEEKS, week))
+
+    data = _cached_get(
+        ESPN_NFL,
+        {'seasontype': 2, 'week': week, 'season': season, 'dates': season, 'limit': 20},
+        f'nfl_week_sched_{season}_{week}',
+        _TTL['scoreboard'],
+    )
+    events = (data or {}).get('events', [])
+
+    games = []
+    for event in events:
+        comp = event.get('competitions', [{}])[0]
+        state = comp.get('status', {}).get('type', {}).get('state', 'pre')
+        status = 'Live' if state == 'in' else 'Final' if state == 'post' else 'Preview'
+
+        teams = {}
+        for competitor in comp.get('competitors', []):
+            side = competitor.get('homeAway', 'home')
+            team = competitor.get('team', {})
+            abbrev = team.get('abbreviation', '')
+            teams[side] = {
+                'id':       team.get('id'),
+                'name':     team.get('displayName', ''),
+                'abbrev':   abbrev,
+                'abbr':     abbrev,
+                'logo_url': f"https://a.espncdn.com/i/teamlogos/nfl/500/{abbrev.lower()}.png",
+            }
+
+        games.append({
+            'game_id':       event.get('id'),
+            'game_time_utc': event.get('date', ''),
+            'status':        status,
+            'home':          teams.get('home', {}),
+            'away':          teams.get('away', {}),
+        })
+
+    games.sort(key=lambda g: g['game_time_utc'] or '')
+
+    return {
+        'week':            week,
+        'season':          season,
+        'is_current_week': week == current_week,
+        'prev_week':       week - 1 if week > 1 else None,
+        'next_week':       week + 1 if week < _REG_SEASON_WEEKS else None,
+        'games':           games,
+    }
