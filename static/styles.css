@@ -1898,6 +1898,17 @@ body.embed-mode .container { padding-bottom: 0; }
 .dot-w { background: rgba(168,240,122,0.12); color: var(--win);  border: 1px solid rgba(168,240,122,0.30); }
 .dot-l { background: rgba(255,178,122,0.09); color: var(--loss); border: 1px solid rgba(255,178,122,0.25); }
 
+/* ── NFL lineup builder / season recap — shared across nfl_lineup.html
+   and nfl_recap.html, page-specific rules stay in each page's own
+   {% block head %} ── */
+.dfs-subhead { margin: -8px 0 16px; color: var(--text-muted); font-size: 0.85rem; }
+.dfs-note { color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin-top: 18px; }
+.dfs-slot-badge {
+    display: inline-block; min-width: 38px; text-align: center; padding: 2px 6px;
+    border-radius: 6px; background: var(--purple-dim); color: var(--purple-text);
+    font-size: 0.68rem; font-weight: 700; font-family: var(--font-mono);
+}
+
 /* ── Projected lineup / live actuals (NBA, see _nba_lineups.html) ── */
 .lineup-section { margin-top: 10px; }
 .lineup-details { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }

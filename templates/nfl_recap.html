@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}NFL Season Recap — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.recap-week-card { margin-bottom: 14px; }
+.recap-week-hdr { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.recap-week-hdr h2 { font-family: var(--font-display); font-size: 1.15rem; }
+.recap-compare { display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.85rem; }
+.recap-compare .recap-label { color: var(--text-muted); margin-right: 6px; }
+.recap-compare .recap-value { color: var(--text); font-weight: 700; }
+.recap-infeasible { color: var(--text-muted); font-size: 0.82rem; padding: 2px 0 4px; }
+.recap-subtables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
+.recap-subtables h3 {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); margin-bottom: 6px;
+}
+@media (max-width: 700px) { .recap-subtables { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+<h1>Season Recap</h1>
+<p class="dfs-subhead">For every completed week of the {{ season }} season: what the lineup builder would have recommended before kickoff, vs. the true best-possible lineup in hindsight — both scored by real results. · <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">🏆 Lineup Builder</a></p>
+
+{% if not weeks %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🏈</div>
+    <div class="offseason-title">No completed weeks yet this season</div>
+</div>
+{% else %}
+
+{% for w in weeks %}
+<div class="card recap-week-card">
+    <div class="recap-week-hdr">
+        <h2>Week {{ w.week }}</h2>
+        {% if w.is_feasible %}
+        <div class="recap-compare">
+            <span><span class="recap-label">Recommended scored</span><span class="recap-value">{{ w.recommended.total_actual }}</span></span>
+            <span><span class="recap-label">Best possible</span><span class="recap-value">{{ w.best_possible.total_actual }}</span></span>
+            {% if w.best_possible.total_actual %}
+            <span><span class="recap-label">Capture rate</span><span class="recap-value">{{ (100 * w.recommended.total_actual / w.best_possible.total_actual) | round(1) }}%</span></span>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not w.is_feasible %}
+    <div class="recap-infeasible">Not enough stored game history yet to build a full lineup for this week.</div>
+    {% else %}
+    <details class="lineup-details">
+        <summary class="lineup-summary">Show picks</summary>
+        <div class="recap-subtables">
+            <div>
+                <h3>Recommended (pre-game)</h3>
+                <table class="table">
+                    <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th><th>Actual</th></tr></thead>
+                    <tbody>
+                    {% for p in w.recommended.lineup %}
+                    <tr>
+                        <td><span class="dfs-slot-badge">{{ p.slot }}</span></td>
+                        <td>{{ p.name }}</td>
+                        <td>{{ p.team }}</td>
+                        <td>{{ p.opponent }}</td>
+                        <td>${{ '{:,}'.format(p.salary) }}</td>
+                        <td>{{ p.projection }}</td>
+                        <td>{{ p.actual }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <h3>Best possible (hindsight)</h3>
+                <table class="table">
+                    <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Actual</th></tr></thead>
+                    <tbody>
+                    {% for p in w.best_possible.lineup %}
+                    <tr>
+                        <td><span class="dfs-slot-badge">{{ p.slot }}</span></td>
+                        <td>{{ p.name }}</td>
+                        <td>{{ p.team }}</td>
+                        <td>{{ p.opponent }}</td>
+                        <td>${{ '{:,}'.format(p.salary) }}</td>
+                        <td>{{ p.actual }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </details>
+    {% endif %}
+</div>
+{% endfor %}
+
+<p class="dfs-note">
+    Both lineups are built under that week's own salaries using the same engine described below — "Recommended" is
+    exactly what the tool would have suggested before kickoff, from data available at the time. Roster and position
+    always come from each team's CURRENT roster, not a historical snapshot, since no historical roster lookback
+    exists in this app's data sources — a player since traded or cut can't appear here even if they actually played
+    that week, and a since-signed player can appear even if they weren't on the roster yet. Injury-status tracking
+    only started recently, so older weeks rarely exclude anyone as confirmed-out.
+</p>
+
+{% include "_nfl_methodology.html" %}
+
+{% endif %}
+
+</div>
+{% endblock %}

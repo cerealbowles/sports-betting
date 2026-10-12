@@ -3,7 +3,6 @@
 
 {% block head %}
 <style>
-.dfs-subhead { margin: -8px 0 16px; color: var(--text-muted); font-size: 0.85rem; }
 .dfs-game-picker { margin-bottom: 16px; }
 .dfs-game-picker-hdr {
     display: flex; justify-content: space-between; align-items: center;
@@ -35,17 +34,11 @@
 .dfs-optimal-hdr h2 { font-family: var(--font-display); font-size: 1.3rem; }
 .dfs-cap-meter { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); }
 .dfs-cap-meter strong { color: var(--text); }
-.dfs-slot-badge {
-    display: inline-block; min-width: 38px; text-align: center; padding: 2px 6px;
-    border-radius: 6px; background: var(--purple-dim); color: var(--purple-text);
-    font-size: 0.68rem; font-weight: 700; font-family: var(--font-mono);
-}
 .dfs-pool-section { margin-bottom: 18px; }
 .dfs-pool-pos-hdr {
     font-family: var(--font-cond); font-weight: 700; color: var(--text-muted);
     text-transform: uppercase; font-size: 0.78rem; letter-spacing: 0.6px; margin: 14px 0 6px;
 }
-.dfs-note { color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin-top: 18px; }
 </style>
 {% endblock %}
 
@@ -55,7 +48,7 @@
 {% set current_sport = 'NFL' %}
 {% include "_sport_pills.html" %}
 <h1>Salary Cap Lineup Builder</h1>
-<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap.</p>
+<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap. · <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">📊 See how past weeks' picks performed</a></p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
@@ -155,13 +148,7 @@
 </div>
 {% endif %}
 
-<p class="dfs-note">
-    Salaries are synthetic — ranked by this week's own projections within each position, not real FanDuel prices.
-    Projections are fit from this app's stored game history (recent scoring pace + opponent unit strength); a player
-    with no stored games (true rookies, first game back from a long absence) won't appear in the pool at all.
-    DST scoring covers sacks, interceptions, defensive touchdowns, and points allowed — fumble recoveries, safeties,
-    and blocked kicks aren't tracked by the underlying data source and are left out.
-</p>
+{% include "_nfl_methodology.html" %}
 
 {% endif %}
 

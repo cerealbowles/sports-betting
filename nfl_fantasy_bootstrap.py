@@ -181,6 +181,8 @@ if __name__ == '__main__':
     print(f'Running NFL fantasy-projection backtest over {SEASONS}...', flush=True)
     rows_by_bucket = run(max_games=args.max_games)
 
+    quality = {}  # bucket -> {n, mae, baseline_mae}, filled in below as each fit succeeds
+
     print(f'\nPROJECTION_FIT = {{', flush=True)
     for bucket in ('QB', 'RB', 'REC', 'DST'):
         rows = rows_by_bucket.get(bucket, [])
@@ -197,7 +199,20 @@ if __name__ == '__main__':
 
         mae_fit = _mae(rows, _fit_predict)
         mae_baseline = _mae(rows, _baseline_predict)
+        quality[bucket] = {'n': len(rows), 'mae': round(mae_fit, 2), 'baseline_mae': round(mae_baseline, 2)}
         print(f"  '{bucket}': {{'intercept': {fit['intercept']:.4f}, "
               f"'recent_avg': {fit['recent_avg']:.4f}, 'opp_grade': {fit['opp_grade']:.4f}}},"
               f"  # n={len(rows)}, MAE {mae_fit:.2f} vs baseline (recent-avg-only) MAE {mae_baseline:.2f}")
+    print('}', flush=True)
+
+    # Paste-ready companion block — same numbers as the trailing comments
+    # above, as structured data instead of prose, so nfl_fantasy.
+    # PROJECTION_FIT_QUALITY (what the in-app methodology panel reads)
+    # can't drift from what this run actually measured.
+    print(f'\nPROJECTION_FIT_QUALITY = {{', flush=True)
+    for bucket in ('QB', 'RB', 'REC', 'DST'):
+        q = quality.get(bucket)
+        if q is None:
+            continue
+        print(f"  '{bucket}': {{'n': {q['n']}, 'mae': {q['mae']}, 'baseline_mae': {q['baseline_mae']}}},")
     print('}', flush=True)

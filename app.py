@@ -31,6 +31,7 @@ import nhl_model
 import nfl_api
 import nfl_model
 import nfl_fantasy
+import nfl_recap
 import cfb_api
 import cfb_model
 import nba_api
@@ -340,6 +341,49 @@ class InjuryStatus(db.Model):
                            onupdate=lambda: datetime.now(timezone.utc))
 
   __table_args__ = (db.UniqueConstraint('sport', 'date', 'player_id', name='uq_injury_status'),)
+
+
+class NflRecapWeek(db.Model):
+  """One already-completed NFL week's permanently-settled season-recap
+  result — see nfl_recap.py for the compute flow. A past week's outcome
+  never changes once every game is Final, so each (season, week) is
+  computed and written here EXACTLY ONCE rather than recomputed on every
+  page view — building the pool alone costs a live ESPN roster fetch per
+  team (nfl_fantasy.build_player_pool()), the same cost the live /nfl/
+  lineup page pays on every cold cache hit.
+
+  Stores both the 'recommended' lineup (built the same way the live page
+  would have, using ONLY data strictly before that week's own cutoff_date
+  — no leakage — then optimized for PROJECTED points) and 'best_possible'
+  (the identical pool/salaries, but optimized for ACTUAL points instead)
+  — both ultimately scored by real results. Each lineup's 9 picks are
+  JSON (same "compound/variable shape -> JSON blob, scalar summary -> real
+  column" split PlayerGameStat.stats_json already uses elsewhere in this
+  file) — totals stay real columns so a listing page can display them
+  without parsing JSON per row.
+
+  is_feasible=False (every other column left null) means this week didn't
+  have enough pre-cutoff stored history to fill a full lineup — expected
+  for a season's earliest tracked week(s) — stored explicitly so a page
+  visit doesn't retry the roster-fetch-heavy computation every time.
+  """
+  __tablename__ = 'nfl_recap_weeks'
+  id                       = db.Column(db.Integer, primary_key=True)
+  season                   = db.Column(db.Integer, nullable=False, index=True)
+  week                     = db.Column(db.Integer, nullable=False, index=True)
+  cutoff_date              = db.Column(db.String(10))   # YYYY-MM-DD ET, this week's earliest game date
+  is_feasible              = db.Column(db.Boolean, nullable=False, default=False)
+  recommended_salary       = db.Column(db.Integer)
+  recommended_projection   = db.Column(db.Float)
+  recommended_actual       = db.Column(db.Float)
+  recommended_players_json = db.Column(db.Text)
+  best_salary              = db.Column(db.Integer)
+  best_actual              = db.Column(db.Float)
+  best_players_json        = db.Column(db.Text)
+  created_at               = db.Column(db.DateTime(timezone=True),
+                                        default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('season', 'week', name='uq_nfl_recap_week'),)
 
 
 # Create tables for any new models on first run
@@ -5892,7 +5936,27 @@ def nfl_lineup():
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
                          all_games=all_games, selected_ids=selected_ids,
                          pool_by_position=pool_by_position, optimal=optimal,
-                         salary_cap=nfl_fantasy.SALARY_CAP))
+                         salary_cap=nfl_fantasy.SALARY_CAP,
+                         methodology=nfl_fantasy.methodology_context()))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/recap')
+def nfl_recap_page():
+  """Season recap — every already-completed NFL week this season, the
+  tool's pre-game recommendation vs. the true best-possible lineup in
+  hindsight, both scored by real results. Computed once per week and
+  cached in NflRecapWeek; see nfl_recap.py."""
+  season, current_week = nfl_api.get_current_week()
+  weeks = []
+  for week in range(1, current_week + 1):
+    recap = nfl_recap.get_or_compute_week_recap(season, week)
+    if recap is not None:
+      weeks.append(recap)
+  weeks.reverse()
+
+  resp = make_response(render_template('nfl_recap.html', subnav_sport='NFL',
+                         season=season, weeks=weeks,
+                         methodology=nfl_fantasy.methodology_context()))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/cfb')
