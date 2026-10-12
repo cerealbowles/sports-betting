@@ -19,6 +19,7 @@ Same lazy `from app import ...` pattern as nba_stats_db.py and every
 imports nfl_api.py (and, transitively, this module) at module level.
 """
 import json
+import re
 from collections import defaultdict
 
 GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
@@ -474,8 +475,19 @@ def get_unavailable_player_ids(team_id, date_et):
     return {pid for pid, status in statuses.items() if status.lower() in _OUT_STATUSES}
 
 
+def _normalize_headline(headline):
+    """Lowercase, punctuation-stripped, whitespace-collapsed — for
+    comparing headlines across domains/URLs that are really the same
+    syndicated wire story (confirmed live: GDELT backfill coverage is
+    ~42% exact-headline duplicates across different domains, e.g. the
+    same AP-style story republished on a dozen local-radio-affiliate
+    sites). Not meant to catch loosely-similar headlines, just the
+    "literally the same story, different URL" case."""
+    return ' '.join(re.sub(r'[^a-z0-9 ]', '', (headline or '').lower()).split())
+
+
 def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date_et,
-                           matches, score, matched_terms):
+                           matches, score, matched_terms, dedupe_by_headline=False):
     """Persists one article's sentiment score once per matched player/team
     (see nfl_news.match_players() for `matches`' shape: [{'player_id',
     'team_id', 'player_name'}, ...] — a team-only mention has
@@ -486,21 +498,38 @@ def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date
     (see NewsSentiment's docstring in app.py for why). `matched_terms`:
     [(phrase, weight), ...] from news_sentiment.score_text(), stored as
     JSON purely so a score can be audited back to the lexicon entries that
-    produced it. Returns the number of rows actually inserted."""
+    produced it.
+
+    `dedupe_by_headline` (default False — the live nfl_news.py pipeline
+    doesn't need it, confirmed zero duplicate headlines there since it
+    pulls directly from ESPN/CBS's own feeds): also skips a match if an
+    existing row for the SAME (source, player_id-or-team_id) already has
+    the same normalized headline — catches syndicated reposts of one
+    story across multiple URLs/domains, which a plain (source, url,
+    player_id) key can't, since each repost is a genuinely distinct URL.
+    nfl_news_backfill.py (GDELT, where this problem is real) passes True.
+
+    Returns the number of rows actually inserted."""
     if not matches:
         return 0
     from app import app as flask_app, db, NewsSentiment
 
     inserted = 0
     with flask_app.app_context():
+        norm_headline = _normalize_headline(headline) if dedupe_by_headline else None
         for m in matches:
-            pid = m.get('player_id')
+            pid, tid = m.get('player_id'), m.get('team_id')
             existing = NewsSentiment.query.filter_by(source=source, url=url, player_id=pid).first()
             if existing:
                 continue
+            if dedupe_by_headline:
+                dup_scope = (NewsSentiment.query.filter_by(source=source, player_id=pid) if pid is not None
+                             else NewsSentiment.query.filter_by(source=source, player_id=None, team_id=tid))
+                if any(_normalize_headline(r.headline) == norm_headline for r in dup_scope.all()):
+                    continue
             db.session.add(NewsSentiment(
                 sport='NFL', date=date_et, published_at=published_at,
-                team_id=m.get('team_id'), player_id=pid, player_name=m.get('player_name'),
+                team_id=tid, player_id=pid, player_name=m.get('player_name'),
                 source=source, headline=headline, url=url, raw_snippet=raw_snippet,
                 sentiment_score=score, matched_terms_json=json.dumps(matched_terms),
             ))
