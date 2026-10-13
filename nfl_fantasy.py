@@ -294,7 +294,22 @@ def classify_bucket(categories):
 # periodically and paste its printed PROJECTION_FIT block here.
 PROJECTION_FIT = {
     'QB':  {'intercept': 10.6096, 'recent_avg': 0.3958, 'opp_grade': -0.3430},
-    'RB':  {'intercept': 3.3537, 'recent_avg': 0.6905, 'opp_grade': -1.1591},
+    # RB carries a 3rd term, 'volume' (recent rush attempts + targets per
+    # game — see _recent_touches_per_game()) — the ONE challenger feature
+    # nfl_model_challengers.py (Phase 4, NFL_Fantasy_Analytics_Projection_
+    # Plan.md) found that actually improved out-of-sample RB accuracy, and
+    # the only one of three buckets x three challengers tested where the
+    # gain held up on a SECOND, independent holdout split (train 2024 ->
+    # holdout 2025) after looking promising on the first (train 2024-25 ->
+    # holdout 2026) — QB and REC's own volume challengers looked good on
+    # the first split and flipped to a loss on the second, so they were
+    # NOT promoted and keep the original 2-input formula. Fit on this
+    # app's own real stored warehouse (all RB player-games, 2024-2026,
+    # n=2633) via nfl_model_challengers.ols_fit() — unlike the other three
+    # buckets' coefficients below, which (per this dict's own long-
+    # standing caveat) came from an ad-hoc scratch-DB pull, never
+    # re-derived from the real deployed data.
+    'RB':  {'intercept': 2.3624, 'recent_avg': 0.2706, 'opp_grade': -1.2486, 'volume': 0.4293},
     'REC': {'intercept': 2.6139, 'recent_avg': 0.6573, 'opp_grade': -0.6837},
     'DST': {'intercept': 9.7173, 'recent_avg': 0.2378, 'opp_grade': -5.6024},
 }
@@ -305,9 +320,13 @@ PROJECTION_FIT = {
 # Kept as structured data (not just a code comment) so templates/
 # _nfl_methodology.html can render real numbers instead of hand-typed
 # prose that could drift from the code — see projection_fit_summary().
+# RB's mae/n reflect the volume-augmented fit above (in-sample, full
+# 2024-2026 warehouse); baseline_mae is unchanged — it's still the
+# simpler "recent average only, no opponent term" comparison, unrelated
+# to the volume addition.
 PROJECTION_FIT_QUALITY = {
     'QB':  {'n': 1035, 'mae': 6.20, 'baseline_mae': 6.75},
-    'RB':  {'n': 2270, 'mae': 5.00, 'baseline_mae': 5.08},
+    'RB':  {'n': 2633, 'mae': 4.83, 'baseline_mae': 5.08},
     'REC': {'n': 6232, 'mae': 4.00, 'baseline_mae': 4.07},
     'DST': {'n': 1022, 'mae': 3.79, 'baseline_mae': 4.20},
 }
@@ -336,19 +355,52 @@ def rolling_average(points_history, window=ROLLING_WINDOW):
     return sum(sample) / len(sample)
 
 
-def project_points(bucket, points_history, opponent_grade):
+RECENT_VOLUME_WINDOW = 3  # matches nfl_model_challengers.py / nfl_playergame_dataset.py's
+                          # own "recent" window — the fit above was validated at this window,
+                          # not ROLLING_WINDOW, so changing this would silently invalidate it.
+
+
+def _recent_touches_per_game(games, window=RECENT_VOLUME_WINDOW):
+    """RB-only pregame feature: average (rush attempts + targets) over
+    this player's last `window` games (fewer if not available yet) —
+    see PROJECTION_FIT['RB']'s comment for where this coefficient came
+    from. `games`: newest-first, each {'categories': {...}} (the same
+    raw box-score shape build_player_pool() already has in hand — no
+    extra DB read). None if there's no game to compute it from."""
+    sample = games[:window]
+    if not sample:
+        return None
+    total = 0.0
+    for g in sample:
+        cats = g.get('categories', {})
+        total += _num(cats.get('rushing', {}).get('rushingAttempts'))
+        total += _num(cats.get('receiving', {}).get('receivingTargets'))
+    return total / len(sample)
+
+
+def project_points(bucket, points_history, opponent_grade, recent_volume_pg=None):
     """Projects next game's fantasy points for one player (bucket: 'QB' |
     'RB' | 'REC') or a team DST (bucket: 'DST'). `points_history`: that
     player/DST's own past fantasy-point totals, newest first.
     `opponent_grade`: the matchup's defense grade (for QB/RB/REC — the
     opposing DEFENSE's nfl_player_model.compute_defense_grade) or offense
     grade (for DST — the opposing OFFENSE's compute_offense_grade). None if
-    there's no usable history for either side."""
+    there's no usable history for either side.
+
+    `recent_volume_pg` (RB only — see _recent_touches_per_game()): adds
+    PROJECTION_FIT['RB']['volume'] * recent_volume_pg to the projection
+    when both this value and that coefficient are present. None (the
+    default) just skips the term rather than blocking the projection —
+    a player missing this one feature still gets the base 2-input
+    projection, the same "a real gap beats a wrong guess" convention as
+    the rest of this app, not a reason to exclude them from the pool."""
     recent_avg = rolling_average(points_history)
     if recent_avg is None or opponent_grade is None:
         return None
     fit = PROJECTION_FIT[bucket]
     proj = fit['intercept'] + fit['recent_avg'] * recent_avg + fit['opp_grade'] * opponent_grade
+    if recent_volume_pg is not None and 'volume' in fit:
+        proj += fit['volume'] * recent_volume_pg
     return max(0.0, round(proj, 2))
 
 
@@ -650,7 +702,8 @@ def build_player_pool(games, before_date=None):
             if usage_games < MIN_USAGE_GAMES:
                 continue
             points_hist = [compute_fantasy_points(g['categories']) for g in games]
-            proj = project_points(bucket, points_hist, opp_def_grade)
+            recent_volume_pg = _recent_touches_per_game(games) if bucket == 'RB' else None
+            proj = project_points(bucket, points_hist, opp_def_grade, recent_volume_pg)
             if proj is None:
                 continue
             pool.append({
