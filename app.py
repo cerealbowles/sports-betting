@@ -312,10 +312,92 @@ class TeamGameStat(db.Model):
   fpts_allowed_qb  = db.Column(db.Float)
   fpts_allowed_rb  = db.Column(db.Float)
   fpts_allowed_rec = db.Column(db.Float)
+  # NFL-only defense splits, derived from nfl_playbyplay_api.parse_play_
+  # splits()'s 'team_allowed' output — see that module's docstring for the
+  # "explosive run/pass" threshold and red-zone definition used here.
+  # Written by nfl_stats_db.ingest_play_by_play() alongside the raw
+  # NflPlay rows below, from the same parsed play-by-play (zero extra
+  # fetches).
+  long_plays_allowed    = db.Column(db.Integer)
+  redzone_trips_allowed = db.Column(db.Integer)
+  redzone_tds_allowed   = db.Column(db.Integer)
+  # NFL-only weather at kickoff — null for domes/retractable roofs (same
+  # convention as nfl_api._parse_weather) AND for any game this wasn't
+  # captured for in time: ESPN only carries weather in a live/near-term
+  # window and drops it off completed games (confirmed live — a finished,
+  # outdoor, cold-weather game returned null), so this is populated
+  # best-effort from nfl_api._build_game()'s live path only, going
+  # forward from whenever this column was added — never backfillable for
+  # games that were already Final by then. Denormalized onto both teams'
+  # rows for the same game, same convention as team_name/opponent_name
+  # above.
+  weather_temp       = db.Column(db.Float)
+  weather_wind_mph    = db.Column(db.Float)
+  weather_precip_pct  = db.Column(db.Float)
   created_at    = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
   __table_args__ = (db.UniqueConstraint('sport', 'game_id', 'team_id', name='uq_team_game'),)
+
+
+class NflPlay(db.Model):
+  """One individual play from one NFL game's play-by-play (ESPN's
+  `summary?event=` `drives.previous[].plays[]`), parsed by
+  nfl_playbyplay_api.parse_play_splits() and written by nfl_stats_db.
+  ingest_play_by_play(). A deliberate departure from this app's usual
+  "store aggregates, not raw events" convention (see PlayerGameStat's
+  class docstring for that convention elsewhere) — see nfl_playbyplay_
+  api.py's module docstring for why raw plays are kept here instead of
+  being discarded after aggregation.
+
+  Scope: offensive scrimmage plays this app's parser actually attributes
+  (rush, pass — complete/incomplete/TD —, sack, penalty) — not special-
+  teams or clock-management plays (punts, kickoffs, kneels, timeouts),
+  which carry none of the per-player signal this table exists for.
+
+  participant ids (passer_id/rusher_id/receiver_id/penalty_player_id) are
+  frequently NULL — ESPN's free play-by-play has no structured athlete-id
+  field at all, just prose this app's parser resolves via regex (see
+  nfl_playbyplay_api.py's module docstring for its real, measured,
+  documented accuracy and gaps). A null participant means attribution
+  genuinely failed for that one play, not a missing fetch — the play
+  itself (text, down/distance, yards, red-zone flag) is still stored."""
+  __tablename__ = 'nfl_plays'
+  id               = db.Column(db.Integer, primary_key=True)
+  game_id          = db.Column(db.String(20), nullable=False, index=True)
+  play_id          = db.Column(db.String(30), nullable=False)
+  drive_id         = db.Column(db.String(30))
+  sequence_number  = db.Column(db.String(10))
+  season           = db.Column(db.Integer)
+  game_date        = db.Column(db.String(10), index=True)
+  offense_team_id  = db.Column(db.String(20), index=True)
+  defense_team_id  = db.Column(db.String(20), index=True)
+  play_type        = db.Column(db.String(40))   # ESPN's type.text: 'Rush', 'Pass Reception', 'Penalty', ...
+  text             = db.Column(db.Text)          # raw play description, verbatim
+  down             = db.Column(db.Integer)
+  distance         = db.Column(db.Integer)
+  yards_to_endzone = db.Column(db.Integer)
+  yards_gained     = db.Column(db.Float)
+  is_scoring_play  = db.Column(db.Boolean)
+  is_redzone       = db.Column(db.Boolean)
+  is_turnover      = db.Column(db.Boolean)
+  is_no_play       = db.Column(db.Boolean)       # down replayed (accepted penalty) — see nfl_playbyplay_api.py
+  period           = db.Column(db.Integer)
+  clock            = db.Column(db.String(10))
+  pass_depth       = db.Column(db.String(10))    # 'short' | 'deep' | NULL for non-pass plays
+  yards_after_catch = db.Column(db.Float)
+  passer_id        = db.Column(db.String(20))
+  rusher_id        = db.Column(db.String(20))
+  receiver_id      = db.Column(db.String(20))
+  penalty_team_id   = db.Column(db.String(20))
+  penalty_player_id = db.Column(db.String(20))
+  penalty_type      = db.Column(db.String(60))
+  penalty_yards     = db.Column(db.Integer)
+  penalty_status    = db.Column(db.String(20))   # 'Accepted' | 'Declined' | 'No Play'
+  created_at       = db.Column(db.DateTime(timezone=True),
+                                default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('game_id', 'play_id', name='uq_nfl_play'),)
 
 
 class InjuryStatus(db.Model):
@@ -506,6 +588,12 @@ def ensure_column_exists():
     _add('team_game_stats',  'fpts_allowed_qb',    'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'fpts_allowed_rb',    'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'fpts_allowed_rec',   'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'long_plays_allowed',    'INTEGER DEFAULT NULL')
+    _add('team_game_stats',  'redzone_trips_allowed', 'INTEGER DEFAULT NULL')
+    _add('team_game_stats',  'redzone_tds_allowed',   'INTEGER DEFAULT NULL')
+    _add('team_game_stats',  'weather_temp',        'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'weather_wind_mph',    'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'weather_precip_pct',  'FLOAT DEFAULT NULL')
     _add('player_game_stats', 'position',          'TEXT DEFAULT NULL')
     _add('player_game_stats', 'stats_json',        'TEXT DEFAULT NULL')
     _add('game_predictions', 'blended_spread_cover_prob', 'FLOAT DEFAULT NULL')

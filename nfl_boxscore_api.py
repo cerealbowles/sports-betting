@@ -112,3 +112,12 @@ def get_live_boxscore(event_id):
     fetched via _get_game_summary(), so calling this instead would mean a
     second, redundant HTTP round trip for the same data."""
     return parse_player_boxscore(_get(event_id))
+
+
+def get_live_summary(event_id):
+    """The raw summary?event= response, for callers that need more than
+    the boxscore out of it — e.g. nfl_playbyplay_api.py's drives-based
+    parsing. Shares this module's own cache/backoff with get_live_
+    boxscore()/parse_player_boxscore(), so a caller using both on the same
+    event_id (nfl_stats_backfill.py does) costs one HTTP fetch, not two."""
+    return _get(event_id)

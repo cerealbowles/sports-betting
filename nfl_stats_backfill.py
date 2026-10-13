@@ -103,13 +103,23 @@ def backfill(season, week_start, week_end, seasontype=2, dry_run=False):
                 nfl_stats_db.ingest_team_game(
                     event.get('id'), game_date_et, season, game_type,
                     home_id, away_id, home_name, away_name, home_score, away_score)
-                player_boxscore = nfl_boxscore_api.get_live_boxscore(event.get('id'))
+                # One summary fetch feeds box score AND play-by-play (see
+                # nfl_boxscore_api.get_live_summary()'s docstring) — no
+                # weather call here: confirmed live that ESPN drops
+                # weather off games that are already Final by the time
+                # this backfill reaches them, so there's nothing to
+                # capture for old games (see TeamGameStat.weather_temp's
+                # docstring in app.py).
+                summary = nfl_boxscore_api.get_live_summary(event.get('id'))
+                player_boxscore = nfl_boxscore_api.parse_player_boxscore(summary)
                 if player_boxscore:
                     nfl_stats_db.ingest_player_stats(
                         event.get('id'), game_date_et, season, game_type,
                         home_id, away_id, player_boxscore)
                     nfl_stats_db.ingest_team_defense_vs_position(
                         event.get('id'), home_id, away_id, player_boxscore)
+                    nfl_stats_db.ingest_play_by_play(
+                        event.get('id'), game_date_et, season, game_type, summary)
             total_games += 1
 
         if not found_any and week > 3:

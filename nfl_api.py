@@ -875,6 +875,14 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
                     home.get('id'), away.get('id'), player_boxscore)
                 nfl_stats_db.ingest_team_defense_vs_position(
                     event.get('id'), home.get('id'), away.get('id'), player_boxscore)
+                nfl_stats_db.ingest_play_by_play(
+                    event.get('id'), game_date_et, _get_nfl_season(), game_type, summary)
+
+            # Weather — best-effort, going forward only (see TeamGameStat.
+            # weather_temp's docstring in app.py: ESPN drops this off
+            # completed games, so this only ever lands when _build_game()
+            # runs for a game that's STILL in ESPN's near-term window).
+            nfl_stats_db.ingest_weather(event.get('id'), weather)
         except Exception:
             pass
 

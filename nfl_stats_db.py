@@ -205,6 +205,136 @@ def get_defense_vs_position_db(team_id, bucket, before_date=None, limit=8):
         return [getattr(r, f'fpts_allowed_{bucket.lower()}') for r in rows]
 
 
+def ingest_play_by_play(event_id, game_date_et, season, game_type, summary):
+    """Parses `summary` via nfl_playbyplay_api.parse_play_splits() and
+    writes all three of its outputs:
+      - raw_plays -> NflPlay rows (bulk upsert on (game_id, play_id))
+      - player_splits -> merged into each player's EXISTING PlayerGameStat
+        .stats_json as new category keys ('rushing_splits',
+        'receiving_splits', 'passing_splits') — ADDITIVE, existing
+        categories (from ingest_player_stats) are preserved, not
+        overwritten. Only merges into a row that already exists (expects
+        ingest_player_stats() to have run first for this game, same order
+        every caller already uses) — this never creates a sparse
+        PlayerGameStat row of its own.
+      - team_allowed -> merged into each team's EXISTING TeamGameStat row
+        (long_plays_allowed/redzone_trips_allowed/redzone_tds_allowed),
+        same match-only behavior, expects ingest_team_game() first.
+
+    Call this with the SAME `summary` ingest_player_stats() already
+    parsed a boxscore from — zero extra fetches (see nfl_playbyplay_api.py
+    and nfl_boxscore_api.get_live_summary() for the shared-cache path
+    backfill callers use to get that same summary without a second
+    request).
+
+    Idempotent: NflPlay rows upsert on their own unique constraint; the
+    stats_json merge and TeamGameStat column updates just overwrite with
+    the freshly re-parsed values on every call, safe to re-run (self-heal,
+    backfill re-runs, etc.)."""
+    import json as _json
+    import nfl_playbyplay_api
+    from app import app as flask_app, db, PlayerGameStat, TeamGameStat, NflPlay
+
+    result = nfl_playbyplay_api.parse_play_splits(summary)
+    if not result['raw_plays'] and not result['player_splits'] and not result['team_allowed']:
+        return
+
+    with flask_app.app_context():
+        existing_play_ids = {
+            r.play_id for r in NflPlay.query.filter_by(game_id=event_id).with_entities(NflPlay.play_id).all()
+        }
+        for p in result['raw_plays']:
+            if not p.get('play_id'):
+                continue
+            if p['play_id'] in existing_play_ids:
+                NflPlay.query.filter_by(game_id=event_id, play_id=p['play_id']).update({
+                    'drive_id': p['drive_id'], 'sequence_number': p['sequence_number'],
+                    'season': season, 'game_date': game_date_et,
+                    'offense_team_id': p['offense_team_id'], 'defense_team_id': p['defense_team_id'],
+                    'play_type': p['play_type'], 'text': p['text'],
+                    'down': p['down'], 'distance': p['distance'], 'yards_to_endzone': p['yards_to_endzone'],
+                    'yards_gained': p['yards_gained'], 'is_scoring_play': p['is_scoring_play'],
+                    'is_redzone': p['is_redzone'], 'is_turnover': p['is_turnover'], 'is_no_play': p['is_no_play'],
+                    'period': p['period'], 'clock': p['clock'],
+                    'pass_depth': p['pass_depth'], 'yards_after_catch': p['yards_after_catch'],
+                    'passer_id': p['passer_id'], 'rusher_id': p['rusher_id'], 'receiver_id': p['receiver_id'],
+                    'penalty_team_id': p['penalty_team_id'], 'penalty_player_id': p['penalty_player_id'],
+                    'penalty_type': p['penalty_type'], 'penalty_yards': p['penalty_yards'],
+                    'penalty_status': p['penalty_status'],
+                })
+            else:
+                db.session.add(NflPlay(
+                    game_id=event_id, play_id=p['play_id'], drive_id=p['drive_id'],
+                    sequence_number=p['sequence_number'], season=season, game_date=game_date_et,
+                    offense_team_id=p['offense_team_id'], defense_team_id=p['defense_team_id'],
+                    play_type=p['play_type'], text=p['text'],
+                    down=p['down'], distance=p['distance'], yards_to_endzone=p['yards_to_endzone'],
+                    yards_gained=p['yards_gained'], is_scoring_play=p['is_scoring_play'],
+                    is_redzone=p['is_redzone'], is_turnover=p['is_turnover'], is_no_play=p['is_no_play'],
+                    period=p['period'], clock=p['clock'],
+                    pass_depth=p['pass_depth'], yards_after_catch=p['yards_after_catch'],
+                    passer_id=p['passer_id'], rusher_id=p['rusher_id'], receiver_id=p['receiver_id'],
+                    penalty_team_id=p['penalty_team_id'], penalty_player_id=p['penalty_player_id'],
+                    penalty_type=p['penalty_type'], penalty_yards=p['penalty_yards'],
+                    penalty_status=p['penalty_status'],
+                ))
+
+        for player_id, splits in result['player_splits'].items():
+            row = PlayerGameStat.query.filter_by(sport='NFL', game_id=event_id, player_id=player_id).first()
+            if row is None:
+                continue
+            try:
+                cats = _json.loads(row.stats_json) if row.stats_json else {}
+            except (TypeError, ValueError):
+                cats = {}
+            if splits['rush_att']:
+                cats['rushing_splits'] = {k: v for k, v in splits.items() if k.startswith('rush') or k.startswith('long_rush') or k.startswith('redzone_rush')}
+            if splits['targets']:
+                cats['receiving_splits'] = {k: v for k, v in splits.items()
+                                             if k in ('targets', 'receptions', 'rec_yds', 'rec_td', 'yac',
+                                                      'deep_tgt', 'deep_rec', 'deep_rec_yds',
+                                                      'short_tgt', 'short_rec', 'short_rec_yds',
+                                                      'redzone_tgt', 'redzone_rec_td')}
+            if splits['pass_att'] or splits['sacks_taken']:
+                cats['passing_splits'] = {k: v for k, v in splits.items()
+                                           if k.startswith('pass_') or k.startswith('deep_pass') or
+                                              k.startswith('short_pass') or k.startswith('redzone_pass') or
+                                              k == 'sacks_taken'}
+            row.stats_json = _json.dumps(cats)
+
+        for team_id, allowed in result['team_allowed'].items():
+            trow = TeamGameStat.query.filter_by(sport='NFL', game_id=event_id, team_id=team_id).first()
+            if trow is None:
+                continue
+            trow.long_plays_allowed = allowed['long_plays_allowed']
+            trow.redzone_trips_allowed = allowed['redzone_trips_allowed']
+            trow.redzone_tds_allowed = allowed['redzone_tds_allowed']
+
+        db.session.commit()
+
+
+def ingest_weather(event_id, weather):
+    """weather: nfl_api._parse_weather()'s output ({'temp', 'gust_mph',
+    'precip_pct'} or None). Stamps it onto BOTH teams' EXISTING
+    TeamGameStat rows for this game (match-only, same convention as
+    ingest_play_by_play's TeamGameStat update — expects ingest_team_game()
+    to have already created them). A no-op if `weather` is None (dome/
+    retractable roof, or ESPN simply has nothing for this game right now)
+    — never writes a row of zeros that would be indistinguishable from
+    "not captured yet"."""
+    if not weather:
+        return
+    from app import app as flask_app, db, TeamGameStat
+
+    with flask_app.app_context():
+        rows = TeamGameStat.query.filter_by(sport='NFL', game_id=event_id).all()
+        for row in rows:
+            row.weather_temp = weather.get('temp')
+            row.weather_wind_mph = weather.get('gust_mph')
+            row.weather_precip_pct = weather.get('precip_pct')
+        db.session.commit()
+
+
 def get_player_gamelog_db(player_id, before_date=None, limit=None):
     """Returns this player's stored games, newest first: [{event_id, date,
     team_id, opponent_id, is_home, position, categories}] where
