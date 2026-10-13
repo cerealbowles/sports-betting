@@ -873,6 +873,8 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
                 nfl_stats_db.ingest_player_stats(
                     event.get('id'), game_date_et, _get_nfl_season(), game_type,
                     home.get('id'), away.get('id'), player_boxscore)
+                nfl_stats_db.ingest_team_defense_vs_position(
+                    event.get('id'), home.get('id'), away.get('id'), player_boxscore)
         except Exception:
             pass
 

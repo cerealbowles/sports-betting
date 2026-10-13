@@ -108,6 +108,8 @@ def backfill(season, week_start, week_end, seasontype=2, dry_run=False):
                     nfl_stats_db.ingest_player_stats(
                         event.get('id'), game_date_et, season, game_type,
                         home_id, away_id, player_boxscore)
+                    nfl_stats_db.ingest_team_defense_vs_position(
+                        event.get('id'), home_id, away_id, player_boxscore)
             total_games += 1
 
         if not found_any and week > 3:

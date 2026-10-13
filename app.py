@@ -300,6 +300,18 @@ class TeamGameStat(db.Model):
   points        = db.Column(db.Float)
   points_allowed = db.Column(db.Float)
   won           = db.Column(db.Boolean)
+  # NFL-only "defense vs position" line for this one game: FanDuel fantasy
+  # points this team's defense allowed to the OPPOSING offense's players,
+  # bucketed the same way nfl_fantasy.classify_bucket()/ROSTER_BUCKET
+  # group projections (QB / RB / REC-combined WR+TE) — not populated for
+  # other sports, same "only use what applies" convention as fga/fgm above
+  # being basketball-only. Written by nfl_stats_db.ingest_team_defense_vs_
+  # position() from the same box score ingest_player_stats() already
+  # fetches, so no extra API calls. See that function's docstring for why
+  # this is a derived/stored column rather than recomputed on demand.
+  fpts_allowed_qb  = db.Column(db.Float)
+  fpts_allowed_rb  = db.Column(db.Float)
+  fpts_allowed_rec = db.Column(db.Float)
   created_at    = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -491,6 +503,9 @@ def ensure_column_exists():
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
+    _add('team_game_stats',  'fpts_allowed_qb',    'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'fpts_allowed_rb',    'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'fpts_allowed_rec',   'FLOAT DEFAULT NULL')
     _add('player_game_stats', 'position',          'TEXT DEFAULT NULL')
     _add('player_game_stats', 'stats_json',        'TEXT DEFAULT NULL')
     _add('game_predictions', 'blended_spread_cover_prob', 'FLOAT DEFAULT NULL')

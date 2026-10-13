@@ -126,6 +126,85 @@ def ingest_player_stats(event_id, game_date_et, season, game_type,
         db.session.commit()
 
 
+def ingest_team_defense_vs_position(event_id, home_id, away_id, boxscore):
+    """Computes and stores each team's fpts_allowed_qb/rb/rec for this one
+    game — the OPPOSING offense's players' real FanDuel fantasy points,
+    bucketed via nfl_fantasy.classify_bucket() (box-score ROLE that game,
+    not roster position — a WR who takes a jet-sweep carry still buckets
+    as RB for that specific stat line, matching how classify_bucket is
+    used everywhere else in this app). `boxscore`: same {team_id: [{id,
+    name, position, categories}, ...]} shape ingest_player_stats() takes —
+    call this with the SAME boxscore right after that call, no extra
+    fetch needed.
+
+    Stored rather than recomputed on demand (unlike this file's other
+    aggregation helpers — see get_team_game_aggregates_db()'s docstring)
+    because defense-vs-position is read repeatedly for matchup analysis
+    across many weeks at once, and because it was built specifically to be
+    a real, growing historical record going forward, not just a page-load
+    convenience.
+
+    Expects ingest_team_game() to have already created this game's
+    TeamGameStat rows (same per-game ingestion order nfl_stats_backfill.py
+    and app.py's live path already use) — a missing row is skipped rather
+    than created from scratch, since this function has no score/opponent-
+    name data of its own to fill one in with.
+
+    Idempotent — just an UPDATE on the existing (sport, game_id, team_id)
+    row, safe to re-run (self-heal, backfill re-runs, etc.)."""
+    if not boxscore:
+        return
+    import nfl_fantasy
+    from app import app as flask_app, db, TeamGameStat
+
+    def _fpts_by_bucket(player_rows):
+        totals = {'QB': 0.0, 'RB': 0.0, 'REC': 0.0}
+        for r in player_rows:
+            cats = r.get('categories', {})
+            bucket = nfl_fantasy.classify_bucket(cats)
+            if bucket in totals:
+                totals[bucket] += nfl_fantasy.compute_fantasy_points(cats)
+        return totals
+
+    with flask_app.app_context():
+        for team_id, opp_id in ((home_id, away_id), (away_id, home_id)):
+            opp_rows = boxscore.get(opp_id)
+            if not team_id or opp_rows is None:
+                continue
+            allowed = _fpts_by_bucket(opp_rows)
+            existing = TeamGameStat.query.filter_by(sport='NFL', game_id=event_id, team_id=team_id).first()
+            if existing is None:
+                continue
+            existing.fpts_allowed_qb  = allowed['QB']
+            existing.fpts_allowed_rb  = allowed['RB']
+            existing.fpts_allowed_rec = allowed['REC']
+        db.session.commit()
+
+
+def get_defense_vs_position_db(team_id, bucket, before_date=None, limit=8):
+    """This team's defense's stored fpts_allowed_<bucket> for its last
+    `limit` games (newest first, strictly before `before_date` if given —
+    same no-leakage convention as this module's other before_date params).
+    bucket: 'QB' | 'RB' | 'REC'. Returns a plain list of floats (an empty
+    list for a team/bucket with no stored games yet — e.g. before this
+    feature existed, or `limit` just hasn't been reached). Callers average
+    it themselves (same "raw rows in, pure-Python math by the caller"
+    convention as get_team_game_aggregates_db())."""
+    if bucket not in ('QB', 'RB', 'REC'):
+        raise ValueError(f"bucket must be 'QB', 'RB', or 'REC', got {bucket!r}")
+    from app import app as flask_app, TeamGameStat
+    col = {'QB': TeamGameStat.fpts_allowed_qb, 'RB': TeamGameStat.fpts_allowed_rb,
+           'REC': TeamGameStat.fpts_allowed_rec}[bucket]
+
+    with flask_app.app_context():
+        q = TeamGameStat.query.filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id == team_id,
+                                       col.isnot(None))
+        if before_date:
+            q = q.filter(TeamGameStat.game_date < before_date)
+        rows = q.order_by(TeamGameStat.game_date.desc()).limit(limit).all()
+        return [getattr(r, f'fpts_allowed_{bucket.lower()}') for r in rows]
+
+
 def get_player_gamelog_db(player_id, before_date=None, limit=None):
     """Returns this player's stored games, newest first: [{event_id, date,
     team_id, opponent_id, is_home, position, categories}] where
