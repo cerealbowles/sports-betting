@@ -6176,6 +6176,48 @@ def _nfl_team_abbrev_map():
       pass
   return _nfl_team_abbrev_cache['data'] or {}
 
+NFL_CARD_RECENT_WINDOW = 5  # matches Phase 1 plan's suggested recent-window size
+
+def _nfl_dst_card_context(team_id, opponent_team_id, season):
+  """Builds the two sections a D/ST player-detail card needs: this team's
+  OWN defensive production (recent window vs. season-to-date, so the card
+  can show a trend, not just one number — see get_dst_card_data_db()'s
+  docstring for why that's a single batched read, not one query per
+  metric) and the opposing offense's own recent output. Keeping these as
+  clearly separate dicts mirrors the Phase 1 plan's "D/ST cards show their
+  own defensive stats and separately show the opposing offense"
+  requirement — upstream of this, nothing here feeds the projection, same
+  display-only convention as the sentiment/splits/explosiveness blocks
+  already on this card.
+
+  Returns (own_defense, opponent_offense). own_defense = {'recent':
+  {...per-game averages, 'games': N} or None, 'season': {...same shape} or
+  None} — a side is None if that team has zero stored games in that
+  window (see get_dst_card_data_db()). opponent_offense = {...per-game
+  averages, 'games': N} or None."""
+  own_defense = nfl_stats_db.get_dst_card_data_db(team_id, season, recent_window=NFL_CARD_RECENT_WINDOW)
+  if own_defense['recent'] is None and own_defense['season'] is None:
+    own_defense = None
+
+  opponent_offense = None
+  if opponent_team_id:
+    offense_list, _ = nfl_stats_db.get_team_game_aggregates_db(opponent_team_id, limit=NFL_CARD_RECENT_WINDOW)
+    if offense_list:
+      games = len(offense_list)
+      opponent_offense = {
+        'games': games,
+        'pass_att_pg': sum(o['pass_att'] for o in offense_list) / games,
+        'pass_yds_pg': sum(o['pass_yds'] for o in offense_list) / games,
+        'pass_td_pg': sum(o['pass_td'] for o in offense_list) / games,
+        'rush_att_pg': sum(o['rush_att'] for o in offense_list) / games,
+        'rush_yds_pg': sum(o['rush_yds'] for o in offense_list) / games,
+        'recv_tgt_pg': sum(o['recv_tgt'] for o in offense_list) / games,
+        'recv_yds_pg': sum(o['recv_yds'] for o in offense_list) / games,
+        'giveaways_pg': sum(o['giveaways'] for o in offense_list) / games,
+      }
+  return own_defense, opponent_offense
+
+
 @app.route('/nfl/players')
 def nfl_players():
   """Player rankings for one NFL week — every skill player/DST in that
@@ -6259,8 +6301,30 @@ def nfl_player_detail(player_id):
 
   abbrev_to_team_id = {v: k for k, v in team_abbrevs.items()}
   opponent_team_id = abbrev_to_team_id.get(player.get('opponent'))
-  if opponent_team_id:
-    opponent_explosiveness = nfl_stats_db.get_team_explosiveness_db(opponent_team_id, limit=8)
+  season = nfl_api._get_nfl_season()
+
+  dst_own_defense = dst_opponent_offense = None
+  opponent_defense = None
+  if is_dst:
+    own_team_id = player_id[len('DST_'):]
+    dst_own_defense, dst_opponent_offense = _nfl_dst_card_context(own_team_id, opponent_team_id, season)
+    if opponent_team_id:
+      # Low-value for a DST card (the opposing team's own defensive
+      # explosiveness doesn't bear on this DST's matchup — dst_opponent_
+      # offense above is what actually matters here) but kept as the
+      # pre-existing generic block rather than removed, out of scope for
+      # this pass.
+      opponent_explosiveness = nfl_stats_db.get_team_explosiveness_db(opponent_team_id, limit=8)
+  elif opponent_team_id:
+    # Richer opponent-defense read for an OFFENSIVE player's card: red-zone
+    # TD rate/explosive plays allowed (recent vs. season) plus rushing/
+    # receiving/passing yards and TDs allowed broken out by position
+    # bucket — see get_opponent_defense_card_data_db()'s docstring for the
+    # QB/RB/REC(WR+TE) grouping this is limited to.
+    opponent_defense = nfl_stats_db.get_opponent_defense_card_data_db(
+      opponent_team_id, season, recent_window=NFL_CARD_RECENT_WINDOW)
+    if opponent_defense['recent'] is None and opponent_defense['season'] is None:
+      opponent_defense = None
 
   if games:
     week_dates = [nfl_api._event_date_et(g['game_time_utc']) for g in games]
@@ -6278,7 +6342,9 @@ def nfl_player_detail(player_id):
   return render_template('_nfl_player_detail.html', player=player, position_rank=position_rank,
                           is_dst=is_dst, gamelog=gamelog, sentiment_score=sentiment_score,
                           articles=articles, week_start=week_start, week_end=week_end,
-                          splits=splits, opponent_explosiveness=opponent_explosiveness)
+                          splits=splits, opponent_explosiveness=opponent_explosiveness,
+                          dst_own_defense=dst_own_defense, dst_opponent_offense=dst_opponent_offense,
+                          opponent_defense=opponent_defense)
 
 @app.route('/cfb')
 def cfb_schedule():

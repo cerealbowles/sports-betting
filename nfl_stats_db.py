@@ -431,6 +431,208 @@ def get_team_explosiveness_db(team_id, before_date=None, limit=8):
         } for r in rows]
 
 
+def get_dst_card_data_db(team_id, season, before_date=None, recent_window=5):
+    """Single-pass batched read for a D/ST player-detail card: this team's
+    own game results (points allowed), explosiveness (long plays/red-zone
+    trips/TDs allowed) and fantasy-points-allowed-by-position all live on
+    TeamGameStat, so ONE query covers all of them; a second query covers
+    the team's own box-score defensive production (sacks/TFL/takeaways/
+    pass-defended), grouped into per-game aggregates the same way
+    get_team_game_aggregates_db() does. Two queries total, not one per
+    metric — a caller that queried each metric separately (explosiveness,
+    fpts-by-bucket x3, results, defense aggregates, x2 for recent+season)
+    was confirmed live to exhaust this app's small SQLAlchemy connection
+    pool when the background cache-warmer thread was also busy (a
+    QueuePool timeout) — same lesson get_fantasy_pool_data_db()'s
+    docstring documents for the weekly pool build.
+
+    Returns {'recent': {...per-game averages} or None, 'season': {...} or
+    None} — 'recent' = this team's last `recent_window` stored games
+    regardless of season (matches the rest of this card's "last N games"
+    convention); 'season' = every stored game from `season` only (so an
+    early-season read doesn't quietly pull in last year's games) — None
+    for either side with zero games in that window, never a dict of
+    zeros, so the caller can't mistake "no games" for "allowed nothing."
+    Each averaged dict also reports its own denominators ('games',
+    'redzone_trips_allowed', etc.) so a small sample is visible, not
+    hidden behind a smooth-looking average."""
+    import nfl_player_model as pm
+    from app import app as flask_app, TeamGameStat, PlayerGameStat
+
+    with flask_app.app_context():
+        tq = TeamGameStat.query.filter_by(sport='NFL', team_id=team_id)
+        if before_date:
+            tq = tq.filter(TeamGameStat.game_date < before_date)
+        team_rows = tq.order_by(TeamGameStat.game_date.desc()).all()
+
+        pq = PlayerGameStat.query.filter_by(sport='NFL', team_id=team_id)
+        if before_date:
+            pq = pq.filter(PlayerGameStat.game_date < before_date)
+        player_rows = pq.order_by(PlayerGameStat.game_date.desc()).all()
+
+    by_game = {}
+    game_order = []
+    for r in player_rows:
+        if r.game_id not in by_game:
+            by_game[r.game_id] = []
+            game_order.append(r.game_id)
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        by_game[r.game_id].append({'categories': categories})
+    defense_by_game = {}
+    for game_id in game_order:
+        _, defn = pm.parse_team_game_aggregate(by_game[game_id])
+        defense_by_game[game_id] = defn
+
+    def _summarize(rows):
+        games = len(rows)
+        if not games:
+            return None
+        rz_rows = [r for r in rows if r.long_plays_allowed is not None]
+        n_rz = len(rz_rows)
+        redzone_trips = sum(r.redzone_trips_allowed or 0 for r in rz_rows)
+        redzone_tds = sum(r.redzone_tds_allowed or 0 for r in rz_rows)
+        fpts_qb = [r.fpts_allowed_qb for r in rows if r.fpts_allowed_qb is not None]
+        fpts_rb = [r.fpts_allowed_rb for r in rows if r.fpts_allowed_rb is not None]
+        fpts_rec = [r.fpts_allowed_rec for r in rows if r.fpts_allowed_rec is not None]
+        defn_games = [defense_by_game[r.game_id] for r in rows if r.game_id in defense_by_game]
+        n_def = len(defn_games)
+        return {
+            'games': games,
+            'points_allowed_pg': sum(r.points_allowed or 0 for r in rows) / games,
+            'sacks_pg': sum(d['sacks'] for d in defn_games) / n_def if n_def else None,
+            'tfl_pg': sum(d['tfl'] for d in defn_games) / n_def if n_def else None,
+            'takeaways_pg': sum(d['takeaways'] for d in defn_games) / n_def if n_def else None,
+            'pass_defended_pg': sum(d['pass_defended'] for d in defn_games) / n_def if n_def else None,
+            'redzone_games': n_rz,
+            'redzone_trips_allowed': redzone_trips,
+            'redzone_tds_allowed': redzone_tds,
+            'redzone_td_rate': redzone_tds / redzone_trips if redzone_trips else None,
+            'long_plays_allowed_pg': sum(r.long_plays_allowed or 0 for r in rz_rows) / n_rz if n_rz else None,
+            'fpts_allowed_qb_pg': sum(fpts_qb) / len(fpts_qb) if fpts_qb else None,
+            'fpts_allowed_rb_pg': sum(fpts_rb) / len(fpts_rb) if fpts_rb else None,
+            'fpts_allowed_rec_pg': sum(fpts_rec) / len(fpts_rec) if fpts_rec else None,
+        }
+
+    recent_rows = team_rows[:recent_window]
+    season_rows = [r for r in team_rows if r.season == season] if season else []
+    return {'recent': _summarize(recent_rows), 'season': _summarize(season_rows)}
+
+
+def get_opponent_defense_card_data_db(team_id, season, before_date=None, recent_window=5):
+    """Single-pass batched read for the opponent-defense section of an
+    OFFENSIVE player's card: red-zone/explosive-play allowed (one
+    TeamGameStat query, same columns get_dst_card_data_db() reads) plus
+    rushing/receiving/passing yards and TDs allowed broken out by the
+    opposing player's own position BUCKET (one NflPlay query + one batched
+    PlayerGameStat lookup to classify each participant) — three queries
+    total, not one per metric, same pool-exhaustion lesson documented on
+    get_dst_card_data_db().
+
+    bucket: 'QB' | 'RB' | 'REC' (WR+TE combined — see classify_bucket()'s
+    docstring; ESPN's box score carries no position field, so a true WR/TE
+    split isn't reliable from stored data). A participant's bucket is
+    decided from THEIR OWN categories in THAT SAME game (same convention
+    fpts_allowed_qb/rb/rec already uses) — a play with an unresolved
+    participant (nfl_playbyplay_api.py's documented attribution gap) or an
+    unclassifiable bucket (None) is simply not counted toward any bucket,
+    not guessed.
+
+    A TD/yardage figure is credited to EVERY position it's real for — a
+    passing TD play adds to both the passer's QB line (passing yards/TD)
+    and the receiver's RB/REC line (receiving yards/TD), mirroring how
+    fpts_allowed_qb and fpts_allowed_rec both already count the same play
+    from each side's own fantasy scoring.
+
+    Returns {'recent': {...} or None, 'season': {...} or None} — each side
+    is {'games', 'redzone_trips_allowed', 'redzone_tds_allowed',
+    'redzone_td_rate', 'long_plays_allowed_pg', 'QB': {'pass_yds',
+    'pass_td'}, 'RB': {'rush_yds', 'rush_td', 'rec_yds', 'rec_td',
+    'receptions'}, 'REC': {'rec_yds', 'rec_td', 'receptions'}} — None for
+    either side with zero stored games in that window."""
+    import nfl_fantasy
+    from app import app as flask_app, TeamGameStat, NflPlay, PlayerGameStat
+
+    with flask_app.app_context():
+        tq = TeamGameStat.query.filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id == team_id,
+                                        TeamGameStat.long_plays_allowed.isnot(None))
+        if before_date:
+            tq = tq.filter(TeamGameStat.game_date < before_date)
+        team_rows = tq.order_by(TeamGameStat.game_date.desc()).all()
+
+        pq = NflPlay.query.filter_by(defense_team_id=team_id)
+        if before_date:
+            pq = pq.filter(NflPlay.game_date < before_date)
+        plays = pq.order_by(NflPlay.game_date.desc()).all()
+
+        game_ids = {p.game_id for p in plays}
+        pgs_rows = (PlayerGameStat.query.filter(PlayerGameStat.sport == 'NFL',
+                                                  PlayerGameStat.game_id.in_(game_ids)).all()
+                    if game_ids else [])
+        cats_by_player_game = {}
+        for r in pgs_rows:
+            try:
+                cats_by_player_game[(r.player_id, r.game_id)] = json.loads(r.stats_json) if r.stats_json else {}
+            except (TypeError, ValueError):
+                cats_by_player_game[(r.player_id, r.game_id)] = {}
+
+    bucket_cache = {}
+    def _bucket(player_id, game_id):
+        key = (player_id, game_id)
+        if key not in bucket_cache:
+            bucket_cache[key] = nfl_fantasy.classify_bucket(cats_by_player_game.get(key))
+        return bucket_cache[key]
+
+    def _zero_bucket_stats():
+        return {'rush_yds': 0.0, 'rush_td': 0, 'rec_yds': 0.0, 'rec_td': 0,
+                'receptions': 0, 'pass_yds': 0.0, 'pass_td': 0}
+
+    def _summarize(rows, by_game):
+        games = len(rows)
+        if not games:
+            return None
+        redzone_trips = sum(r.redzone_trips_allowed or 0 for r in rows)
+        redzone_tds = sum(r.redzone_tds_allowed or 0 for r in rows)
+        stats = {'QB': _zero_bucket_stats(), 'RB': _zero_bucket_stats(), 'REC': _zero_bucket_stats()}
+        game_ids_in_window = {r.game_id for r in rows}
+        for p in by_game:
+            if p.game_id not in game_ids_in_window or p.is_no_play:
+                continue
+            if p.rusher_id:
+                b = _bucket(p.rusher_id, p.game_id)
+                if b in stats:
+                    stats[b]['rush_yds'] += p.yards_gained or 0
+                    if p.is_scoring_play and p.play_type == 'Rushing Touchdown':
+                        stats[b]['rush_td'] += 1
+            if p.receiver_id and p.play_type in ('Pass Reception', 'Passing Touchdown'):
+                b = _bucket(p.receiver_id, p.game_id)
+                if b in stats:
+                    stats[b]['rec_yds'] += p.yards_gained or 0
+                    stats[b]['receptions'] += 1
+                    if p.is_scoring_play and p.play_type == 'Passing Touchdown':
+                        stats[b]['rec_td'] += 1
+            if p.passer_id and p.play_type in ('Pass Reception', 'Pass Incompletion', 'Passing Touchdown'):
+                b = _bucket(p.passer_id, p.game_id)
+                if b in stats:
+                    stats[b]['pass_yds'] += p.yards_gained or 0
+                    if p.is_scoring_play and p.play_type == 'Passing Touchdown':
+                        stats[b]['pass_td'] += 1
+        return {
+            'games': games,
+            'redzone_trips_allowed': redzone_trips,
+            'redzone_tds_allowed': redzone_tds,
+            'redzone_td_rate': redzone_tds / redzone_trips if redzone_trips else None,
+            'long_plays_allowed_pg': sum(r.long_plays_allowed or 0 for r in rows) / games,
+            'QB': stats['QB'], 'RB': stats['RB'], 'REC': stats['REC'],
+        }
+
+    recent_rows = team_rows[:recent_window]
+    season_rows = [r for r in team_rows if r.season == season] if season else []
+    return {'recent': _summarize(recent_rows, plays), 'season': _summarize(season_rows, plays)}
+
+
 def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
     """Returns (offense_list, defense_list) — up to `limit` of this team's
     most recent games, newest first, each already collapsed to one team-
@@ -538,8 +740,27 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date, before_date=None)
     }
     All grouping/aggregation beyond this (rolling averages, offense/
     defense grades, DST scoring) is pure-Python work the caller does with
-    nfl_player_model/nfl_fantasy — no further DB calls needed."""
-    from app import app as flask_app, InjuryStatus, TeamGameStat, PlayerGameStat
+    nfl_player_model/nfl_fantasy — no further DB calls needed.
+
+    PERFORMANCE: both the per-player and per-team PlayerGameStat reads are
+    bounded to the `window` games each actually needs — neither
+    rolling_average() (nfl_fantasy.py) nor compute_offense_grade()/
+    compute_defense_grade() (nfl_player_model.py) ever look past the first
+    `window` entries of what this returns. Confirmed live this was NOT the
+    case before: the per-player query had no cap at all, pulling a
+    player's ENTIRE stored history (every season on record) just to use
+    the first 5 rows — profiled on a 300+ player pool at ~44K PlayerGameStat
+    rows fetched and JSON-decoded for ~1,500 actually used, ~2.4s of a
+    ~2.6s build_player_pool() call. The per-player cap below uses a
+    ROW_NUMBER() OVER (PARTITION BY player_id ...) window function (SQLite
+    3.25+, confirmed available) so "last `window` games per player" is
+    computed in SQL instead of fetched-then-discarded in Python. The
+    per-team read is bounded the same way as before (via team_rows' own
+    already-capped recent_game_ids) but now filters directly by those
+    game_ids instead of first pulling a team's full roster history."""
+    from sqlalchemy import func
+    from sqlalchemy.orm import aliased
+    from app import app as flask_app, db, InjuryStatus, TeamGameStat, PlayerGameStat
 
     window = 5  # matches nfl_player_model.QB_WINDOW/DEF_WINDOW and nfl_fantasy.ROLLING_WINDOW
     team_ids = list(team_ids)
@@ -557,17 +778,43 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date, before_date=None)
             team_q = team_q.filter(TeamGameStat.game_date < before_date)
         team_rows = team_q.order_by(TeamGameStat.game_date.desc()).all() if team_ids else []
 
-        player_q = PlayerGameStat.query.filter(PlayerGameStat.sport == 'NFL',
-                                                PlayerGameStat.player_id.in_(player_ids))
-        if before_date:
-            player_q = player_q.filter(PlayerGameStat.game_date < before_date)
-        player_rows = player_q.order_by(PlayerGameStat.game_date.desc()).all() if player_ids else []
+        # Each team's most recent `window` game_ids, in order — TeamGameStat
+        # has exactly one row per (team, game), already date-desc, so this is
+        # just a straight slice per team. Computed here (before the
+        # per-player box-score reads below) so the team-roster read can
+        # filter directly to these game_ids instead of pulling full history.
+        recent_game_ids = defaultdict(list)
+        points_allowed_by_game = {}
+        for r in team_rows:
+            if len(recent_game_ids[r.team_id]) < window:
+                recent_game_ids[r.team_id].append(r.game_id)
+            points_allowed_by_game[(r.team_id, r.game_id)] = r.points_allowed
+        all_recent_game_ids = {gid for gids in recent_game_ids.values() for gid in gids}
 
-        team_player_q = PlayerGameStat.query.filter(PlayerGameStat.sport == 'NFL',
-                                                     PlayerGameStat.team_id.in_(team_ids))
-        if before_date:
-            team_player_q = team_player_q.filter(PlayerGameStat.game_date < before_date)
-        team_player_rows = team_player_q.order_by(PlayerGameStat.game_date.desc()).all() if team_ids else []
+        player_rows = []
+        if player_ids:
+            rn = func.row_number().over(
+                partition_by=PlayerGameStat.player_id,
+                order_by=PlayerGameStat.game_date.desc(),
+            ).label('rn')
+            ranked_q = db.session.query(PlayerGameStat, rn).filter(
+                PlayerGameStat.sport == 'NFL', PlayerGameStat.player_id.in_(player_ids))
+            if before_date:
+                ranked_q = ranked_q.filter(PlayerGameStat.game_date < before_date)
+            ranked_sub = ranked_q.subquery()
+            PGSRanked = aliased(PlayerGameStat, ranked_sub)
+            player_rows = (db.session.query(PGSRanked)
+                            .filter(ranked_sub.c.rn <= window)
+                            .order_by(ranked_sub.c.rn)
+                            .all())
+
+        team_player_rows = []
+        if team_ids and all_recent_game_ids:
+            team_player_rows = (PlayerGameStat.query
+                                 .filter(PlayerGameStat.sport == 'NFL',
+                                         PlayerGameStat.team_id.in_(team_ids),
+                                         PlayerGameStat.game_id.in_(all_recent_game_ids))
+                                 .all())
 
     # Latest-per-player injury status, same "first row seen wins" rule as
     # get_latest_injury_status (date-desc order), bucketed by team.
@@ -589,16 +836,6 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date, before_date=None)
     player_games = defaultdict(list)
     for r in player_rows:
         player_games[r.player_id].append({'categories': _cats(r.stats_json)})
-
-    # Each team's most recent `window` game_ids, in order — TeamGameStat
-    # has exactly one row per (team, game), already date-desc, so this is
-    # just a straight slice per team.
-    recent_game_ids = defaultdict(list)
-    points_allowed_by_game = {}
-    for r in team_rows:
-        if len(recent_game_ids[r.team_id]) < window:
-            recent_game_ids[r.team_id].append(r.game_id)
-        points_allowed_by_game[(r.team_id, r.game_id)] = r.points_allowed
 
     rows_by_team_game = defaultdict(list)
     for r in team_player_rows:
