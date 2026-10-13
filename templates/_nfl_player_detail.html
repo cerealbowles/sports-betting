@@ -38,6 +38,53 @@
     <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for this player yet.</p>
     {% endif %}
 
+    {% if splits and (splits.rushing or splits.receiving or splits.passing) %}
+    <div class="dfs-pool-pos-hdr">Usage splits, last {{ splits.games }} games</div>
+    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. "Long" = 10+ yard run; pass depth (short/deep) is ESPN's own play-by-play tag.</p>
+    <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; font-size: 0.82rem;">
+        {% if splits.rushing %}
+        {% set r = splits.rushing %}
+        <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
+            <strong>Rushing</strong> — {{ r.rush_att|int }} att, {{ r.rush_yds|int }} yds
+            ({{ '%.1f'|format(r.rush_yds / r.rush_att if r.rush_att else 0) }} YPC), {{ r.rush_td|int }} TD<br>
+            <span style="color: var(--text-muted);">{{ r.long_rush_att|int }} long runs ({{ '%.0f'|format(r.long_rush_att / r.rush_att * 100 if r.rush_att else 0) }}% of carries) ·
+            {{ r.redzone_rush_att|int }} red-zone carries, {{ r.redzone_rush_td|int }} TD</span>
+        </div>
+        {% endif %}
+        {% if splits.receiving %}
+        {% set c = splits.receiving %}
+        <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
+            <strong>Receiving</strong> — {{ c.targets|int }} tgt, {{ c.receptions|int }} rec
+            ({{ '%.0f'|format(c.receptions / c.targets * 100 if c.targets else 0) }}%), {{ c.rec_yds|int }} yds, {{ c.rec_td|int }} TD<br>
+            {% set total_rec_yds = c.deep_rec_yds + c.short_rec_yds %}
+            <span style="color: var(--text-muted);">{{ '%.0f'|format(c.deep_rec_yds / total_rec_yds * 100 if total_rec_yds else 0) }}% of yards via deep targets ·
+            {{ c.redzone_tgt|int }} red-zone targets, {{ c.redzone_rec_td|int }} TD</span>
+        </div>
+        {% endif %}
+        {% if splits.passing %}
+        {% set p = splits.passing %}
+        <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
+            <strong>Passing</strong> — {{ p.pass_att|int }} att, {{ p.pass_comp|int }} comp
+            ({{ '%.0f'|format(p.pass_comp / p.pass_att * 100 if p.pass_att else 0) }}%), {{ p.pass_yds|int }} yds, {{ p.pass_td|int }} TD, {{ p.sacks_taken|int }} sacks<br>
+            <span style="color: var(--text-muted);">{{ p.deep_pass_att|int }} deep attempts ({{ '%.0f'|format(p.deep_pass_comp / p.deep_pass_att * 100 if p.deep_pass_att else 0) }}% complete)</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if opponent_explosiveness %}
+    {% set total_games = opponent_explosiveness|length %}
+    {% set total_long = opponent_explosiveness|sum(attribute='long_plays_allowed') %}
+    {% set total_trips = opponent_explosiveness|sum(attribute='redzone_trips_allowed') %}
+    {% set total_tds = opponent_explosiveness|sum(attribute='redzone_tds_allowed') %}
+    <div class="dfs-pool-pos-hdr">{{ player.opponent }} defense, last {{ total_games }} games</div>
+    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above.</p>
+    <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.82rem; color: var(--text-muted);">
+        {{ '%.1f'|format(total_long / total_games if total_games else 0) }} explosive plays allowed/game ·
+        {{ total_trips|int }} red-zone trips allowed, {{ total_tds|int }} TD ({{ '%.0f'|format(total_tds / total_trips * 100 if total_trips else 0) }}% TD rate)
+    </div>
+    {% endif %}
+
     <div class="dfs-pool-pos-hdr">
         News coverage, Week {{ week_start }} – {{ week_end }}
         {% if sentiment_score is not none %}

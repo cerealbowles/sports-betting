@@ -6242,14 +6242,25 @@ def nfl_player_detail(player_id):
 
   is_dst = player['position'] == 'DST'
   gamelog = []
+  splits = None
+  opponent_explosiveness = None
+  team_abbrevs = _nfl_team_abbrev_map()
   if not is_dst:
-    team_abbrevs = _nfl_team_abbrev_map()
     for g in nfl_stats_db.get_player_gamelog_db(player_id, limit=8):
       gamelog.append({
         'date': g['date'], 'is_home': g['is_home'],
         'opponent': team_abbrevs.get(g['opponent_id'], g['opponent_id']),
         'fantasy_points': nfl_fantasy.compute_fantasy_points(g['categories']),
       })
+    # Display-only context (see get_player_splits_summary_db()'s docstring
+    # for why this doesn't feed the projection) — long/short run-pass
+    # splits, red-zone usage, same pattern as the sentiment block below.
+    splits = nfl_stats_db.get_player_splits_summary_db(player_id, limit=8)
+
+  abbrev_to_team_id = {v: k for k, v in team_abbrevs.items()}
+  opponent_team_id = abbrev_to_team_id.get(player.get('opponent'))
+  if opponent_team_id:
+    opponent_explosiveness = nfl_stats_db.get_team_explosiveness_db(opponent_team_id, limit=8)
 
   if games:
     week_dates = [nfl_api._event_date_et(g['game_time_utc']) for g in games]
@@ -6266,7 +6277,8 @@ def nfl_player_detail(player_id):
 
   return render_template('_nfl_player_detail.html', player=player, position_rank=position_rank,
                           is_dst=is_dst, gamelog=gamelog, sentiment_score=sentiment_score,
-                          articles=articles, week_start=week_start, week_end=week_end)
+                          articles=articles, week_start=week_start, week_end=week_end,
+                          splits=splits, opponent_explosiveness=opponent_explosiveness)
 
 @app.route('/cfb')
 def cfb_schedule():

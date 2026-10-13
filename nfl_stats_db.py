@@ -372,6 +372,65 @@ def get_player_gamelog_db(player_id, before_date=None, limit=None):
         return out
 
 
+def get_player_splits_summary_db(player_id, before_date=None, limit=8):
+    """Aggregates this player's rushing_splits/receiving_splits/
+    passing_splits (nfl_playbyplay_api.py's output, merged into
+    PlayerGameStat.stats_json by ingest_play_by_play()) across their last
+    `limit` stored games — point-in-time if `before_date` is given, same
+    no-leakage convention as this module's other before_date params.
+    Built on top of get_player_gamelog_db() rather than its own query, so
+    there's one source of truth for "this player's recent games."
+
+    Returns {'games': N, 'rushing': {...} or None, 'receiving': {...} or
+    None, 'passing': {...} or None} — a sub-dict is None if the player
+    never recorded that category in the window (e.g. a pure receiver has
+    no 'passing'), not a dict of zeros, so a caller can't mistake "never
+    attempted" for "attempted and got nothing." DISPLAY-ONLY context as of
+    this writing — see project_points()'s docstring in nfl_fantasy.py for
+    why this isn't (yet) a projection input."""
+    games = get_player_gamelog_db(player_id, before_date=before_date, limit=limit)
+    totals = {'rushing': None, 'receiving': None, 'passing': None}
+    for g in games:
+        cats = g['categories']
+        for key, label in (('rushing_splits', 'rushing'), ('receiving_splits', 'receiving'),
+                            ('passing_splits', 'passing')):
+            splits = cats.get(key)
+            if not splits:
+                continue
+            if totals[label] is None:
+                totals[label] = defaultdict(float)
+            for k, v in splits.items():
+                totals[label][k] += v
+    return {
+        'games': len(games),
+        'rushing': dict(totals['rushing']) if totals['rushing'] else None,
+        'receiving': dict(totals['receiving']) if totals['receiving'] else None,
+        'passing': dict(totals['passing']) if totals['passing'] else None,
+    }
+
+
+def get_team_explosiveness_db(team_id, before_date=None, limit=8):
+    """This team's defense's long_plays_allowed/redzone_trips_allowed/
+    redzone_tds_allowed for its last `limit` games (newest first,
+    point-in-time if `before_date` given). Returns a list of per-game
+    dicts (empty list if nothing stored yet) — same "raw rows in, caller
+    does the math" convention as get_defense_vs_position_db()."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        q = TeamGameStat.query.filter(TeamGameStat.sport == 'NFL', TeamGameStat.team_id == team_id,
+                                       TeamGameStat.long_plays_allowed.isnot(None))
+        if before_date:
+            q = q.filter(TeamGameStat.game_date < before_date)
+        rows = q.order_by(TeamGameStat.game_date.desc()).limit(limit).all()
+        return [{
+            'game_date': r.game_date,
+            'long_plays_allowed': r.long_plays_allowed,
+            'redzone_trips_allowed': r.redzone_trips_allowed,
+            'redzone_tds_allowed': r.redzone_tds_allowed,
+        } for r in rows]
+
+
 def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
     """Returns (offense_list, defense_list) — up to `limit` of this team's
     most recent games, newest first, each already collapsed to one team-
