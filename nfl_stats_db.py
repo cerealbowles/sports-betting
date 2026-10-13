@@ -337,7 +337,7 @@ def ingest_weather(event_id, weather):
 
 def get_player_gamelog_db(player_id, before_date=None, limit=None):
     """Returns this player's stored games, newest first: [{event_id, date,
-    team_id, opponent_id, is_home, position, categories}] where
+    season, team_id, opponent_id, is_home, position, categories}] where
     `categories` is the parsed stats_json dict (e.g. {'passing': {'passingYards':
     '299', ...}, ...}) — values come back as ESPN's own strings (e.g. '22/40'
     completions/attempts composites aren't split out here the way NBA's
@@ -363,6 +363,7 @@ def get_player_gamelog_db(player_id, before_date=None, limit=None):
             out.append({
                 'event_id':    r.game_id,
                 'date':        r.game_date,
+                'season':      r.season,
                 'team_id':     r.team_id,
                 'opponent_id': r.opponent_id,
                 'is_home':     r.is_home,
@@ -372,41 +373,87 @@ def get_player_gamelog_db(player_id, before_date=None, limit=None):
         return out
 
 
-def get_player_splits_summary_db(player_id, before_date=None, limit=8):
+def get_player_usage_card_data_db(player_id, team_id, season, before_date=None,
+                                   recent_window=3, history_limit=20):
     """Aggregates this player's rushing_splits/receiving_splits/
     passing_splits (nfl_playbyplay_api.py's output, merged into
-    PlayerGameStat.stats_json by ingest_play_by_play()) across their last
-    `limit` stored games — point-in-time if `before_date` is given, same
-    no-leakage convention as this module's other before_date params.
-    Built on top of get_player_gamelog_db() rather than its own query, so
-    there's one source of truth for "this player's recent games."
+    PlayerGameStat.stats_json by ingest_play_by_play()) into a recent-
+    window vs. season-to-date usage read, same split get_dst_card_data_db()/
+    get_opponent_defense_card_data_db() already give the other player-card
+    sections — see those docstrings for why "season" means every stored
+    `season` game rather than a plain limit (no cross-season leakage early
+    in a new season).
 
-    Returns {'games': N, 'rushing': {...} or None, 'receiving': {...} or
-    None, 'passing': {...} or None} — a sub-dict is None if the player
-    never recorded that category in the window (e.g. a pure receiver has
-    no 'passing'), not a dict of zeros, so a caller can't mistake "never
-    attempted" for "attempted and got nothing." DISPLAY-ONLY context as of
-    this writing — see project_points()'s docstring in nfl_fantasy.py for
-    why this isn't (yet) a projection input."""
-    games = get_player_gamelog_db(player_id, before_date=before_date, limit=limit)
-    totals = {'rushing': None, 'receiving': None, 'passing': None}
-    for g in games:
-        cats = g['categories']
-        for key, label in (('rushing_splits', 'rushing'), ('receiving_splits', 'receiving'),
-                            ('passing_splits', 'passing')):
-            splits = cats.get(key)
-            if not splits:
-                continue
-            if totals[label] is None:
-                totals[label] = defaultdict(float)
-            for k, v in splits.items():
-                totals[label][k] += v
-    return {
-        'games': len(games),
-        'rushing': dict(totals['rushing']) if totals['rushing'] else None,
-        'receiving': dict(totals['receiving']) if totals['receiving'] else None,
-        'passing': dict(totals['passing']) if totals['passing'] else None,
-    }
+    Built on top of get_player_gamelog_db() for the player's own games
+    (one query, capped at `history_limit` — plenty for both a 3-game
+    recent window and a 17-game regular season) plus ONE more query for
+    this player's TEAMMATES' receiving_splits on those same games, needed
+    only to compute target share (this player's targets / team's total
+    targets that game) — two queries total, not one per metric.
+
+    Returns {'recent': {...} or None, 'season': {...} or None} — each side
+    is {'games', 'rushing': {...} or None, 'receiving': {...} or None,
+    'passing': {...} or None, 'target_share': float or None}. A rushing/
+    receiving/passing sub-dict is None if the player never recorded that
+    category in the window (e.g. a pure receiver has no 'passing'), not a
+    dict of zeros, so a caller can't mistake "never attempted" for
+    "attempted and got nothing." target_share is None without both a
+    receiving line AND a nonzero team-targets denominator for the window.
+    DISPLAY-ONLY context, same as the rest of this card — see
+    project_points()'s docstring in nfl_fantasy.py for why this isn't
+    (yet) a projection input."""
+    games = get_player_gamelog_db(player_id, before_date=before_date, limit=history_limit)
+    game_ids = [g['event_id'] for g in games]
+
+    team_targets_by_game = defaultdict(float)
+    if game_ids:
+        from app import app as flask_app, PlayerGameStat
+        with flask_app.app_context():
+            team_rows = (PlayerGameStat.query
+                         .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.team_id == team_id,
+                                 PlayerGameStat.game_id.in_(game_ids))
+                         .all())
+        for r in team_rows:
+            try:
+                cats = json.loads(r.stats_json) if r.stats_json else {}
+            except (TypeError, ValueError):
+                cats = {}
+            recv_splits = cats.get('receiving_splits')
+            if recv_splits:
+                team_targets_by_game[r.game_id] += recv_splits.get('targets', 0)
+
+    def _summarize(window_games):
+        n = len(window_games)
+        if not n:
+            return None
+        totals = {'rushing': None, 'receiving': None, 'passing': None}
+        team_targets = 0.0
+        for g in window_games:
+            cats = g['categories']
+            for key, label in (('rushing_splits', 'rushing'), ('receiving_splits', 'receiving'),
+                                ('passing_splits', 'passing')):
+                splits = cats.get(key)
+                if not splits:
+                    continue
+                if totals[label] is None:
+                    totals[label] = defaultdict(float)
+                for k, v in splits.items():
+                    totals[label][k] += v
+            if cats.get('receiving_splits'):
+                team_targets += team_targets_by_game.get(g['event_id'], 0.0)
+        receiving = dict(totals['receiving']) if totals['receiving'] else None
+        target_share = (receiving['targets'] / team_targets) if receiving and team_targets else None
+        return {
+            'games': n,
+            'rushing': dict(totals['rushing']) if totals['rushing'] else None,
+            'receiving': receiving,
+            'passing': dict(totals['passing']) if totals['passing'] else None,
+            'target_share': target_share,
+        }
+
+    recent_games = games[:recent_window]
+    season_games = [g for g in games if g['season'] == season] if season else []
+    return {'recent': _summarize(recent_games), 'season': _summarize(season_games)}
 
 
 def get_team_explosiveness_db(team_id, before_date=None, limit=8):

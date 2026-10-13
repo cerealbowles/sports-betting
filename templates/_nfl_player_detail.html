@@ -23,7 +23,7 @@
     {% set rec = dst_own_defense.recent %}
     {% set ssn = dst_own_defense.season %}
     <div class="dfs-pool-pos-hdr" style="margin-top: 0;">{{ player.team }} defense</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far.</p>
+    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far. Defensive touchdowns and total yards allowed aren't tracked yet — only points allowed, the box-score defensive categories below, and the opposing offense's own production (next section) are available.</p>
     <table class="table" style="margin-bottom: 16px; font-size: 0.82rem;">
         <thead><tr><th></th><th>Last {{ rec.games if rec else 0 }}</th><th>Season ({{ ssn.games if ssn else 0 }})</th></tr></thead>
         <tbody>
@@ -94,12 +94,15 @@
     <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for this player yet.</p>
     {% endif %}
 
-    {% if splits and (splits.rushing or splits.receiving or splits.passing) %}
-    <div class="dfs-pool-pos-hdr">Usage splits, last {{ splits.games }} games</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. "Long" = 10+ yard run; pass depth (short/deep) is ESPN's own play-by-play tag.</p>
-    <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; font-size: 0.82rem;">
-        {% if splits.rushing %}
-        {% set r = splits.rushing %}
+    {% if splits and (splits.recent or splits.season) %}
+    <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Usage</div>
+    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. "Long" = 10+ yard run; pass depth (short/deep) is ESPN's own play-by-play tag. Target share = this player's targets ÷ the team's total targets in the same games. Goal-line (inside-5) carries, end-zone targets (as distinct from the 20-yard red-zone line above), and route participation/targets-per-route aren't tracked yet.</p>
+    {% for scope_label, s in [('Last ' ~ (splits.recent.games if splits.recent else 0) ~ ' games', splits.recent), ('Season to date (' ~ (splits.season.games if splits.season else 0) ~ ')', splits.season)] %}
+    {% if s %}
+    <div style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 10px 0 6px;">{{ scope_label }}</div>
+    <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; font-size: 0.82rem;">
+        {% if s.rushing %}
+        {% set r = s.rushing %}
         <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
             <strong>Rushing</strong> — {{ r.rush_att|int }} att, {{ r.rush_yds|int }} yds
             ({{ '%.1f'|format(r.rush_yds / r.rush_att if r.rush_att else 0) }} YPC), {{ r.rush_td|int }} TD<br>
@@ -107,25 +110,30 @@
             {{ r.redzone_rush_att|int }} red-zone carries, {{ r.redzone_rush_td|int }} TD</span>
         </div>
         {% endif %}
-        {% if splits.receiving %}
-        {% set c = splits.receiving %}
+        {% if s.receiving %}
+        {% set c = s.receiving %}
         <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
-            <strong>Receiving</strong> — {{ c.targets|int }} tgt, {{ c.receptions|int }} rec
-            ({{ '%.0f'|format(c.receptions / c.targets * 100 if c.targets else 0) }}%), {{ c.rec_yds|int }} yds, {{ c.rec_td|int }} TD<br>
+            <strong>Receiving</strong> — {{ c.targets|int }} tgt
+            {%- if s.target_share is not none %} ({{ '%.0f'|format(s.target_share * 100) }}% share){% endif %}, {{ c.receptions|int }} rec
+            ({{ '%.0f'|format(c.receptions / c.targets * 100 if c.targets else 0) }}%), {{ c.rec_yds|int }} yds
+            ({{ '%.1f'|format(c.rec_yds / c.targets if c.targets else 0) }} Y/T), {{ c.rec_td|int }} TD, {{ c.yac|int }} YAC<br>
             {% set total_rec_yds = c.deep_rec_yds + c.short_rec_yds %}
             <span style="color: var(--text-muted);">{{ '%.0f'|format(c.deep_rec_yds / total_rec_yds * 100 if total_rec_yds else 0) }}% of yards via deep targets ·
             {{ c.redzone_tgt|int }} red-zone targets, {{ c.redzone_rec_td|int }} TD</span>
         </div>
         {% endif %}
-        {% if splits.passing %}
-        {% set p = splits.passing %}
+        {% if s.passing %}
+        {% set p = s.passing %}
         <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);">
             <strong>Passing</strong> — {{ p.pass_att|int }} att, {{ p.pass_comp|int }} comp
             ({{ '%.0f'|format(p.pass_comp / p.pass_att * 100 if p.pass_att else 0) }}%), {{ p.pass_yds|int }} yds, {{ p.pass_td|int }} TD, {{ p.sacks_taken|int }} sacks<br>
-            <span style="color: var(--text-muted);">{{ p.deep_pass_att|int }} deep attempts ({{ '%.0f'|format(p.deep_pass_comp / p.deep_pass_att * 100 if p.deep_pass_att else 0) }}% complete)</span>
+            <span style="color: var(--text-muted);">{{ p.deep_pass_att|int }} deep attempts ({{ '%.0f'|format(p.deep_pass_comp / p.deep_pass_att * 100 if p.deep_pass_att else 0) }}% complete) ·
+            {{ p.redzone_pass_att|int }} red-zone attempts, {{ p.redzone_pass_td|int }} TD</span>
         </div>
         {% endif %}
     </div>
+    {% endif %}
+    {% endfor %}
     {% endif %}
 
     {% if opponent_explosiveness %}
@@ -147,7 +155,7 @@
     {% set bucket = {'QB': 'QB', 'RB': 'RB', 'TE': 'REC', 'WR': 'REC'}.get(player.position, 'REC') %}
     <div class="dfs-pool-pos-hdr">{{ player.opponent }} defense</div>
     <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">
-        Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far.
+        Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far. Third-down conversion/tendency rates aren't tracked yet — red-zone rate above is the closest available signal.
         {% if player.position in ('WR', 'TE') %}WR and TE are grouped together below ("REC") — ESPN's box score carries no position field, so a reliable split between them isn't available.{% endif %}
     </p>
     <table class="table" style="margin-bottom: 16px; font-size: 0.82rem;">

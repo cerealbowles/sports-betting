@@ -6287,6 +6287,10 @@ def nfl_player_detail(player_id):
   splits = None
   opponent_explosiveness = None
   team_abbrevs = _nfl_team_abbrev_map()
+  abbrev_to_team_id = {v: k for k, v in team_abbrevs.items()}
+  opponent_team_id = abbrev_to_team_id.get(player.get('opponent'))
+  season = nfl_api._get_nfl_season()
+
   if not is_dst:
     for g in nfl_stats_db.get_player_gamelog_db(player_id, limit=8):
       gamelog.append({
@@ -6294,14 +6298,11 @@ def nfl_player_detail(player_id):
         'opponent': team_abbrevs.get(g['opponent_id'], g['opponent_id']),
         'fantasy_points': nfl_fantasy.compute_fantasy_points(g['categories']),
       })
-    # Display-only context (see get_player_splits_summary_db()'s docstring
-    # for why this doesn't feed the projection) — long/short run-pass
-    # splits, red-zone usage, same pattern as the sentiment block below.
-    splits = nfl_stats_db.get_player_splits_summary_db(player_id, limit=8)
-
-  abbrev_to_team_id = {v: k for k, v in team_abbrevs.items()}
-  opponent_team_id = abbrev_to_team_id.get(player.get('opponent'))
-  season = nfl_api._get_nfl_season()
+    # Display-only context (see get_player_usage_card_data_db()'s docstring
+    # for why this doesn't feed the projection) — recent-vs-season usage,
+    # long/short run-pass splits, red-zone usage, target share.
+    own_team_id = abbrev_to_team_id.get(player.get('team'))
+    splits = nfl_stats_db.get_player_usage_card_data_db(player_id, own_team_id, season)
 
   dst_own_defense = dst_opponent_offense = None
   opponent_defense = None
