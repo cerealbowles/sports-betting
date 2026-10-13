@@ -161,6 +161,9 @@ def _component_outcomes(categories):
     }
 
 
+_team_scoring_cache = {}
+
+
 def _team_scoring_context(team_id, game_date, season):
     """This team's own points-scored, recent vs. season-to-date, strictly
     before `game_date` — the plan's 'team scoring context' feature. Not
@@ -168,7 +171,18 @@ def _team_scoring_context(team_id, game_date, season):
     sections) since it's two numbers from one already-cheap query; kept
     local to this analysis script the same way nfl_player_bootstrap.py
     and nfl_fantasy_bootstrap.py keep their own backtest-only aggregation
-    code separate from the production stats-db layer."""
+    code separate from the production stats-db layer.
+
+    Cached per (team_id, game_date) — every skill player on the SAME team
+    in the SAME game shares an identical result (the query only depends on
+    team_id/game_date/season, never the individual player), and a team
+    fields 5-10+ skill players per game. Confirmed live this redundancy
+    was real: without this cache, a full 3-season build re-ran the
+    identical query once per player instead of once per team-game."""
+    key = (team_id, game_date)
+    if key in _team_scoring_cache:
+        return _team_scoring_cache[key]
+
     from app import app as flask_app, TeamGameStat
 
     with flask_app.app_context():
@@ -179,12 +193,14 @@ def _team_scoring_context(team_id, game_date, season):
                 .all())
     recent = rows[:OPPONENT_RECENT_WINDOW]
     season_rows = [r for r in rows if r.season == season]
-    return {
+    result = {
         'recent_games_played': len(recent),
         'recent_ppg': (sum(r.points or 0 for r in recent) / len(recent)) if recent else None,
         'season_games_played': len(season_rows),
         'season_ppg': (sum(r.points or 0 for r in season_rows) / len(season_rows)) if season_rows else None,
     }
+    _team_scoring_cache[key] = result
+    return result
 
 
 _game_prediction_cache = {}
@@ -214,13 +230,23 @@ def _implied_team_points(team_name, opponent_name, is_home, game_date):
     return implied_home if is_home else implied_away
 
 
+_opponent_defense_cache = {}
+_opponent_grade_cache = {}
+
+
 def _build_row(player_row, team_row, categories, season):
     """player_row: a PlayerGameStat ORM row. team_row: that same game's
     TeamGameStat row for the player's own team (for opponent_id/points/
     is_home). categories: player_row's already-parsed stats_json. Returns
     one dataset row dict, or None if this player has no meaningful
     offensive bucket for this game (classify_bucket() -> None: a lineman,
-    kicker, pure defender, etc. — not a fantasy-relevant player-game)."""
+    kicker, pure defender, etc. — not a fantasy-relevant player-game).
+
+    The opponent-defense read and the opponent-defense-grade computation
+    are cached per (opponent_id, game_date) for the same reason
+    _team_scoring_context() caches per (team_id, game_date) — see that
+    function's docstring. usage/gamelog genuinely vary per player and
+    aren't cached."""
     bucket = nfl_fantasy.classify_bucket(categories)
     if bucket is None:
         return None
@@ -230,16 +256,23 @@ def _build_row(player_row, team_row, categories, season):
 
     usage = nfl_stats_db.get_player_usage_card_data_db(
         player_row.player_id, team_id, season, before_date=game_date, recent_window=RECENT_WINDOW)
-    opp_defense = nfl_stats_db.get_opponent_defense_card_data_db(
-        opponent_id, season, before_date=game_date, recent_window=OPPONENT_RECENT_WINDOW)
+
+    opp_key = (opponent_id, game_date)
+    if opp_key not in _opponent_defense_cache:
+        _opponent_defense_cache[opp_key] = nfl_stats_db.get_opponent_defense_card_data_db(
+            opponent_id, season, before_date=game_date, recent_window=OPPONENT_RECENT_WINDOW)
+    opp_defense = _opponent_defense_cache[opp_key]
+
     team_scoring = _team_scoring_context(team_id, game_date, season)
 
     gamelog = nfl_stats_db.get_player_gamelog_db(player_row.player_id, before_date=game_date, limit=8)
     points_hist = [nfl_fantasy.compute_fantasy_points(g['categories']) for g in gamelog]
     recent_avg = nfl_fantasy.rolling_average(points_hist)
 
-    off_list, def_list = nfl_stats_db.get_team_game_aggregates_db(opponent_id, before_date=game_date, limit=GRADE_WINDOW)
-    opponent_defense_grade = pm.compute_defense_grade(def_list)
+    if opp_key not in _opponent_grade_cache:
+        off_list, def_list = nfl_stats_db.get_team_game_aggregates_db(opponent_id, before_date=game_date, limit=GRADE_WINDOW)
+        _opponent_grade_cache[opp_key] = pm.compute_defense_grade(def_list)
+    opponent_defense_grade = _opponent_grade_cache[opp_key]
 
     projection = nfl_fantasy.project_points(bucket, points_hist, opponent_defense_grade)
     actual = nfl_fantasy.compute_fantasy_points(categories)
@@ -271,16 +304,31 @@ def _build_row(player_row, team_row, categories, season):
     return row
 
 
-def build_dataset(seasons=SEASONS, max_rows=None, progress_every=200):
+def build_dataset(seasons=SEASONS, max_rows=None, progress_every=200, out_path=None):
     """Iterates every stored TeamGameStat row (one per team per game) for
     `seasons`, and every one of that team's players who recorded an
     offensive stat line in that same game, building one row per (player,
     game) via _build_row(). Entirely local-DB-driven (no live ESPN
     fetches) — a season filter on TeamGameStat/PlayerGameStat, not a
     week-by-week live schedule walk (see this module's docstring for why
-    that path can't reach past seasons anyway)."""
+    that path can't reach past seasons anyway).
+
+    `out_path` (optional): if given, writes each row to this file AS IT'S
+    PRODUCED (flushed immediately), not just once at the very end. A full
+    3-season run is a long-running batch job (tens of minutes — per-row
+    cost grows as more historical games accumulate behind each cutoff
+    date, since a couple of the reused query functions fetch-then-slice
+    in Python rather than capping at the SQL level); without this, an
+    interruption (a wrapping `timeout`, a killed process, a crash) loses
+    EVERY row computed so far, not just the ones still in flight —
+    confirmed live: a 30-minute timeout killed a run that had already
+    finished 2024+2025 (nothing left but 2026), and because this function
+    used to only return its list for the caller to write at the end, that
+    entire ~27 minutes of real work produced zero output. Always pass
+    out_path for anything but a quick --max-rows smoke test."""
     from app import app as flask_app, TeamGameStat, PlayerGameStat
 
+    out_f = open(out_path, 'w') if out_path else None
     rows_out = []
     t0 = time.time()
     for season in seasons:
@@ -320,8 +368,20 @@ def build_dataset(seasons=SEASONS, max_rows=None, progress_every=200):
                 row = _build_row(player_row_obj, team_row_obj, categories, season)
                 if row is not None:
                     rows_out.append(row)
+                    if out_f is not None:
+                        # flush (not just buffer) after every row — a
+                        # `timeout`-delivered SIGTERM runs no Python
+                        # cleanup code at all (no finally, no atexit), so
+                        # anything still sitting in a userspace buffer
+                        # when that signal lands is lost. See this
+                        # function's docstring for why that's not
+                        # hypothetical.
+                        out_f.write(json.dumps(row) + '\n')
+                        out_f.flush()
                     if max_rows and len(rows_out) >= max_rows:
                         print(f'hit --max-rows={max_rows}, stopping early', flush=True)
+                        if out_f is not None:
+                            out_f.close()
                         return rows_out
 
             if i % progress_every == 0:
@@ -329,6 +389,8 @@ def build_dataset(seasons=SEASONS, max_rows=None, progress_every=200):
                       f'({time.time()-t0:.1f}s elapsed)', flush=True)
 
     print(f'\n{len(rows_out)} total rows in {time.time()-t0:.1f}s', flush=True)
+    if out_f is not None:
+        out_f.close()
     return rows_out
 
 
@@ -453,9 +515,9 @@ if __name__ == '__main__':
         sys.exit(0 if ok else 1)
 
     print(f'Building NFL player-game dataset for seasons {args.seasons}...', flush=True)
-    rows = build_dataset(seasons=args.seasons, max_rows=args.max_rows)
+    print(f'(writing to {args.out} incrementally, row by row — see build_dataset()\'s docstring for why)', flush=True)
+    rows = build_dataset(seasons=args.seasons, max_rows=args.max_rows, out_path=args.out)
     if not rows:
-        print('No rows produced — aborting without writing a file.')
+        print('No rows produced.')
         sys.exit(1)
-    write_jsonl(rows, args.out)
     validate_dataset(rows)
