@@ -5996,11 +5996,23 @@ def nfl_lineup():
     for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
   }
   stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
+  # Non-DST roster size: the max_low_tier UI field's own "off" value (see
+  # optimize_lineup()'s docstring — >= roster size disables the
+  # constraint). Computed from the user's actual roster settings above
+  # rather than hardcoded, so a customized roster size still disables
+  # correctly at its own max.
+  skill_roster_size = sum(c for pos, c in roster_requirements.items() if pos != 'DST')
+  max_low_tier_input = _clamp(request.args.get('max_low_tier', type=int), 0, skill_roster_size, skill_roster_size)
+  # None (not the literal "off" integer) once it's past to optimize_lineup/
+  # methodology_context — both treat None as the real "disabled" signal,
+  # so the methodology panel's on/off messaging doesn't go stale just
+  # because the UI field's "off" position is a specific number.
+  max_low_tier = max_low_tier_input if max_low_tier_input < skill_roster_size else None
 
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
   nfl_fantasy.assign_salaries(pool)
   optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements,
-                                          stack_min=stack_min) if pool else None
+                                          stack_min=stack_min, max_low_tier=max_low_tier) if pool else None
 
   pool.sort(key=lambda p: p['projection'], reverse=True)
 
@@ -6013,8 +6025,11 @@ def nfl_lineup():
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
                          pool=pool, optimal=optimal,
                          salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
+                         max_low_tier=max_low_tier, max_low_tier_input=max_low_tier_input,
+                         skill_roster_size=skill_roster_size,
                          roster_requirements_summary=roster_requirements_summary,
-                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min)))
+                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min,
+                                                                       max_low_tier)))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/recap')

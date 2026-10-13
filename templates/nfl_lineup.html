@@ -128,6 +128,9 @@
             <label class="dfs-settings-field" title="Require this many WR/TE from the same team as your QB — the standard GPP 'stack' tactic: when the QB has a big passing game, his pass-catchers' lines move with it, raising your lineup's ceiling together instead of each player's upside being an independent coin flip. 0 = off; matters for large-field, top-heavy tournaments, not cash games.">
                 🔗 Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}">
             </label>
+            <label class="dfs-settings-field" title="Caps how many players can be priced in the bottom tier of their position (percentile < {{ (methodology.balance_low_percentile * 100) | round | int }}%) — an attempt to force a less stars-and-scrubs build. Backtested across 27 real completed weeks first: it made actual outcomes WORSE at every setting that changed anything (real lineups look balanced in hindsight because some low-projection players happen to overperform that week — forcing MORE of them in blind, pre-game, with no signal for which ones will break out, just trades a good pick for a worse one). Off by default for that reason; max value ({{ skill_roster_size }}) = off, lower values are experimental and backtested to underperform.">
+                ⚖️ Max Low-Tier<input type="number" name="max_low_tier" min="0" max="{{ skill_roster_size }}" value="{{ max_low_tier_input }}">
+            </label>
         </div>
     </div>
 

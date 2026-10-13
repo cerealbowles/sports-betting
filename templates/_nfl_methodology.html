@@ -30,6 +30,10 @@
 
 <p><strong>Optimizer</strong> — an exact integer program (not a greedy pick) selects the highest-scoring lineup under the ${{ '{:,}'.format(methodology.salary_cap) }} cap: {{ methodology.roster_requirements.QB }} QB, {{ methodology.roster_requirements.RB }} RB, {{ methodology.roster_requirements.WR }} WR, {{ methodology.roster_requirements.TE }} TE, {{ methodology.roster_requirements.FLEX }} FLEX (RB/WR/TE), {{ methodology.roster_requirements.DST }} DST.{% if methodology.stack_min %} Stacking is on: at least {{ methodology.stack_min }} WR/TE must share the QB's team, so their correlated upside moves together — the right lean for a large-field, top-heavy payout, not a cash game.{% endif %}</p>
 
+{% if methodology.max_low_tier is not none %}
+<p><strong>Balance guard is on</strong> (experimental) — at most {{ methodology.max_low_tier }} of the lineup's non-DST players can fall below the {{ (methodology.balance_low_percentile * 100) | round | int }}th percentile of their position's own pool. Real hindsight-best lineups always turn out to need a mix, not pure stars-and-scrubs — but a direct backtest of this exact constraint (27 real completed weeks, scored against actual results) found it makes lineups WORSE at every setting that changes anything: real lineups look balanced only in hindsight, because some low-projection players happen to overperform that week — forcing MORE of them in blind, pre-game, with no signal for which ones will break out, just trades a good pick for a worse one. Left on here because you turned it on; off is the backtested-better default.</p>
+{% endif %}
+
 <p style="color: var(--text-muted);">DST scoring covers sacks, interceptions, defensive touchdowns, and points allowed — fumble recoveries, safeties, and blocked kicks aren't tracked by the underlying data source and are left out.</p>
 
 </div>

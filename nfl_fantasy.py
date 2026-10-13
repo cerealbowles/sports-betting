@@ -212,6 +212,46 @@ def compute_actual_week_points(week_games):
 # buckets' sample size for a distinction FanDuel itself doesn't score.
 MIN_PASS_ATT_FOR_QB = 5
 MIN_RUSH_ATT_FOR_RB = 3
+MIN_TARGETS_FOR_USAGE = 2
+
+# Pool-eligibility gate — separate from classify_bucket() above, which only
+# decides which regression a game's output trains. A player can clear
+# classify_bucket (e.g. one garbage-time catch) while never having a real
+# role: PROJECTION_FIT's flat intercept term (REC ~2.6, RB ~3.3) means ANY
+# player with ANY stored game history gets a nontrivial projected floor
+# regardless of whether they're actually expected to touch the ball, which
+# in turn makes them "cheap" (assign_salaries() prices purely off that
+# inflated projection) — so the optimizer happily parks cap space on them
+# as zero-value filler. Confirmed live: Derius Davis/Malachi Corley (return
+# specialists/WR4s averaging 0-1 targets/game) still produced ~2 pt
+# projections and $4K salaries purely from the intercept. Fixing this in
+# build_player_pool (excluding true zero-role players from the pool
+# entirely) rather than bolting a floor onto optimize_lineup, so the
+# optimizer keeps doing one honest thing — maximize projected points over
+# whoever is genuinely eligible — instead of masking a bad pool with a
+# second, competing objective.
+MIN_USAGE_GAMES = 2
+
+
+def _had_meaningful_usage(categories, bucket):
+    """One game's categories dict + this player's projection bucket →
+    whether they had a real on-field role that game (not just an
+    incidental stat line). QB: enough pass attempts to have actually
+    started/played; RB: real carries, or enough targets to be a legit
+    receiving back; REC: enough targets to be a real target earner, or
+    real carries (some WRs get jet-sweep/gadget carries)."""
+    cats = categories or {}
+    if bucket == 'QB':
+        pass_att = _split_first(cats.get('passing', {}).get('completions/passingAttempts', '0/0'), '/') \
+            if 'passing' in cats else 0.0
+        return pass_att >= MIN_PASS_ATT_FOR_QB
+    rush_att = _num(cats.get('rushing', {}).get('rushingAttempts')) if 'rushing' in cats else 0.0
+    targets = _num(cats.get('receiving', {}).get('receivingTargets')) if 'receiving' in cats else 0.0
+    if bucket == 'RB':
+        return rush_att >= MIN_RUSH_ATT_FOR_RB or targets >= MIN_TARGETS_FOR_USAGE
+    if bucket == 'REC':
+        return targets >= MIN_TARGETS_FOR_USAGE or rush_att >= MIN_RUSH_ATT_FOR_RB
+    return True
 
 
 def classify_bucket(categories):
@@ -354,7 +394,7 @@ def assign_salaries(pool):
     return pool
 
 
-def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0):
+def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, max_low_tier=None):
     """Everything templates/_nfl_methodology.html needs to render its
     'How is this calculated?' panel straight from this module's actual
     constants — the template never hand-types a number, so it can't drift
@@ -364,8 +404,11 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0):
     `salary_cap`/`roster_requirements` default to this module's standard
     constants (what /nfl/recap always uses); /nfl/lineup passes its active
     user-adjusted values so the panel reflects whatever actually produced
-    the lineup on screen. `stack_min` likewise defaults to 0 (off, what
-    /nfl/recap always gets)."""
+    the lineup on screen. `stack_min`/`max_low_tier` both default to off
+    (0 / None — what /nfl/recap always gets): stack_min because it's an
+    optional tournament tactic, max_low_tier because a real backtest found
+    it hurts actual outcomes at every setting that does anything — see
+    MAX_LOW_TIER_DEFAULT's comment above optimize_lineup()."""
     return {
         'scoring': {
             'pass_yd': PASS_YD, 'pass_td': PASS_TD, 'pass_int': PASS_INT,
@@ -380,6 +423,8 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0):
         'salary_cap': salary_cap if salary_cap is not None else SALARY_CAP,
         'roster_requirements': roster_requirements or ROSTER_REQUIREMENTS,
         'stack_min': stack_min,
+        'max_low_tier': max_low_tier if max_low_tier is not None else MAX_LOW_TIER_DEFAULT,
+        'balance_low_percentile': BALANCE_LOW_PERCENTILE,
     }
 
 
@@ -531,7 +576,14 @@ def build_player_pool(games, before_date=None):
     placeholder) when there's no usable projection for them — no stored
     game history (true rookie), or no stored history yet for their
     opponent's unit grade. See this module's docstring for why that's
-    left as a gap rather than papered over with a guess.
+    left as a gap rather than papered over with a guess. Also absent:
+    skill players with stored history but no genuine recent on-field role
+    (return specialists, deep WR4/5s who show up in the box score with an
+    occasional incidental target) — see _had_meaningful_usage()/
+    MIN_USAGE_GAMES. Without this gate, PROJECTION_FIT's flat intercept
+    term gives every rostered player SOME nonzero floor regardless of
+    real usage, which then prices them cheap and lets the optimizer park
+    free cap space on them as pure filler instead of a genuine value play.
 
     Two network/DB batching concerns this function exists to avoid, both
     confirmed live: (1) a naive per-team/per-player loop issuing its own
@@ -591,8 +643,14 @@ def build_player_pool(games, before_date=None):
         for p in roster_by_team.get(team_id, []):
             if p['id'] in team_unavailable:
                 continue
-            points_hist = [compute_fantasy_points(g['categories']) for g in player_games.get(p['id'], [])]
-            proj = project_points(ROSTER_BUCKET[p['position']], points_hist, opp_def_grade)
+            games = player_games.get(p['id'], [])
+            bucket = ROSTER_BUCKET[p['position']]
+            recent_games = games[:ROLLING_WINDOW]
+            usage_games = sum(1 for g in recent_games if _had_meaningful_usage(g['categories'], bucket))
+            if usage_games < MIN_USAGE_GAMES:
+                continue
+            points_hist = [compute_fantasy_points(g['categories']) for g in games]
+            proj = project_points(bucket, points_hist, opp_def_grade)
             if proj is None:
                 continue
             pool.append({
@@ -612,7 +670,56 @@ def build_player_pool(games, before_date=None):
     return pool
 
 
-def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection', stack_min=0):
+# ── Balance constraint (anti stars-and-scrubs) — OFF by default, see why ──
+#
+# Backstory: a separate backtest of the top 50 real hindsight lineups per
+# week (250 lineups across 5 sampled weeks) found ZERO pure-studs builds —
+# every single one needed a real mix, averaging ~3 players at 80th+
+# percentile (within their position's own pool) and ~3 below the 50th
+# percentile. The tempting conclusion is that the optimizer should be
+# forced to include more low-percentile players too. IT WAS TRIED AND
+# BACKTESTED — a real no-leakage backtest across 27 completed weeks
+# (2024-2026) scoring against REAL outcomes — and it made lineups WORSE at
+# every setting that actually changed anything (mean actual pts/week
+# dropped 4.7-12.1 below baseline; settings loose enough not to hurt also
+# did nothing). The reasoning gap: the hindsight-best lineups "needed" low
+# performers below their PRE-GAME percentile because some of them
+# overperformed that week — that's only visible after the fact. Forcing
+# the optimizer to pick MORE low-projection players pre-game, using the
+# SAME projection signal that already ranked them low, just trades a
+# good pick for an arbitrary worse one with no counterbalancing
+# information about which one might break out. The actual answer to
+# "which low-percentile player is about to break out" is what
+# surprise_play_signal() below exists to investigate (via news/sentiment),
+# not a blind percentile quota. Left in as an optional, honestly-labeled
+# knob (off by default) rather than removed outright, in case a future,
+# better-targeted version (e.g. gated by surprise_play_signal rather than
+# raw percentile) is worth revisiting — see this feature's PR description
+# for the full backtest numbers before changing MAX_LOW_TIER_DEFAULT.
+BALANCE_LOW_PERCENTILE = 0.35
+MAX_LOW_TIER_DEFAULT = None
+
+
+def _position_percentiles(pool):
+    """{player_id: percentile} — each player's percentile rank of
+    'projection' within players sharing their 'position' in this pool
+    (0 = lowest at that position, 1 = highest; ties share a value). Same
+    formula as surprise_play_signal()'s single-player version, computed
+    once for the whole pool here since optimize_lineup() needs every
+    player's value, not just one."""
+    by_position = defaultdict(list)
+    for p in pool:
+        by_position[p['position']].append(p['projection'])
+    out = {}
+    for p in pool:
+        same = by_position[p['position']]
+        n = len(same)
+        out[p['id']] = (sum(1 for v in same if v <= p['projection']) - 1) / (n - 1) if n > 1 else 1.0
+    return out
+
+
+def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection', stack_min=0,
+                     max_low_tier=MAX_LOW_TIER_DEFAULT):
     """pool: [{'id', 'name', 'team', 'position', 'salary', 'projection'}, ...]
     (one row per eligible player/DST, already projected+salaried). Returns
     {'lineup': [...], 'total_salary': int, 'total_projection': float} for
@@ -622,6 +729,15 @@ def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='p
     lineup" over the SAME pool/salaries) under `cap`, or None if no
     feasible lineup exists (e.g. too few players at some position in the
     selected games).
+
+    `max_low_tier` (default MAX_LOW_TIER_DEFAULT = None = off; None or a
+    number >= the roster size disables it): caps how many non-DST players
+    can be below BALANCE_LOW_PERCENTILE within their own position — see
+    the module comment above this function for why this defaults OFF
+    despite sounding like a good idea (backtested to hurt real outcomes).
+    A team/position with nothing but low-percentile options just makes
+    those picks relatively less available rather than failing the solve,
+    same graceful-degradation behavior as `stack_min`.
 
     `roster_requirements` defaults to the module's standard ROSTER_
     REQUIREMENTS (what nfl_recap.py's two call sites always get, by not
@@ -700,6 +816,12 @@ def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='p
             qb_sum = pulp.lpSum(x[p['id']] for p in qbs)
             for catcher in top_catchers:
                 prob += qb_sum >= x[catcher['id']]
+
+    roster_size = sum(c for pos, c in roster_requirements.items() if pos != 'DST')
+    if max_low_tier is not None and max_low_tier < roster_size:
+        percentiles = _position_percentiles(pool)
+        low_tier = [p for p in pool if p['position'] != 'DST' and percentiles[p['id']] < BALANCE_LOW_PERCENTILE]
+        prob += pulp.lpSum(x[p['id']] for p in low_tier) <= max_low_tier
 
     status = prob.solve(pulp.PULP_CBC_CMD(msg=0))
     if pulp.LpStatus[status] != 'Optimal':
