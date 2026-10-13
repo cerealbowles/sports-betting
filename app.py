@@ -6178,6 +6178,124 @@ def _nfl_team_abbrev_map():
 
 NFL_CARD_RECENT_WINDOW = 5  # matches Phase 1 plan's suggested recent-window size
 
+_nfl_league_defense_cache = {'data': None, 'ts': 0, 'season': None}
+
+def _nfl_league_defense_profile(season):
+  """nfl_stats_db.get_nfl_league_defense_profile_db(), cached 20 min —
+  same {'data'/'ts'} shape as _nfl_team_abbrev_cache above, just a
+  shorter TTL since this one changes within a week as games go final
+  (the abbrev map never changes intra-season). Keyed on `season` too so
+  a week-1-of-a-new-season request doesn't serve last season's stale
+  profile for its TTL window."""
+  now = time.time()
+  cache = _nfl_league_defense_cache
+  if cache['data'] is None or cache['season'] != season or now - cache['ts'] > 1200:
+    cache['data'] = nfl_stats_db.get_nfl_league_defense_profile_db(season, recent_window=NFL_CARD_RECENT_WINDOW)
+    cache['ts'] = now
+    cache['season'] = season
+  return cache['data']
+
+
+# position -> (TeamGameStat metric, display label for the fantasy-pts-allowed bar)
+_NFL_POSITION_BUCKET_METRIC = {
+  'QB': ('fpts_allowed_qb_pg', 'QBs'),
+  'RB': ('fpts_allowed_rb_pg', 'RBs'),
+  'WR': ('fpts_allowed_rec_pg', 'WR/TE'),
+  'TE': ('fpts_allowed_rec_pg', 'WR/TE'),
+}
+
+
+def _nfl_matchup_metric(profile, team_id, metric, direction):
+  """One stat, compared across every team in `profile` that has it.
+  `direction` is 'higher_is_favorable' (e.g. fantasy points allowed —
+  a defense that allows MORE is the easier matchup) or
+  'lower_is_favorable' (e.g. points allowed — a defense's OWN quality,
+  not matchup-dependent, so lower is simply better). `pct` is always
+  normalized so positive == favorable regardless of which direction
+  this particular metric runs, so callers (grade/scale-position) never
+  need to know which one they're looking at. `rank` is always 1 =
+  fewest allowed (conventional "defense rank" ordering, e.g. "24th
+  against the pass"), independent of `direction`. Returns None if this
+  team has no value for `metric`, or fewer than 2 teams do (nothing
+  to compare against)."""
+  vals = {tid: p[metric] for tid, p in profile.items() if metric in p}
+  if team_id not in vals or len(vals) < 2:
+    return None
+  team_val = vals[team_id]
+  league_avg = sum(vals.values()) / len(vals)
+  rank = 1 + sum(1 for v in vals.values() if v < team_val)
+  if not league_avg:
+    pct = 0.0
+  elif direction == 'higher_is_favorable':
+    pct = (team_val / league_avg - 1) * 100
+  else:
+    pct = (league_avg / team_val - 1) * 100 if team_val else 0.0
+  return {'team_val': team_val, 'league_avg': league_avg, 'rank': rank, 'total': len(vals), 'pct': pct}
+
+
+def _nfl_matchup_grade(pct):
+  """pct -> (letter, tone). tone drives the card's color (var(--win) /
+  var(--warn-text) / var(--loss) in the template) — thresholds mirror
+  _tier_open_bets()'s edge-pct tiering above, just centered on 0 instead
+  of a one-sided edge%, since this reads as a two-sided "better/worse
+  than league average" rather than a bet's always-positive edge."""
+  if pct is None:
+    return None, 'neutral'
+  if pct >= 20: return 'A+', 'good'
+  if pct >= 12: return 'A', 'good'
+  if pct >= 6: return 'A-', 'good'
+  if pct >= 2: return 'B+', 'good'
+  if pct >= -2: return 'B', 'neutral'
+  if pct >= -6: return 'B-', 'neutral'
+  if pct >= -12: return 'C', 'bad'
+  if pct >= -20: return 'D', 'bad'
+  return 'F', 'bad'
+
+
+def _nfl_scale_pos(pct):
+  """pct -> 3-97 left-offset for the card's mc-track marker — same
+  clamped-track idea as _chip_track_pos() above, but zoomed for a
+  percent-vs-league-average range (roughly +-35%) instead of that
+  function's 30-70 win-probability band."""
+  if pct is None:
+    return 50.0
+  return round(max(3.0, min(97.0, 50 + pct * 1.4)), 1)
+
+
+def _nfl_build_matchup_card(profile, team_id, position):
+  """Builds the template's `matchup` dict for one player-detail card, or
+  None if this team has no stored games to compare (brand-new season,
+  bye-adjacent gap, etc — the template falls back to the plain
+  recent/season tables with no verdict section in that case). DST cards
+  grade the team's OWN points-allowed vs league average (not opponent-
+  dependent — there's no "fantasy points allowed to a defense" stat);
+  every offensive position grades the OPPONENT defense's fantasy points
+  allowed to that position bucket, same framing as the mockup this card
+  is based on."""
+  if position == 'DST':
+    m = _nfl_matchup_metric(profile, team_id, 'points_allowed_pg', 'lower_is_favorable')
+    if not m:
+      return None
+    label, bucket_label = 'points allowed per game', None
+  else:
+    metric, bucket_label = _NFL_POSITION_BUCKET_METRIC.get(position, (None, None))
+    if not metric:
+      return None
+    m = _nfl_matchup_metric(profile, team_id, metric, 'higher_is_favorable')
+    if not m:
+      return None
+    label = f'fantasy points allowed to {bucket_label}'
+
+  grade, tone = _nfl_matchup_grade(m['pct'])
+  rank = m['rank']
+  suffix = 'th' if 11 <= rank % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(rank % 10, 'th')
+  return {
+    **m, 'grade': grade, 'tone': tone, 'label': label, 'bucket_label': bucket_label,
+    'scale_pos': _nfl_scale_pos(m['pct']), 'is_dst': position == 'DST',
+    'rank_label': f'{rank}{suffix}', 'sample_games': profile.get(team_id, {}).get('games'),
+  }
+
+
 def _nfl_dst_card_context(team_id, opponent_team_id, season):
   """Builds the two sections a D/ST player-detail card needs: this team's
   OWN defensive production (recent window vs. season-to-date, so the card
@@ -6305,8 +6423,10 @@ def nfl_player_detail(player_id):
 
   dst_own_defense = dst_opponent_offense = None
   opponent_defense = None
+  league_profile = _nfl_league_defense_profile(season)
   if is_dst:
     own_team_id = player_id[len('DST_'):]
+    matchup = _nfl_build_matchup_card(league_profile, own_team_id, 'DST')
     dst_own_defense, dst_opponent_offense = _nfl_dst_card_context(own_team_id, opponent_team_id, season)
     if opponent_team_id:
       # Low-value for a DST card (the opposing team's own defensive
@@ -6325,6 +6445,9 @@ def nfl_player_detail(player_id):
       opponent_team_id, season, recent_window=NFL_CARD_RECENT_WINDOW)
     if opponent_defense['recent'] is None and opponent_defense['season'] is None:
       opponent_defense = None
+    matchup = _nfl_build_matchup_card(league_profile, opponent_team_id, player['position'])
+  else:
+    matchup = None
 
   if games:
     week_dates = [nfl_api._event_date_et(g['game_time_utc']) for g in games]
@@ -6344,7 +6467,7 @@ def nfl_player_detail(player_id):
                           articles=articles, week_start=week_start, week_end=week_end,
                           splits=splits, opponent_explosiveness=opponent_explosiveness,
                           dst_own_defense=dst_own_defense, dst_opponent_offense=dst_opponent_offense,
-                          opponent_defense=opponent_defense)
+                          opponent_defense=opponent_defense, matchup=matchup)
 
 @app.route('/cfb')
 def cfb_schedule():

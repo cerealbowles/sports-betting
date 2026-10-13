@@ -2,83 +2,141 @@
    route and fetched into the shared gameDetailsSheet by
    templates/nfl_players.html's openPlayerDetail() JS. A standalone HTML
    fragment, not a full page: no {% extends %}, this gets dropped straight
-   into #gameDetailsSheetBody's innerHTML. #}
+   into #gameDetailsSheetBody's innerHTML — so the tab switcher below is a
+   hidden-radio/:checked CSS trick (see styles.css's .pc-tab-bar comment),
+   never an inline <script>, since injected scripts don't execute.
+
+   `matchup` (from app.py's _nfl_build_matchup_card()) is the league-
+   average-aware verdict/grade/scale-bar — None when this team has no
+   stored games yet to compare (new season, bye-adjacent gap), in which
+   case each tab below falls back to its own "no data yet" line instead
+   of fabricating a bar with nothing to measure against. #}
 {% if not player %}
 <div style="padding: 24px; text-align: center; color: var(--text-muted);">Couldn't find that player in this week's pool.</div>
 {% else %}
+{% set tone_label = {'good': 'Favorable', 'neutral': 'Average', 'bad': 'Tough'} %}
 <div style="padding: 16px 20px 24px;">
 
-    <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px;">
-        <h2 style="font-family: var(--font-display); font-size: 1.4rem;">{{ player.name }}</h2>
-        <span class="dfs-cap-meter"><strong>{{ player.projection }}</strong> proj pts</span>
-    </div>
-    <div style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 16px;">
-        <span class="dfs-slot-badge">{{ player.position }}</span>
-        {{ player.team }} vs {{ player.opponent }}
-        {% if position_rank %} · ranked <strong style="color: var(--text);">{{ player.position }}{{ position_rank }}</strong> this week{% endif %}
+    <div class="pc-hero">
+        <div class="pc-player-row">
+            <div class="pc-avatar">{% if is_dst %}{{ player.team[:3]|upper }}{% else %}{% set parts = player.name.split() %}{{ ((parts[0][0] if parts else '?') + (parts[-1][0] if parts|length > 1 else '')) | upper }}{% endif %}</div>
+            <div class="pc-player-meta">
+                <div class="pc-eyebrow">{{ player.team }} · {{ player.position }}</div>
+                <h2>{{ player.name }}</h2>
+                <div class="pc-vs">vs {{ player.opponent }}{% if position_rank %} · ranked <strong style="color: var(--text);">{{ player.position }}{{ position_rank }}</strong> this week{% endif %}</div>
+            </div>
+            <div class="pc-score"><strong>{{ player.projection }}</strong><span>Proj pts</span></div>
+        </div>
+
+        {% if matchup %}
+        <div class="pc-verdict">
+            <div class="pc-grade pc-grade-{{ matchup.tone }}">{{ matchup.grade }}</div>
+            <div class="pc-verdict-copy">
+                <strong>{% if is_dst %}{{ {'good': 'Defense trending well', 'neutral': 'Defense near average', 'bad': 'Defense trending rough'}[matchup.tone] }}{% else %}{{ tone_label[matchup.tone] }} {{ player.position }} matchup{% endif %}</strong>
+                <span>
+                {% if is_dst %}
+                    {{ player.team }}'s defense is {% if matchup.tone == 'good' %}allowing fewer points per game than a typical defense{% elif matchup.tone == 'bad' %}allowing more points per game than a typical defense{% else %}allowing points at a roughly average rate{% endif %}.
+                {% else %}
+                    {{ player.opponent }}'s defense {% if matchup.tone == 'good' %}gives up above-average fantasy production to {{ matchup.bucket_label }}{% elif matchup.tone == 'bad' %}is tougher than average against {{ matchup.bucket_label }}{% else %}is about average against {{ matchup.bucket_label }}{% endif %}.
+                {% endif %}
+                </span>
+            </div>
+            <span class="pc-tag pc-tag-{{ matchup.tone }}">{{ '%+.0f'|format(matchup.pct) }}% {{ 'vs avg' if is_dst else 'matchup' }}</span>
+        </div>
+        <div class="pc-mini-grid">
+            <div class="pc-mini"><span>{{ 'Scoring defense rank' if is_dst else 'Defense vs ' ~ matchup.bucket_label }}</span><strong>{{ matchup.rank_label }} <small>/ {{ matchup.total }}</small></strong></div>
+            <div class="pc-mini"><span>{{ 'Points allowed/gm' if is_dst else 'Fantasy pts allowed' }}</span><strong>{{ '%.1f'|format(matchup.team_val) }} <small>vs {{ '%.1f'|format(matchup.league_avg) }} avg</small></strong></div>
+            <div class="pc-mini"><span>Sample</span><strong>{{ matchup.sample_games }} <small>games (recent)</small></strong></div>
+        </div>
+        {% endif %}
     </div>
 
     {% if is_dst %}
-    {% if dst_own_defense %}
-    {% set rec = dst_own_defense.recent %}
-    {% set ssn = dst_own_defense.season %}
-    <div class="dfs-pool-pos-hdr" style="margin-top: 0;">{{ player.team }} defense</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far. Defensive touchdowns and total yards allowed aren't tracked yet — only points allowed, the box-score defensive categories below, and the opposing offense's own production (next section) are available.</p>
-    <table class="table" style="margin-bottom: 16px; font-size: 0.82rem;">
-        <thead><tr><th></th><th>Last {{ rec.games if rec else 0 }}</th><th>Season ({{ ssn.games if ssn else 0 }})</th></tr></thead>
-        <tbody>
-        <tr><td>Points allowed/gm</td>
-            <td>{{ '%.1f'|format(rec.points_allowed_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.points_allowed_pg) if ssn else '—' }}</td></tr>
-        <tr><td>Sacks/gm</td>
-            <td>{{ '%.1f'|format(rec.sacks_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.sacks_pg) if ssn else '—' }}</td></tr>
-        <tr><td>TFL/gm</td>
-            <td>{{ '%.1f'|format(rec.tfl_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.tfl_pg) if ssn else '—' }}</td></tr>
-        <tr><td>Takeaways/gm</td>
-            <td>{{ '%.1f'|format(rec.takeaways_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.takeaways_pg) if ssn else '—' }}</td></tr>
-        <tr><td>Pass defended/gm</td>
-            <td>{{ '%.1f'|format(rec.pass_defended_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.pass_defended_pg) if ssn else '—' }}</td></tr>
-        <tr><td>Explosive plays allowed/gm</td>
-            <td>{{ '%.1f'|format(rec.long_plays_allowed_pg) if rec and rec.long_plays_allowed_pg is not none else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.long_plays_allowed_pg) if ssn and ssn.long_plays_allowed_pg is not none else '—' }}</td></tr>
-        <tr><td>Red-zone TD rate allowed</td>
-            <td>{% if rec and rec.redzone_td_rate is not none %}{{ '%.0f'|format(rec.redzone_td_rate * 100) }}% ({{ rec.redzone_tds_allowed|int }}/{{ rec.redzone_trips_allowed|int }}){% else %}—{% endif %}</td>
-            <td>{% if ssn and ssn.redzone_td_rate is not none %}{{ '%.0f'|format(ssn.redzone_td_rate * 100) }}% ({{ ssn.redzone_tds_allowed|int }}/{{ ssn.redzone_trips_allowed|int }}){% else %}—{% endif %}</td></tr>
-        <tr><td>Fantasy pts allowed/gm — QB</td>
-            <td>{{ '%.1f'|format(rec.fpts_allowed_qb_pg) if rec and rec.fpts_allowed_qb_pg is not none else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.fpts_allowed_qb_pg) if ssn and ssn.fpts_allowed_qb_pg is not none else '—' }}</td></tr>
-        <tr><td>Fantasy pts allowed/gm — RB</td>
-            <td>{{ '%.1f'|format(rec.fpts_allowed_rb_pg) if rec and rec.fpts_allowed_rb_pg is not none else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.fpts_allowed_rb_pg) if ssn and ssn.fpts_allowed_rb_pg is not none else '—' }}</td></tr>
-        <tr><td>Fantasy pts allowed/gm — WR/TE</td>
-            <td>{{ '%.1f'|format(rec.fpts_allowed_rec_pg) if rec and rec.fpts_allowed_rec_pg is not none else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.fpts_allowed_rec_pg) if ssn and ssn.fpts_allowed_rec_pg is not none else '—' }}</td></tr>
-        </tbody>
-    </table>
-    {% else %}
-    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for {{ player.team }}'s defense yet.</p>
-    {% endif %}
+    {% if dst_own_defense or dst_opponent_offense %}
+    <div class="card">
+        <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Why this grades {{ tone_label.get(matchup.tone, 'the way it does')|lower if matchup else 'the way it does' }}</div>
+        <p class="dfs-subhead" style="margin: -4px 0 0;">Compare {{ player.team }}'s own defense with a typical defense, then see what {{ player.opponent }}'s offense has been doing lately.</p>
+        <input type="radio" name="pc-tabs" id="pc-tab-1" class="pc-tabs-input" checked>
+        <input type="radio" name="pc-tabs" id="pc-tab-2" class="pc-tabs-input">
+        <input type="radio" name="pc-tabs" id="pc-tab-3" class="pc-tabs-input">
+        <div class="pc-tab-bar">
+            <label for="pc-tab-1">Scoring defense</label>
+            <label for="pc-tab-2">Havoc & takeaways</label>
+            <label for="pc-tab-3">Opponent offense</label>
+        </div>
 
-    {% if dst_opponent_offense %}
-    {% set o = dst_opponent_offense %}
-    <div class="dfs-pool-pos-hdr">{{ player.opponent }} offense, last {{ o.games }} games</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above.</p>
-    <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.82rem; color: var(--text-muted);">
-        {{ '%.1f'|format(o.pass_att_pg) }} pass att, {{ '%.0f'|format(o.pass_yds_pg) }} pass yds, {{ '%.1f'|format(o.pass_td_pg) }} pass TD/gm<br>
-        {{ '%.1f'|format(o.rush_att_pg) }} rush att, {{ '%.0f'|format(o.rush_yds_pg) }} rush yds/gm<br>
-        {{ '%.1f'|format(o.recv_tgt_pg) }} targets, {{ '%.0f'|format(o.recv_yds_pg) }} receiving yds/gm ·
-        {{ '%.1f'|format(o.giveaways_pg) }} giveaways/gm
+        <div class="pc-view" id="pc-view-1">
+            {% if dst_own_defense %}
+            {% set rec = dst_own_defense.recent %}
+            {% set ssn = dst_own_defense.season %}
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>Points allowed per game</strong>{% if matchup %}<span class="pc-delta pc-delta-{{ matchup.tone }}">{{ tone_label[matchup.tone] }}</span>{% endif %}</div>
+                {% if matchup %}
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    <div class="mc-dot pc-dot-{{ matchup.tone }}" style="left:{{ matchup.scale_pos }}%"></div>
+                </div>
+                <div class="pc-scale-labels"><span>More allowed</span><span>League average</span><span>Fewer allowed</span></div>
+                {% endif %}
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{{ '%.1f'|format(rec.points_allowed_pg) if rec else '—' }}</b></span>
+                    <span>Season ({{ ssn.games if ssn else 0 }}): <b>{{ '%.1f'|format(ssn.points_allowed_pg) if ssn else '—' }}</b>{% if matchup %} · league avg <b>{{ '%.1f'|format(matchup.league_avg) }}</b>{% endif %}</span>
+                </div>
+            </div>
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>Red-zone TD rate allowed</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{% if rec and rec.redzone_td_rate is not none %}{{ '%.0f'|format(rec.redzone_td_rate * 100) }}% ({{ rec.redzone_tds_allowed|int }}/{{ rec.redzone_trips_allowed|int }}){% else %}—{% endif %}</b></span>
+                    <span>Season: <b>{% if ssn and ssn.redzone_td_rate is not none %}{{ '%.0f'|format(ssn.redzone_td_rate * 100) }}% ({{ ssn.redzone_tds_allowed|int }}/{{ ssn.redzone_trips_allowed|int }}){% else %}—{% endif %}</b></span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">No stored game history for {{ player.team }}'s defense yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="pc-view" id="pc-view-2">
+            {% if dst_own_defense %}
+            {% set rec = dst_own_defense.recent %}
+            {% set ssn = dst_own_defense.season %}
+            {% for row_label, rkey in [('Sacks/gm', 'sacks_pg'), ('TFL/gm', 'tfl_pg'), ('Takeaways/gm', 'takeaways_pg'), ('Pass defended/gm', 'pass_defended_pg'), ('Explosive plays allowed/gm', 'long_plays_allowed_pg')] %}
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>{{ row_label }}</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{{ '%.1f'|format(rec[rkey]) if rec and rec[rkey] is not none else '—' }}</b></span>
+                    <span>Season: <b>{{ '%.1f'|format(ssn[rkey]) if ssn and ssn[rkey] is not none else '—' }}</b></span>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">No stored game history for {{ player.team }}'s defense yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="pc-view" id="pc-view-3">
+            {% if dst_opponent_offense %}
+            {% set o = dst_opponent_offense %}
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>{{ player.opponent }} offense, last {{ o.games }} games</strong></div>
+                <div class="pc-detail" style="flex-direction: column; gap: 4px; align-items: flex-start;">
+                    <span>{{ '%.1f'|format(o.pass_att_pg) }} pass att, {{ '%.0f'|format(o.pass_yds_pg) }} pass yds, {{ '%.1f'|format(o.pass_td_pg) }} pass TD/gm</span>
+                    <span>{{ '%.1f'|format(o.rush_att_pg) }} rush att, {{ '%.0f'|format(o.rush_yds_pg) }} rush yds/gm</span>
+                    <span>{{ '%.1f'|format(o.recv_tgt_pg) }} targets, {{ '%.0f'|format(o.recv_yds_pg) }} receiving yds/gm</span>
+                    <span><b>{{ '%.1f'|format(o.giveaways_pg) }} giveaways/gm</b></span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">No stored game history for {{ player.opponent }}'s offense yet.</p>
+            {% endif %}
+        </div>
+        <p class="dfs-note">Shown for context only — none of this changes the projection above.</p>
     </div>
     {% else %}
-    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for {{ player.opponent }}'s offense yet.</p>
+    <div class="card"><p style="color: var(--text-muted); font-size: 0.8rem;">No stored game history for {{ player.team }}'s defense yet.</p></div>
     {% endif %}
     {% elif gamelog %}
+    <div class="card">
     <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Recent games</div>
-    <table class="table" style="margin-bottom: 16px;">
+    <table class="table" style="margin-bottom: 0;">
         <thead><tr><th>Date</th><th>Opp</th><th>Fantasy Pts</th></tr></thead>
         <tbody>
         {% for g in gamelog %}
@@ -90,13 +148,111 @@
         {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px;">No stored game history for this player yet.</p>
     {% endif %}
 
-    {% if splits and (splits.recent or splits.season) %}
+    {% if not is_dst and (opponent_defense or matchup) %}
+    {% set bucket = {'QB': 'QB', 'RB': 'RB', 'TE': 'REC', 'WR': 'REC'}.get(player.position, 'REC') %}
+    {% set rec = opponent_defense.recent if opponent_defense else none %}
+    {% set ssn = opponent_defense.season if opponent_defense else none %}
+    <div class="card">
+        <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Why this matchup grades {{ tone_label.get(matchup.tone, 'the way it does')|lower if matchup else 'the way it does' }}</div>
+        <p class="dfs-subhead" style="margin: -4px 0 0;">Compare what {{ player.opponent }} allows with a typical defense, then see the underlying production trend.</p>
+        <input type="radio" name="pc-tabs" id="pc-tab-1" class="pc-tabs-input" checked>
+        <input type="radio" name="pc-tabs" id="pc-tab-2" class="pc-tabs-input">
+        <input type="radio" name="pc-tabs" id="pc-tab-3" class="pc-tabs-input">
+        <div class="pc-tab-bar">
+            <label for="pc-tab-1">Fantasy points</label>
+            <label for="pc-tab-2">{% if bucket == 'QB' %}Passing production{% elif bucket == 'RB' %}Rushing & receiving{% else %}Receiving production{% endif %}</label>
+            <label for="pc-tab-3">Explosiveness & red zone</label>
+        </div>
+
+        <div class="pc-view" id="pc-view-1">
+            {% if matchup %}
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>Fantasy points allowed to {{ matchup.bucket_label }}</strong><span class="pc-delta pc-delta-{{ matchup.tone }}">{{ tone_label[matchup.tone] }}</span></div>
+                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
+                    <div class="mc-dot pc-dot-{{ matchup.tone }}" style="left:{{ matchup.scale_pos }}%"></div>
+                </div>
+                <div class="pc-scale-labels"><span>Tough matchup</span><span>League average</span><span>Favorable</span></div>
+                <div class="pc-detail">
+                    <span>{{ player.opponent }} allows <b>{{ '%.1f'|format(matchup.team_val) }} pts/gm</b></span>
+                    <span>League avg <b>{{ '%.1f'|format(matchup.league_avg) }}</b> · <b>{{ '%+.0f'|format(matchup.pct) }}%</b></span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">Not enough stored games across the league yet to grade this matchup.</p>
+            {% endif %}
+        </div>
+
+        <div class="pc-view" id="pc-view-2">
+            {% if opponent_defense %}
+            {% if bucket == 'QB' %}
+            {% for row_label, path in [('Passing yards allowed/gm', 'pass_yds'), ('Passing TDs allowed', 'pass_td')] %}
+            <div class="pc-barrow"><div class="pc-barhead"><strong>{{ row_label }}</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{% if rec %}{% if 'yards' in row_label %}{{ '%.0f'|format(rec.QB[path] / rec.games) }}{% else %}{{ rec.QB[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                    <span>Season: <b>{% if ssn %}{% if 'yards' in row_label %}{{ '%.0f'|format(ssn.QB[path] / ssn.games) }}{% else %}{{ ssn.QB[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                </div>
+            </div>
+            {% endfor %}
+            {% elif bucket == 'RB' %}
+            {% for row_label, path, per_game in [('Rushing yards allowed/gm', 'rush_yds', true), ('Rushing TDs allowed', 'rush_td', false), ('Receiving yards allowed/gm', 'rec_yds', true), ('Receptions allowed/gm', 'receptions', true), ('Receiving TDs allowed', 'rec_td', false)] %}
+            <div class="pc-barrow"><div class="pc-barhead"><strong>{{ row_label }} — RB</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{% if rec %}{% if per_game %}{{ '%.1f'|format(rec.RB[path] / rec.games) }}{% else %}{{ rec.RB[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                    <span>Season: <b>{% if ssn %}{% if per_game %}{{ '%.1f'|format(ssn.RB[path] / ssn.games) }}{% else %}{{ ssn.RB[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            {% for row_label, path, per_game in [('Receiving yards allowed/gm', 'rec_yds', true), ('Receptions allowed/gm', 'receptions', true), ('Receiving TDs allowed', 'rec_td', false)] %}
+            <div class="pc-barrow"><div class="pc-barhead"><strong>{{ row_label }} — WR/TE</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{% if rec %}{% if per_game %}{{ '%.1f'|format(rec.REC[path] / rec.games) }}{% else %}{{ rec.REC[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                    <span>Season: <b>{% if ssn %}{% if per_game %}{{ '%.1f'|format(ssn.REC[path] / ssn.games) }}{% else %}{{ ssn.REC[path] }}{% endif %}{% else %}—{% endif %}</b></span>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">No stored game history for {{ player.opponent }}'s defense yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="pc-view" id="pc-view-3">
+            {% if opponent_defense %}
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>Explosive plays allowed/gm</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{{ '%.1f'|format(rec.long_plays_allowed_pg) if rec else '—' }}</b></span>
+                    <span>Season: <b>{{ '%.1f'|format(ssn.long_plays_allowed_pg) if ssn else '—' }}</b></span>
+                </div>
+            </div>
+            <div class="pc-barrow">
+                <div class="pc-barhead"><strong>Red-zone TD rate allowed</strong></div>
+                <div class="pc-detail">
+                    <span>Last {{ rec.games if rec else 0 }}: <b>{% if rec and rec.redzone_td_rate is not none %}{{ '%.0f'|format(rec.redzone_td_rate * 100) }}% ({{ rec.redzone_tds_allowed|int }}/{{ rec.redzone_trips_allowed|int }}){% else %}—{% endif %}</b></span>
+                    <span>Season: <b>{% if ssn and ssn.redzone_td_rate is not none %}{{ '%.0f'|format(ssn.redzone_td_rate * 100) }}% ({{ ssn.redzone_tds_allowed|int }}/{{ ssn.redzone_trips_allowed|int }}){% else %}—{% endif %}</b></span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.8rem; padding: 10px 0;">No stored game history for {{ player.opponent }}'s defense yet.</p>
+            {% endif %}
+        </div>
+        <p class="dfs-note">
+            Shown for context only — none of this changes the projection above.
+            {% if player.position in ('WR', 'TE') %}WR and TE are grouped together as "REC" — ESPN's box score carries no position field, so a reliable split isn't available.{% endif %}
+        </p>
+    </div>
+    {% endif %}
+
+    {% if not is_dst and splits and (splits.recent or splits.season) %}
+    <div class="card">
     <div class="dfs-pool-pos-hdr" style="margin-top: 0;">Usage</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. "Long" = 10+ yard run; pass depth (short/deep) is ESPN's own play-by-play tag. Target share = this player's targets ÷ the team's total targets in the same games. Goal-line (inside-5) carries, end-zone targets (as distinct from the 20-yard red-zone line above), and route participation/targets-per-route aren't tracked yet.</p>
+    <p class="dfs-subhead" style="margin: -4px 0 10px;">"Long" = 10+ yard run; pass depth (short/deep) is ESPN's own play-by-play tag. Target share = this player's targets ÷ the team's total targets in the same games.</p>
     {% for scope_label, s in [('Last ' ~ (splits.recent.games if splits.recent else 0) ~ ' games', splits.recent), ('Season to date (' ~ (splits.season.games if splits.season else 0) ~ ')', splits.season)] %}
     {% if s %}
     <div style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 10px 0 6px;">{{ scope_label }}</div>
@@ -134,78 +290,11 @@
     </div>
     {% endif %}
     {% endfor %}
-    {% endif %}
-
-    {% if opponent_explosiveness %}
-    {% set total_games = opponent_explosiveness|length %}
-    {% set total_long = opponent_explosiveness|sum(attribute='long_plays_allowed') %}
-    {% set total_trips = opponent_explosiveness|sum(attribute='redzone_trips_allowed') %}
-    {% set total_tds = opponent_explosiveness|sum(attribute='redzone_tds_allowed') %}
-    <div class="dfs-pool-pos-hdr">{{ player.opponent }} defense, last {{ total_games }} games</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above.</p>
-    <div style="padding: 10px 12px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.82rem; color: var(--text-muted);">
-        {{ '%.1f'|format(total_long / total_games if total_games else 0) }} explosive plays allowed/game ·
-        {{ total_trips|int }} red-zone trips allowed, {{ total_tds|int }} TD ({{ '%.0f'|format(total_tds / total_trips * 100 if total_trips else 0) }}% TD rate)
     </div>
     {% endif %}
 
-    {% if opponent_defense %}
-    {% set rec = opponent_defense.recent %}
-    {% set ssn = opponent_defense.season %}
-    {% set bucket = {'QB': 'QB', 'RB': 'RB', 'TE': 'REC', 'WR': 'REC'}.get(player.position, 'REC') %}
-    <div class="dfs-pool-pos-hdr">{{ player.opponent }} defense</div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">
-        Shown for context only — this doesn't change the projection above. Per-game averages; "season" is every {{ ssn.games if ssn else 0 }}-game {{ 'sample' if ssn and ssn.games < 5 else 'baseline' }} stored so far. Third-down conversion/tendency rates aren't tracked yet — red-zone rate above is the closest available signal.
-        {% if player.position in ('WR', 'TE') %}WR and TE are grouped together below ("REC") — ESPN's box score carries no position field, so a reliable split between them isn't available.{% endif %}
-    </p>
-    <table class="table" style="margin-bottom: 16px; font-size: 0.82rem;">
-        <thead><tr><th></th><th>Last {{ rec.games if rec else 0 }}</th><th>Season ({{ ssn.games if ssn else 0 }})</th></tr></thead>
-        <tbody>
-        <tr><td>Explosive plays allowed/gm</td>
-            <td>{{ '%.1f'|format(rec.long_plays_allowed_pg) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.long_plays_allowed_pg) if ssn else '—' }}</td></tr>
-        <tr><td>Red-zone TD rate allowed</td>
-            <td>{% if rec and rec.redzone_td_rate is not none %}{{ '%.0f'|format(rec.redzone_td_rate * 100) }}% ({{ rec.redzone_tds_allowed|int }}/{{ rec.redzone_trips_allowed|int }}){% else %}—{% endif %}</td>
-            <td>{% if ssn and ssn.redzone_td_rate is not none %}{{ '%.0f'|format(ssn.redzone_td_rate * 100) }}% ({{ ssn.redzone_tds_allowed|int }}/{{ ssn.redzone_trips_allowed|int }}){% else %}—{% endif %}</td></tr>
-        {% if bucket == 'QB' %}
-        <tr><td>Passing yards allowed/gm</td>
-            <td>{{ '%.0f'|format(rec.QB.pass_yds / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.0f'|format(ssn.QB.pass_yds / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Passing TDs allowed</td>
-            <td>{{ rec.QB.pass_td if rec else '—' }}</td>
-            <td>{{ ssn.QB.pass_td if ssn else '—' }}</td></tr>
-        {% elif bucket == 'RB' %}
-        <tr><td>Rushing yards allowed/gm — RB</td>
-            <td>{{ '%.0f'|format(rec.RB.rush_yds / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.0f'|format(ssn.RB.rush_yds / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Rushing TDs allowed — RB</td>
-            <td>{{ rec.RB.rush_td if rec else '—' }}</td>
-            <td>{{ ssn.RB.rush_td if ssn else '—' }}</td></tr>
-        <tr><td>Receiving yards allowed/gm — RB</td>
-            <td>{{ '%.0f'|format(rec.RB.rec_yds / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.0f'|format(ssn.RB.rec_yds / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Receptions allowed/gm — RB</td>
-            <td>{{ '%.1f'|format(rec.RB.receptions / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.RB.receptions / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Receiving TDs allowed — RB</td>
-            <td>{{ rec.RB.rec_td if rec else '—' }}</td>
-            <td>{{ ssn.RB.rec_td if ssn else '—' }}</td></tr>
-        {% else %}
-        <tr><td>Receiving yards allowed/gm — WR/TE</td>
-            <td>{{ '%.0f'|format(rec.REC.rec_yds / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.0f'|format(ssn.REC.rec_yds / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Receptions allowed/gm — WR/TE</td>
-            <td>{{ '%.1f'|format(rec.REC.receptions / rec.games) if rec else '—' }}</td>
-            <td>{{ '%.1f'|format(ssn.REC.receptions / ssn.games) if ssn else '—' }}</td></tr>
-        <tr><td>Receiving TDs allowed — WR/TE</td>
-            <td>{{ rec.REC.rec_td if rec else '—' }}</td>
-            <td>{{ ssn.REC.rec_td if ssn else '—' }}</td></tr>
-        {% endif %}
-        </tbody>
-    </table>
-    {% endif %}
-
-    <div class="dfs-pool-pos-hdr">
+    <div class="card">
+    <div class="dfs-pool-pos-hdr" style="margin-top: 0;">
         News coverage, Week {{ week_start }} – {{ week_end }}
         {% if sentiment_score is not none %}
         <span style="font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-muted);">
@@ -213,7 +302,7 @@
         </span>
         {% endif %}
     </div>
-    <p style="color: var(--text-muted); font-size: 0.74rem; margin: -2px 0 10px;">Shown for context only — this doesn't change the projection above. See <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">past weeks' results</a> for how projections alone have performed.</p>
+    <p class="dfs-subhead" style="margin: -4px 0 10px;">Shown for context only — this doesn't change the projection above. See <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">past weeks' results</a> for how projections alone have performed.</p>
 
     {% if not articles %}
     <p style="color: var(--text-muted); font-size: 0.82rem;">No matched articles in this window.</p>
@@ -229,6 +318,7 @@
         {% endfor %}
     </div>
     {% endif %}
+    </div>
 
 </div>
 {% endif %}

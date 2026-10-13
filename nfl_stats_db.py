@@ -702,6 +702,95 @@ def get_opponent_defense_card_data_db(team_id, season, before_date=None, recent_
     return {'recent': _summarize(recent_rows, plays), 'season': _summarize(season_rows, plays)}
 
 
+def get_nfl_league_defense_profile_db(season, recent_window=5):
+    """Every NFL team's own per-game defensive averages in one pass, for
+    comparing one team's card against the league rather than just its own
+    recent-vs-season trend — the league side of the "is this matchup
+    favorable" question get_dst_card_data_db()/get_opponent_defense_card_
+    data_db() can't answer on their own (those two only ever look at a
+    single team_id). Three queries total covering every team at once
+    (not one query per team x 32), same pool-exhaustion lesson as those
+    two functions' docstrings.
+
+    Returns {team_id: {...}} — one entry per team with >=1 stored game
+    this season, each a dict merging: 'games' (season sample size),
+    'points_allowed_pg', 'fpts_allowed_qb_pg', 'fpts_allowed_rb_pg',
+    'fpts_allowed_rec_pg', 'long_plays_allowed_pg', 'redzone_td_rate'
+    (from TeamGameStat — recent_window games, regardless of season, same
+    "recent" convention as the single-team card functions) and
+    'sacks_pg', 'tfl_pg', 'takeaways_pg', 'pass_defended_pg' (from
+    PlayerGameStat, season-to-date only — box-score defensive stats
+    aren't on TeamGameStat, and a 32-team recent-window version of the
+    per-game PlayerGameStat regroup below would be a second full scan for
+    a window the headline metrics above already use consistently).
+    A team missing a given underlying metric simply omits that key
+    (never a zero), same "don't fake a sample that isn't there"
+    convention as the single-team functions."""
+    import nfl_player_model as pm
+    from app import app as flask_app, TeamGameStat, PlayerGameStat
+
+    with flask_app.app_context():
+        team_rows = (TeamGameStat.query.filter_by(sport='NFL')
+                     .order_by(TeamGameStat.game_date.desc()).all())
+        player_rows = (PlayerGameStat.query.filter_by(sport='NFL', season=season).all()
+                       if season else [])
+
+    by_team = defaultdict(list)
+    for r in team_rows:
+        by_team[r.team_id].append(r)
+
+    profile = {}
+    for team_id, rows in by_team.items():
+        recent_rows = rows[:recent_window]
+        n = len(recent_rows)
+        if not n:
+            continue
+        rz_rows = [r for r in recent_rows if r.long_plays_allowed is not None]
+        n_rz = len(rz_rows)
+        redzone_trips = sum(r.redzone_trips_allowed or 0 for r in rz_rows)
+        redzone_tds = sum(r.redzone_tds_allowed or 0 for r in rz_rows)
+        fpts_qb = [r.fpts_allowed_qb for r in recent_rows if r.fpts_allowed_qb is not None]
+        fpts_rb = [r.fpts_allowed_rb for r in recent_rows if r.fpts_allowed_rb is not None]
+        fpts_rec = [r.fpts_allowed_rec for r in recent_rows if r.fpts_allowed_rec is not None]
+        entry = {'games': n, 'points_allowed_pg': sum(r.points_allowed or 0 for r in recent_rows) / n}
+        if fpts_qb:
+            entry['fpts_allowed_qb_pg'] = sum(fpts_qb) / len(fpts_qb)
+        if fpts_rb:
+            entry['fpts_allowed_rb_pg'] = sum(fpts_rb) / len(fpts_rb)
+        if fpts_rec:
+            entry['fpts_allowed_rec_pg'] = sum(fpts_rec) / len(fpts_rec)
+        if n_rz:
+            entry['long_plays_allowed_pg'] = sum(r.long_plays_allowed or 0 for r in rz_rows) / n_rz
+            if redzone_trips:
+                entry['redzone_td_rate'] = redzone_tds / redzone_trips
+        profile[team_id] = entry
+
+    by_team_game = defaultdict(list)
+    for r in player_rows:
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        by_team_game[(r.team_id, r.game_id)].append({'categories': categories})
+
+    pressure_rows = defaultdict(list)
+    for (team_id, _game_id), game_rows in by_team_game.items():
+        _, defn = pm.parse_team_game_aggregate(game_rows)
+        pressure_rows[team_id].append(defn)
+
+    for team_id, defn_games in pressure_rows.items():
+        n_def = len(defn_games)
+        if not n_def:
+            continue
+        entry = profile.setdefault(team_id, {'games': 0})
+        entry['sacks_pg'] = sum(d['sacks'] for d in defn_games) / n_def
+        entry['tfl_pg'] = sum(d['tfl'] for d in defn_games) / n_def
+        entry['takeaways_pg'] = sum(d['takeaways'] for d in defn_games) / n_def
+        entry['pass_defended_pg'] = sum(d['pass_defended'] for d in defn_games) / n_def
+
+    return profile
+
+
 def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
     """Returns (offense_list, defense_list) — up to `limit` of this team's
     most recent games, newest first, each already collapsed to one team-

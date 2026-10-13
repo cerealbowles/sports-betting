@@ -1909,6 +1909,117 @@ body.embed-mode .container { padding-bottom: 0; }
     font-size: 0.68rem; font-weight: 700; font-family: var(--font-mono);
 }
 
+/* ── Player/DST detail card "matchup" redesign (see _nfl_player_detail.html)
+   — reuses this file's existing tokens (--win/--loss/--warn-text, --purple-*,
+   .mc-track's bar/dot track) rather than a new palette, so the card matches
+   the rest of the app instead of importing its own theme. ── */
+.pc-hero {
+    background: linear-gradient(130deg, var(--bg-card-2), var(--bg-card) 68%);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; position: relative; overflow: hidden; margin-bottom: 14px;
+}
+.pc-hero::after {
+    content: ''; position: absolute; right: -48px; top: -70px; width: 190px; height: 190px;
+    border-radius: 50%; background: var(--purple-text); opacity: 0.07; filter: blur(4px);
+}
+.pc-player-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; position: relative; z-index: 1; }
+.pc-avatar {
+    width: 52px; height: 52px; border-radius: 15px; background: var(--purple-dim);
+    border: 1px solid var(--border-strong); color: var(--purple-text);
+    display: grid; place-items: center; font-weight: 800; font-size: 1.2rem;
+    font-family: var(--font-cond); flex: none;
+}
+.pc-player-meta { min-width: 0; }
+.pc-eyebrow { font-size: 0.68rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-muted); }
+.pc-player-meta h2 { font-family: var(--font-display); font-size: 1.3rem; line-height: 1.2; margin: 2px 0 3px; }
+.pc-vs { font-size: 0.78rem; color: var(--text-muted); }
+.pc-score { text-align: right; margin-left: auto; }
+.pc-score strong { font-size: 1.6rem; line-height: 1; display: block; letter-spacing: -0.02em; font-family: var(--font-cond); }
+.pc-score span { display: block; color: var(--text-muted); font-size: 0.64rem; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+.pc-verdict {
+    display: flex; gap: 12px; align-items: center; margin-top: 15px; padding-top: 13px;
+    border-top: 1px solid var(--border); position: relative; z-index: 1;
+}
+.pc-grade {
+    width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+    font-weight: 850; font-size: 1.2rem; flex: none; font-family: var(--font-cond);
+}
+.pc-grade-good    { background: rgba(168,240,122,0.14); color: var(--win);       border: 1px solid rgba(168,240,122,0.32); }
+.pc-grade-neutral { background: rgba(255,196,107,0.12); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.30); }
+.pc-grade-bad     { background: rgba(255,178,122,0.12); color: var(--loss);      border: 1px solid rgba(255,178,122,0.30); }
+.pc-verdict-copy { flex: 1; min-width: 0; }
+.pc-verdict-copy strong { font-size: 0.88rem; display: block; }
+.pc-verdict-copy span { font-size: 0.74rem; color: var(--text-muted); display: block; margin-top: 3px; line-height: 1.4; }
+.pc-tag { font-size: 0.68rem; font-weight: 700; border-radius: 999px; padding: 4px 9px; white-space: nowrap; }
+.pc-tag-good    { background: rgba(168,240,122,0.13); color: var(--win);       border: 1px solid rgba(168,240,122,0.30); }
+.pc-tag-neutral { background: rgba(255,196,107,0.11); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.28); }
+.pc-tag-bad     { background: rgba(255,178,122,0.11); color: var(--loss);      border: 1px solid rgba(255,178,122,0.28); }
+
+.pc-mini-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 14px; position: relative; z-index: 1; }
+.pc-mini { padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card-2); min-width: 0; }
+.pc-mini span { display: block; color: var(--text-muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.pc-mini strong { display: block; font-size: 0.92rem; margin-top: 4px; font-family: var(--font-cond); }
+.pc-mini small { font-size: 0.64rem; color: var(--text-muted); font-weight: 500; }
+
+/* CSS-only tabs: this fragment is injected via innerHTML (see
+   nfl_players.html's openPlayerDetail), so an inline <script> here never
+   runs — a hidden radio group + :checked sibling selectors needs no JS.
+   The 3 <input>s must be direct children of the SAME parent as .pc-tab-bar
+   and each .pc-view (never nested inside .pc-tab-bar itself) — the `~`
+   general-sibling combinator only matches elements sharing one parent, so
+   an input buried a level deeper than its target can't reach it. Labels
+   stay inside .pc-tab-bar purely for layout; `for=` is what wires each
+   label to its input regardless of where either sits in the DOM. */
+.pc-tabs-input { position: absolute; opacity: 0; pointer-events: none; }
+.pc-tab-bar { display: flex; gap: 6px; background: var(--bg-input); padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 4px 0 14px; }
+.pc-tab-bar label {
+    flex: 1; min-width: 0; text-align: center; cursor: pointer; padding: 8px 5px;
+    font-size: 0.7rem; font-weight: 600; color: var(--text-muted); border-radius: 7px;
+}
+.pc-view { display: none; }
+/* Each radio's :checked state reveals its matching label/.pc-view further
+   down the same card — relies on DOM order (all three radios first, then
+   .pc-tab-bar, then all three views), since plain CSS has no "sibling N
+   elements later" selector shorter than naming each pair. */
+#pc-tab-1:checked ~ .pc-tab-bar label[for="pc-tab-1"],
+#pc-tab-2:checked ~ .pc-tab-bar label[for="pc-tab-2"],
+#pc-tab-3:checked ~ .pc-tab-bar label[for="pc-tab-3"] { background: var(--purple-dim); color: var(--purple-text); }
+#pc-tab-1:checked ~ #pc-view-1,
+#pc-tab-2:checked ~ #pc-view-2,
+#pc-tab-3:checked ~ #pc-view-3 { display: block; }
+
+.pc-barrow { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.pc-barrow:last-child { border-bottom: 0; }
+.pc-barhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pc-barhead strong { font-size: 0.78rem; }
+.pc-delta { font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+.pc-delta-good { color: var(--win); }
+.pc-delta-neutral { color: var(--warn-text); }
+.pc-delta-bad { color: var(--loss); }
+.pc-scale-labels { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 0.6rem; margin-top: 6px; }
+.pc-detail { display: flex; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 0.68rem; margin-top: 6px; }
+.pc-detail b { color: var(--text); font-weight: 650; }
+.pc-dot-good    { background: var(--win);       box-shadow: 0 0 0 3px rgba(168,240,122,0.18); }
+.pc-dot-neutral { background: var(--warn-text); box-shadow: 0 0 0 3px rgba(255,196,107,0.18); }
+.pc-dot-bad     { background: var(--loss);      box-shadow: 0 0 0 3px rgba(255,178,122,0.18); }
+
+.pc-insight {
+    margin-top: 12px; background: rgba(168,240,122,0.08); border: 1px solid rgba(168,240,122,0.22);
+    border-radius: 11px; padding: 12px; font-size: 0.78rem; color: var(--text);
+}
+.pc-insight .pc-arrow { color: var(--win); font-weight: 900; margin-right: 5px; }
+.pc-insight.pc-insight-bad { background: rgba(255,178,122,0.08); border-color: rgba(255,178,122,0.22); }
+.pc-insight.pc-insight-bad .pc-arrow { color: var(--loss); }
+.pc-insight.pc-insight-neutral { background: rgba(255,196,107,0.08); border-color: rgba(255,196,107,0.22); }
+.pc-insight.pc-insight-neutral .pc-arrow { color: var(--warn-text); }
+
+@media (max-width: 480px) {
+    .pc-mini-grid { gap: 6px; }
+    .pc-mini { padding: 7px 8px; }
+    .pc-score strong { font-size: 1.4rem; }
+}
+
 /* ── Projected lineup / live actuals (NBA, see _nba_lineups.html) ── */
 .lineup-section { margin-top: 10px; }
 .lineup-details { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
