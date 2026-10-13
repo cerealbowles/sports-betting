@@ -6301,8 +6301,7 @@ def nfl_player_detail(player_id):
     # Display-only context (see get_player_usage_card_data_db()'s docstring
     # for why this doesn't feed the projection) — recent-vs-season usage,
     # long/short run-pass splits, red-zone usage, target share.
-    own_team_id = abbrev_to_team_id.get(player.get('team'))
-    splits = nfl_stats_db.get_player_usage_card_data_db(player_id, own_team_id, season)
+    splits = nfl_stats_db.get_player_usage_card_data_db(player_id, season)
 
   dst_own_defense = dst_opponent_offense = None
   opponent_defense = None

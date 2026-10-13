@@ -255,7 +255,7 @@ def _build_row(player_row, team_row, categories, season):
     team_id, opponent_id = team_row.team_id, team_row.opponent_id
 
     usage = nfl_stats_db.get_player_usage_card_data_db(
-        player_row.player_id, team_id, season, before_date=game_date, recent_window=RECENT_WINDOW)
+        player_row.player_id, season, before_date=game_date, recent_window=RECENT_WINDOW)
 
     opp_key = (opponent_id, game_date)
     if opp_key not in _opponent_defense_cache:
@@ -458,8 +458,10 @@ def validate_dataset(rows):
     print(f'rows with < 3 recent games played: {thin_recent}/{n}')
     print(f'rows with < 5 season games played: {thin_season}/{n}')
 
-    bad_share = sum(1 for r in rows if r['recent_usage'] and r['recent_usage'].get('target_share') is not None
-                     and not (0.0 <= r['recent_usage']['target_share'] <= 1.0))
+    def _bad_share(scope):
+        return sum(1 for r in rows if r[scope] and r[scope].get('target_share') is not None
+                   and not (0.0 <= r[scope]['target_share'] <= 1.0))
+    bad_share = _bad_share('recent_usage') + _bad_share('season_usage')
     print(f'rows with out-of-range target_share (should be 0): {bad_share}')
     if bad_share:
         ok = False

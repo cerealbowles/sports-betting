@@ -373,7 +373,7 @@ def get_player_gamelog_db(player_id, before_date=None, limit=None):
         return out
 
 
-def get_player_usage_card_data_db(player_id, team_id, season, before_date=None,
+def get_player_usage_card_data_db(player_id, season, before_date=None,
                                    recent_window=3, history_limit=20):
     """Aggregates this player's rushing_splits/receiving_splits/
     passing_splits (nfl_playbyplay_api.py's output, merged into
@@ -391,6 +391,21 @@ def get_player_usage_card_data_db(player_id, team_id, season, before_date=None,
     only to compute target share (this player's targets / team's total
     targets that game) — two queries total, not one per metric.
 
+    No `team_id` parameter — each game's own team is read from that same
+    game's gamelog row (get_player_gamelog_db() already returns it),
+    rather than one team_id applied to the whole window. A single fixed
+    team_id was a confirmed, real bug for any player who changed teams
+    mid-season: the "teammates" query would silently match 0 rows for
+    every game played on the OLD team (since the new team's roster never
+    appears in an old team's game), undercounting the target-share
+    denominator while the player's own targets for those games were still
+    counted in the numerator — produced target_share > 1.0 (caught live:
+    a traded WR's season target_share came out as 3.1). Scoping each
+    game's teammate lookup to THAT game's own team_id, derived from the
+    player's own row, fixes it structurally instead of requiring every
+    caller to pass the "right" team_id (there often isn't a single one
+    for a traded player's whole window).
+
     Returns {'recent': {...} or None, 'season': {...} or None} — each side
     is {'games', 'rushing': {...} or None, 'receiving': {...} or None,
     'passing': {...} or None, 'target_share': float or None}. A rushing/
@@ -404,16 +419,23 @@ def get_player_usage_card_data_db(player_id, team_id, season, before_date=None,
     (yet) a projection input."""
     games = get_player_gamelog_db(player_id, before_date=before_date, limit=history_limit)
     game_ids = [g['event_id'] for g in games]
+    game_team = {g['event_id']: g['team_id'] for g in games}
 
     team_targets_by_game = defaultdict(float)
     if game_ids:
         from app import app as flask_app, PlayerGameStat
         with flask_app.app_context():
             team_rows = (PlayerGameStat.query
-                         .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.team_id == team_id,
+                         .filter(PlayerGameStat.sport == 'NFL',
                                  PlayerGameStat.game_id.in_(game_ids))
                          .all())
         for r in team_rows:
+            # A game_id has rows from BOTH teams — only count the ones on
+            # the SAME team the player was actually on for THIS game (see
+            # docstring: that's not always one fixed team across the
+            # whole window).
+            if r.team_id != game_team.get(r.game_id):
+                continue
             try:
                 cats = json.loads(r.stats_json) if r.stats_json else {}
             except (TypeError, ValueError):
