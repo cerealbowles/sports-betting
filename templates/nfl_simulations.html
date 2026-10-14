@@ -3,16 +3,8 @@
 
 {% block head %}
 <style>
-.sim-game-card { margin-bottom: 14px; }
-.sim-game-hdr { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.sim-game-hdr h2 { font-family: var(--font-display); font-size: 1.05rem; }
-.sim-game-meta { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 10px; }
-.sim-win-row { display: flex; gap: 18px; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 10px; flex-wrap: wrap; }
-.sim-win-team { display: flex; align-items: center; gap: 6px; }
-.sim-win-pct { font-weight: 700; color: var(--text); }
-.sim-win-bar { display: inline-block; width: 90px; height: 7px; background: var(--border); border-radius: 4px; overflow: hidden; vertical-align: middle; }
-.sim-win-bar-fill { height: 100%; background: var(--accent, #6b8afd); }
-.sim-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 8px; }
+.sim-game-card { padding-bottom: 10px; }
+.sim-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 14px 10px; }
 .sim-starters h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
@@ -23,7 +15,8 @@
 .sim-starter-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sim-starter-median { font-weight: 700; font-family: var(--font-mono); }
 .sim-starter-empty { color: var(--text-muted); font-style: italic; }
-.sim-subtables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
+.sim-details { margin: 0 14px 4px; }
+.sim-subtables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px 0 0; }
 .sim-subtables h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
@@ -100,77 +93,99 @@
 </table>
 {% endmacro %}
 
+<div class="games-grid">
 {% for g in games %}
-<div class="card sim-game-card">
-    <div class="sim-game-hdr">
-        <h2>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</h2>
-    </div>
+<div class="card game-card sim-game-card">
+    <div class="game-card-summary">
 
-    {% if g.summary %}
-    <div class="sim-game-meta">{{ g.summary.n_sims }} simulations · avg score {{ g.away.abbrev }} {{ '%.1f' | format(g.summary.away_avg_score) }} – {{ g.home.abbrev }} {{ '%.1f' | format(g.summary.home_avg_score) }}{% if g.summary.ties %} · {{ g.summary.ties }} tie{{ 's' if g.summary.ties != 1 }}{% endif %}</div>
-    <div class="sim-win-row">
-        <div class="sim-win-team">
-            <span>{{ g.away.abbrev }}</span>
-            <span class="sim-win-bar"><span class="sim-win-bar-fill" style="width: {{ g.summary.away_win_pct }}%;"></span></span>
-            <span class="sim-win-pct">{{ g.summary.away_wins }}/{{ g.summary.n_sims }} ({{ g.summary.away_win_pct }}%)</span>
-        </div>
-        <div class="sim-win-team">
-            <span>{{ g.home.abbrev }}</span>
-            <span class="sim-win-bar"><span class="sim-win-bar-fill" style="width: {{ g.summary.home_win_pct }}%;"></span></span>
-            <span class="sim-win-pct">{{ g.summary.home_wins }}/{{ g.summary.n_sims }} ({{ g.summary.home_win_pct }}%)</span>
-        </div>
-    </div>
-    {% endif %}
-
-    <div class="sim-starters">
-        <div>
-            <h3>{{ g.away.abbrev }} starters (median pts)</h3>
-            {{ starter_rows(g.away_starters) }}
-        </div>
-        <div>
-            <h3>{{ g.home.abbrev }} starters (median pts)</h3>
-            {{ starter_rows(g.home_starters) }}
-        </div>
-    </div>
-
-    <details class="lineup-details">
-    <summary class="lineup-summary">Full game breakdown</summary>
-    <div style="padding: 10px 0;">
-
-        {% if g.summary %}
-        <table class="table sim-quarter-table">
-            <thead><tr><th>Avg score by quarter<sup>*</sup></th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Final</th></tr></thead>
-            <tbody>
-            <tr>
-                <td>{{ g.away.abbrev }}</td>
-                {% for q in g.summary.away_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
-                <td><strong>{{ '%.1f' | format(g.summary.away_avg_score) }}</strong></td>
-            </tr>
-            <tr>
-                <td>{{ g.home.abbrev }}</td>
-                {% for q in g.summary.home_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
-                <td><strong>{{ '%.1f' | format(g.summary.home_avg_score) }}</strong></td>
-            </tr>
-            </tbody>
-        </table>
-        <p style="color: var(--text-muted); font-size: 0.75rem; margin: -6px 0 14px;">*Approximate — this simulator has no real game clock, so "quarter" is each side's own drives split into four roughly-equal groups by order, not actual elapsed time.</p>
-        {% endif %}
-
-        <div class="sim-subtables">
-            <div>
-                <h3>{{ g.away.name }} (away) — full roster</h3>
-                {{ player_rows(g.away_players) }}
-            </div>
-            <div>
-                <h3>{{ g.home.name }} (home) — full roster</h3>
-                {{ player_rows(g.home_players) }}
+        <div class="game-header">
+            <span class="status-final">SIMULATED</span>
+            <div class="game-header-right">
+                {% if g.summary %}<span class="weather-badge">{{ g.summary.n_sims }} sims{% if g.summary.ties %} · {{ g.summary.ties }} tie{{ 's' if g.summary.ties != 1 }}{% endif %}</span>{% endif %}
             </div>
         </div>
 
+        <div class="scoreboard">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ g.away.logo_url }}" alt="{{ g.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.away.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.away_win_pct }}% to win</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="sb-center">
+                {% if g.summary %}
+                <div class="sb-score">
+                    <span class="sb-score-away{{ ' sb-score-win' if g.summary.away_avg_score > g.summary.home_avg_score }}">{{ '%.0f' | format(g.summary.away_avg_score) }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home{{ ' sb-score-win' if g.summary.home_avg_score > g.summary.away_avg_score }}">{{ '%.0f' | format(g.summary.home_avg_score) }}</span>
+                </div>
+                <span class="sb-inning">avg score</span>
+                {% endif %}
+            </div>
+
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.home.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.home_win_pct }}% to win</div>{% endif %}
+                </div>
+                <img class="team-logo" src="{{ g.home.logo_url }}" alt="{{ g.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+        </div>
+
+        <div class="sim-starters">
+            <div>
+                <h3>{{ g.away.abbrev }} starters (median pts)</h3>
+                {{ starter_rows(g.away_starters) }}
+            </div>
+            <div>
+                <h3>{{ g.home.abbrev }} starters (median pts)</h3>
+                {{ starter_rows(g.home_starters) }}
+            </div>
+        </div>
+
+        <details class="lineup-details sim-details">
+        <summary class="lineup-summary">Full game breakdown</summary>
+        <div style="padding: 10px 0;">
+
+            {% if g.summary %}
+            <table class="table sim-quarter-table">
+                <thead><tr><th>Avg score by quarter<sup>*</sup></th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Final</th></tr></thead>
+                <tbody>
+                <tr>
+                    <td>{{ g.away.abbrev }}</td>
+                    {% for q in g.summary.away_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                    <td><strong>{{ '%.1f' | format(g.summary.away_avg_score) }}</strong></td>
+                </tr>
+                <tr>
+                    <td>{{ g.home.abbrev }}</td>
+                    {% for q in g.summary.home_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                    <td><strong>{{ '%.1f' | format(g.summary.home_avg_score) }}</strong></td>
+                </tr>
+                </tbody>
+            </table>
+            <p style="color: var(--text-muted); font-size: 0.75rem; margin: -6px 0 14px;">*Approximate — this simulator has no real game clock, so "quarter" is each side's own drives split into four roughly-equal groups by order, not actual elapsed time.</p>
+            {% endif %}
+
+            <div class="sim-subtables">
+                <div>
+                    <h3>{{ g.away.name }} (away) — full roster</h3>
+                    {{ player_rows(g.away_players) }}
+                </div>
+                <div>
+                    <h3>{{ g.home.name }} (home) — full roster</h3>
+                    {{ player_rows(g.home_players) }}
+                </div>
+            </div>
+
+        </div>
+        </details>
+
     </div>
-    </details>
 </div>
 {% endfor %}
+</div>
 
 {% endif %}
 
