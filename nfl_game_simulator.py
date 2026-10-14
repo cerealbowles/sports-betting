@@ -64,11 +64,15 @@ nfl_fantasy.py's own documented scoring gaps):
     remaining unconditioned piece — a kickoff's outcome depends on the
     return man/coverage unit, not offense/defense grades, so there's no
     honest signal to condition it on with what this app tracks. The
-    conditioning strength (TEAM_CONDITIONING_K, FOURTH_DOWN_GO_FOR_IT_
-    TILT_SCALE) is hand-set, not backtested — same category of gap as
-    FOURTH_DOWN_GO_FOR_IT_RATE itself, for the same reason (no clean way
-    to fit "how much should a 0.3-grade mismatch skew outcomes" from
-    what's stored).
+    conditioning strength for scrimmage/4th-down PLAY SELECTION
+    (TEAM_CONDITIONING_K) IS now fit — see that constant's own comment
+    for the real grid search behind it (544 leakage-free games, full
+    2024+2025 seasons). FOURTH_DOWN_GO_FOR_IT_TILT_SCALE (how much tilt
+    nudges the go-for-it RATE, a different knob from K) and
+    FOURTH_DOWN_GO_FOR_IT_RATE itself remain hand-set, not backtested —
+    there's no clean way to fit "how much should a mismatch change the
+    decision to go for it" from what's stored the way win/loss outcomes
+    let K get fit.
   - No game clock. Drives run until they end on their own merits (score/
     turnover/turnover-on-downs/stalled-4th-down); `drives_per_team`
     stands in for a real half/game duration rather than a clock that can
@@ -140,10 +144,25 @@ def _effective_go_for_it_rate(tilt):
 # so at tilt=+0.3 (a real favorable matchup) the best play in a bucket
 # ends up roughly exp(K*0.3) times more likely to be drawn than the
 # worst, tilt=0 (neutral/unknown matchup) reduces to the original uniform
-# draw. K=2.5 makes that ratio ~2.1x at tilt=0.3, ~3.5x at tilt=0.5 — a
-# real, noticeable skew without letting one lopsided matchup dominate
-# every single play. Hand-set, not backtested — see module docstring.
-TEAM_CONDITIONING_K = 2.5
+# draw.
+#
+# FIT, not hand-set — a real grid search against 544 leakage-free
+# simulated games spanning the full 2024+2025 seasons (before_date-gated
+# to each game's own week, no leakage), scored against real final
+# results: K in {0.0, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0}, picking
+# whichever minimized Brier score (same lower-is-better/0.25-is-random
+# convention this app's real betting-model page uses). Result was a real
+# U-shaped optimum, not a monotonic slide — K=0.0 (no conditioning)
+# scored only 53.1% win-pick accuracy (barely above a coin flip) and
+# Brier 0.2504; accuracy and Brier both kept improving up through K=0.5
+# (58.6% accuracy, Brier 0.2445 — the best of every value tested on BOTH
+# metrics), then Brier degraded monotonically again for every K above
+# that, reaching 0.2983 at K=3.0. The PREVIOUS value here, K=2.5, was a
+# real, measured overconfidence problem: its own calibration table showed
+# "90%+ confidence" predictions only panning out 64.5% of the time. K=0.5
+# fixes that — see this module's git history / the session that ran this
+# backtest for the full per-K results and calibration tables.
+TEAM_CONDITIONING_K = 0.5
 
 SCORING_PLAY_TYPES = {'Rushing Touchdown', 'Passing Touchdown'}
 RUSH_PLAY_TYPES = {'Rush', 'Rushing Touchdown'}
@@ -238,8 +257,10 @@ def _fourth_down_value(p):
     don't share one natural continuous outcome the way scrimmage yardage
     does (a punt's own end_yards_to_endzone means "how pinned back is the
     opponent," not comparable on the same scale to a binary FG make/
-    miss). Hand-set, not fit — see TEAM_CONDITIONING_K's comment for the
-    same category of gap:
+    miss). Hand-set, not fit — same category of gap as FOURTH_DOWN_GO_
+    FOR_IT_RATE (unlike TEAM_CONDITIONING_K, which IS now fit — see that
+    constant's own comment — there's no real win/loss outcome to fit this
+    particular ranking against, just a plausible ordering):
       - Field Goal Good: 100 — unambiguously the best 4th-down outcome
         (3 points), always ranks at/near the top of its bucket.
       - Punt: the resulting opponent field position (end_yards_to_endzone
