@@ -84,6 +84,7 @@ nfl_fantasy.py's own documented scoring gaps):
     trust for anything that needs a real clock (2-minute-drill behavior,
     which team has the ball at the 2:00 warning, etc.).
 """
+import itertools
 import math
 import random
 from collections import defaultdict, namedtuple
@@ -172,6 +173,14 @@ SimPools = namedtuple('SimPools', [
     'scrimmage_buckets', 'scrimmage_plays',      # down/distance/field-position -> [play, ...], see build_play_buckets()
     'fourth_down_buckets', 'fourth_down_plays',  # field-position -> [punt/FG play, ...], see build_fourth_down_pool()
     'kickoff_plays',                             # flat list, see nfl_stats_db.get_kickoff_pool_db()
+    'tilt_weight_cache',                         # mutable {} — see _tilted_weights(), the fix for a real
+                                                  # confirmed-live perf bug: tilt is FIXED for an entire
+                                                  # simulate_matchup() call (one value per side, reused across
+                                                  # all n draws and every play of every drive), but the exp()
+                                                  # weight list was being rebuilt from scratch on every single
+                                                  # play draw before this cache existed — confirmed as the
+                                                  # dominant cost of a simulate_week() run (~0.51s/game, ~1150s
+                                                  # for one 16-game week) via direct profiling on production.
 ])
 
 
@@ -290,7 +299,35 @@ def build_sim_pools(seasons=None):
         fourth_down_buckets=build_fourth_down_pool(fourth_down_plays),
         fourth_down_plays=fourth_down_plays,
         kickoff_plays=kickoff_plays,
+        tilt_weight_cache={},
     )
+
+
+def _tilted_choice(bucket_key, candidates, tilt, pools, rng):
+    """rng.choices(candidates, ...) weighted by exp(K * percentile * tilt)
+    (see TEAM_CONDITIONING_K), but computing and cumulative-summing that
+    weight list is itself O(bucket size) — up to ~1500+ for a well-
+    populated bucket — and tilt is FIXED for an entire simulate_matchup()
+    call (one value per side, reused across all n draws and every play of
+    every drive that side runs). Rebuilding the weight list from scratch
+    on every single play draw was confirmed live as THE dominant cost of
+    a simulate_week() run (~0.51s/simulated game — profiled directly on
+    production, nothing to do with DB queries or roster lookups, both of
+    which turned out cheap by comparison). This memoizes the (candidates,
+    cumulative-weights) pair per (bucket_key, tilt) in pools.
+    tilt_weight_cache — computed once, reused for every remaining draw at
+    that same tilt. random.choices()'s own `cum_weights=` form is used on
+    the cache hit path specifically because it skips the O(n) summation
+    rng.choices(..., weights=...) would otherwise redo every call."""
+    cache_key = (bucket_key, tilt)
+    cached = pools.tilt_weight_cache.get(cache_key)
+    if cached is None:
+        weights = [math.exp(TEAM_CONDITIONING_K * p['_percentile'] * tilt) for p in candidates]
+        cum_weights = list(itertools.accumulate(weights))
+        cached = (candidates, cum_weights)
+        pools.tilt_weight_cache[cache_key] = cached
+    cached_candidates, cum_weights = cached
+    return rng.choices(cached_candidates, cum_weights=cum_weights, k=1)[0]
 
 
 def _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=0.0):
@@ -313,12 +350,12 @@ def _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=0.0):
     dist_b, field_b = _distance_bucket(distance), _field_bucket(yards_to_endzone)
     all_plays = pools.scrimmage_plays
 
-    candidates = pools.scrimmage_buckets.get((down, dist_b, field_b), [])
+    bucket_key = (down, dist_b, field_b)
+    candidates = pools.scrimmage_buckets.get(bucket_key, [])
     if len(candidates) >= MIN_BUCKET_SAMPLES:
         if tilt == 0.0:
             return rng.choice(candidates)
-        weights = [math.exp(TEAM_CONDITIONING_K * p['_percentile'] * tilt) for p in candidates]
-        return rng.choices(candidates, weights=weights, k=1)[0]
+        return _tilted_choice(bucket_key, candidates, tilt, pools, rng)
 
     by_down_dist = [p for p in all_plays if p['down'] == down and _distance_bucket(p['distance']) == dist_b]
     if len(by_down_dist) >= MIN_BUCKET_SAMPLES:
@@ -362,8 +399,7 @@ def _sample_fourth_down(yards_to_endzone, pools, rng, tilt=0.0):
     if len(candidates) >= MIN_BUCKET_SAMPLES:
         if tilt == 0.0:
             return rng.choice(candidates)
-        weights = [math.exp(TEAM_CONDITIONING_K * p['_percentile'] * tilt) for p in candidates]
-        return rng.choices(candidates, weights=weights, k=1)[0]
+        return _tilted_choice(('4th', field_b), candidates, tilt, pools, rng)
     return rng.choice(pools.fourth_down_plays)
 
 
