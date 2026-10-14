@@ -50,7 +50,17 @@ nfl_fantasy.py's own documented scoring gaps):
   - No game clock. Drives run until they end on their own merits (score/
     turnover/turnover-on-downs/stalled-4th-down); `drives_per_team`
     stands in for a real half/game duration rather than a clock that can
-    force a team to hurry or run it out.
+    force a team to hurry or run it out. Team score (simulate_game()'s
+    'drives' list, and simulate_matchup()'s 'game' summary — win counts,
+    avg final score, quarter breakdown) is a direct consequence of this:
+    every touchdown is scored as 7 (extra point assumed automatic — this
+    app has no 2-point-conversion data, same gap nfl_fantasy.py's scoring
+    already documents), and "quarter" is an APPROXIMATION by drive order
+    (a side's drives split into four roughly-equal groups), not real
+    elapsed clock time — see _approx_quarter(). Good enough to show "how
+    did scoring tend to build up over the game," not precise enough to
+    trust for anything that needs a real clock (2-minute-drill behavior,
+    which team has the ball at the 2:00 warning, etc.).
 """
 import random
 from collections import defaultdict, namedtuple
@@ -78,6 +88,22 @@ FOURTH_DOWN_GO_FOR_IT_RATE = 0.3  # ...and even then, only this fraction of the 
 SCORING_PLAY_TYPES = {'Rushing Touchdown', 'Passing Touchdown'}
 RUSH_PLAY_TYPES = {'Rush', 'Rushing Touchdown'}
 RECEPTION_PLAY_TYPES = {'Pass Reception', 'Passing Touchdown'}
+
+# Points credited per drive outcome — see this module's docstring for the
+# "extra point assumed automatic, no 2-point data" caveat.
+DRIVE_POINTS = {'touchdown': 7, 'field_goal_good': 3}
+
+
+def _approx_quarter(drive_index, drives_per_team):
+    """drive_index: 0-based index of this side's drive (their 1st drive
+    of the game is 0, etc.). Splits one side's own `drives_per_team`
+    drives into four roughly-equal groups and returns which one this
+    drive falls in (1-4) — an APPROXIMATION of which quarter a drive
+    would fall in on average, not a real clock computation (this
+    simulator has none — see module docstring). Proportional rather than
+    a fixed drives-per-quarter constant so it still makes sense if
+    `drives_per_team` is ever changed from its default."""
+    return min(4, int(drive_index * 4 / drives_per_team) + 1)
 
 # Bundles every resampling pool build_sim_pools() loads once per
 # simulation run, threaded through every drive/play-sampling function
@@ -301,17 +327,26 @@ def simulate_game(pools, rng, drives_per_team=10):
     drive_ids/game across the warehouse, roughly half per side). Field
     position now carries over continuously from one drive to the next real
     kickoff/punt/turnover result (see simulate_drive()) instead of
-    resetting to a fixed spot every time. Returns {'home': [play, ...],
-    'away': [play, ...]} — all plays from all of that side's drives,
-    flattened, including any 4th-down Punt/Field Goal plays; drive
-    boundaries aren't needed past this point since attribution is
-    per-play."""
-    out = {'home': [], 'away': []}
+    resetting to a fixed spot every time. Returns {'home': {'plays': [...],
+    'drives': [...]}, 'away': {...}} per side — 'plays' is every play from
+    all of that side's drives, flattened (including any 4th-down Punt/
+    Field Goal plays), for attribute_plays_to_players(); 'drives' is one
+    {'outcome', 'points', 'quarter'} per drive (see DRIVE_POINTS/
+    _approx_quarter()) for simulate_matchup()'s game-level summary (final
+    score, win/loss, quarter breakdown)."""
+    out = {'home': {'plays': [], 'drives': []}, 'away': {'plays': [], 'drives': []}}
+    side_drive_idx = {'home': 0, 'away': 0}
     next_start = _resolve_kickoff_start(pools, rng)  # opening kickoff of the game
     for i in range(drives_per_team * 2):
         side = 'home' if i % 2 == 0 else 'away'
-        plays, _outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start)
-        out[side].extend(plays)
+        plays, outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start)
+        out[side]['plays'].extend(plays)
+        out[side]['drives'].append({
+            'outcome': outcome,
+            'points': DRIVE_POINTS.get(outcome, 0),
+            'quarter': _approx_quarter(side_drive_idx[side], drives_per_team),
+        })
+        side_drive_idx[side] += 1
     return out
 
 
@@ -398,11 +433,16 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     built once instead of once per game. None (the default) builds them
     here, for simulating a single matchup standalone.
 
-    Returns {'home': {player_id: {'sim': [n values], 'sim_min',
-    'sim_median', 'sim_max', 'sim_mean'}}, 'away': {...}} — player_id
-    only, no name/position resolution here (that needs a roster lookup, a
-    separate concern — see nfl_roster_api.get_skill_players() for a live
-    mapping, or resolve the ids the way build_player_pool() does)."""
+    Returns {'players': {'home': {player_id: {'sim': [n values],
+    'sim_min', 'sim_median', 'sim_max', 'sim_mean'}}, 'away': {...}},
+    'game': {'n', 'home_wins', 'away_wins', 'ties', 'home_win_pct',
+    'away_win_pct', 'home_avg_score', 'away_avg_score',
+    'home_quarter_avg', 'away_quarter_avg'}} — 'game' is the team-score-
+    level summary (see DRIVE_POINTS/_approx_quarter()'s "no real clock"
+    caveat, module docstring). player_id only, no name/position
+    resolution here (that needs a roster lookup, a separate concern —
+    see nfl_roster_api.get_skill_players() for a live mapping, or resolve
+    the ids the way build_player_pool() does)."""
     rng = rng or random.Random()
     pools = pools or build_sim_pools(seasons=seasons)
 
@@ -412,14 +452,28 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
                                                           window_games=window_games)
 
     draws = {'home': defaultdict(list), 'away': defaultdict(list)}
+    home_wins = away_wins = ties = 0
+    scores = {'home': [], 'away': []}
+    quarter_points = {'home': [0, 0, 0, 0], 'away': [0, 0, 0, 0]}
     for _ in range(n):
         game = simulate_game(pools, rng, drives_per_team=drives_per_team)
+        side_score = {}
         for side, shares in (('home', home_shares), ('away', away_shares)):
-            player_cats = attribute_plays_to_players(game[side], shares, rng)
+            side_score[side] = sum(d['points'] for d in game[side]['drives'])
+            scores[side].append(side_score[side])
+            for d in game[side]['drives']:
+                quarter_points[side][d['quarter'] - 1] += d['points']
+            player_cats = attribute_plays_to_players(game[side]['plays'], shares, rng)
             for player_id, categories in player_cats.items():
                 draws[side][player_id].append(nfl_fantasy.compute_fantasy_points(categories))
+        if side_score['home'] > side_score['away']:
+            home_wins += 1
+        elif side_score['away'] > side_score['home']:
+            away_wins += 1
+        else:
+            ties += 1
 
-    result = {}
+    players = {}
     for side in ('home', 'away'):
         side_out = {}
         for player_id, pts in draws[side].items():
@@ -431,8 +485,19 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
                 'sim_median': ranked[len(ranked) // 2],
                 'sim_max': ranked[-1],
             }
-        result[side] = side_out
-    return result
+        players[side] = side_out
+
+    game_summary = {
+        'n': n,
+        'home_wins': home_wins, 'away_wins': away_wins, 'ties': ties,
+        'home_win_pct': round(100 * home_wins / n, 1),
+        'away_win_pct': round(100 * away_wins / n, 1),
+        'home_avg_score': round(sum(scores['home']) / n, 1),
+        'away_avg_score': round(sum(scores['away']) / n, 1),
+        'home_quarter_avg': [round(q / n, 1) for q in quarter_points['home']],
+        'away_quarter_avg': [round(q / n, 1) for q in quarter_points['away']],
+    }
+    return {'players': players, 'game': game_summary}
 
 
 def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None, window_games=5,
@@ -482,7 +547,7 @@ def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None,
         for side, team_id, opponent_id in (('home', home_id, away_id), ('away', away_id, home_id)):
             roster = {p['id']: p for p in nfl_roster_api.get_skill_players(team_id)}
             results = []
-            for player_id, outcome in sim[side].items():
+            for player_id, outcome in sim['players'][side].items():
                 info = roster.get(player_id, {})
                 results.append({
                     'player_id': player_id,
@@ -493,3 +558,5 @@ def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None,
                 })
             nfl_stats_db.persist_sim_results_db(actual_season, actual_week, g['game_id'],
                                                  team_id, opponent_id, results)
+        nfl_stats_db.persist_sim_game_summary_db(actual_season, actual_week, g['game_id'],
+                                                  home_id, away_id, sim['game'])

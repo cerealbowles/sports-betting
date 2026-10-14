@@ -597,6 +597,48 @@ class NflSimResult(db.Model):
   __table_args__ = (db.UniqueConstraint('season', 'week', 'player_id', name='uq_nfl_sim_result'),)
 
 
+class NflSimGame(db.Model):
+  """Team-score-level companion to NflSimResult's per-player rows — one
+  row per (season, week, game_id) summarizing nfl_game_simulator.
+  simulate_week()'s n simulated games for one matchup: win/loss/tie
+  counts, average final score, and an approximate quarter-by-quarter
+  scoring breakdown. Written by nfl_stats_db.persist_sim_game_summary_db(),
+  read by /nfl/simulations via get_sim_game_summary_db() — same "written
+  by a daily background job, never computed on a live request" reasoning
+  as NflSimResult (see that model's own class docstring for the full
+  rationale).
+
+  'Approximate' quarter breakdown, not a real clock-based one: this
+  simulator has no game-clock model at all (see nfl_game_simulator.py's
+  module docstring) — each drive is bucketed into a quarter by DRIVE
+  ORDER (a side's own drives split into four roughly-equal groups), not
+  real elapsed time. Good for "how did scoring tend to build up," not
+  precise enough to trust for anything that needs a real clock.
+
+  Same upsert-overwrites-previous-day convention as NflSimResult (unique
+  on season/week/game_id) — this is a rolling estimate for an unplayed
+  week, re-computed daily, not a permanent record of a past result the
+  way NflRecapWeek is."""
+  __tablename__ = 'nfl_sim_games'
+  id                  = db.Column(db.Integer, primary_key=True)
+  season              = db.Column(db.Integer, nullable=False, index=True)
+  week                = db.Column(db.Integer, nullable=False, index=True)
+  game_id             = db.Column(db.String(20), nullable=False, index=True)
+  home_team_id        = db.Column(db.String(20), nullable=False)
+  away_team_id        = db.Column(db.String(20), nullable=False)
+  n_sims              = db.Column(db.Integer, nullable=False)
+  home_wins           = db.Column(db.Integer, nullable=False)
+  away_wins           = db.Column(db.Integer, nullable=False)
+  ties                = db.Column(db.Integer, nullable=False, default=0)
+  home_avg_score      = db.Column(db.Float, nullable=False)
+  away_avg_score      = db.Column(db.Float, nullable=False)
+  quarter_scores_json = db.Column(db.Text)
+  computed_at         = db.Column(db.DateTime(timezone=True),
+                                   default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('season', 'week', 'game_id', name='uq_nfl_sim_game'),)
+
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()
@@ -6214,15 +6256,45 @@ def nfl_lineup():
                                                                        max_low_tier)))
   return _set_last_sport_cookie(resp, 'NFL')
 
+NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE')]
+
+def _nfl_sim_card_starters(players):
+  """players: one side's list of per-player sim-result dicts (same shape
+  get_sim_results_db() returns). Returns an ordered list matching
+  NFL_SIM_CARD_SLOTS — [{'slot': 'RB1', 'player': {...} or None}, ...] —
+  the top `n`th-ranked (by sim_median) player at each position, for the
+  compact starters row on each /nfl/simulations card. A position with
+  fewer stored players than slots (e.g. a team the background job only
+  found one usable TE for) gets `None` for the missing slot rather than
+  an error — same "a real gap beats a wrong guess" convention as the rest
+  of this app; the template just renders a dash for it."""
+  by_pos = defaultdict(list)
+  for p in players:
+    by_pos[p['position']].append(p)
+  for lst in by_pos.values():
+    lst.sort(key=lambda p: -p['sim_median'])
+  taken = defaultdict(int)
+  starters = []
+  for pos, slot in NFL_SIM_CARD_SLOTS:
+    idx = taken[pos]
+    taken[pos] += 1
+    pool = by_pos.get(pos, [])
+    starters.append({'slot': slot, 'player': pool[idx] if idx < len(pool) else None})
+  return starters
+
 @app.route('/nfl/simulations')
 def nfl_simulations_page():
-  """Shows this week's stored game-simulation results (NflSimResult) —
-  written by a daily background job (_simulate_nfl_week(), app.py's own
-  cron registration), never computed here. See nfl_game_simulator.py's
-  module docstring for what the simulation does (resamples real historical
-  plays drive-by-drive, correlated player outcomes within each simulated
-  game) and doesn't (no live game-clock, hand-set 4th-down go-for-it
-  rate, league-wide not team-conditioned play sampling).
+  """Shows this week's stored game-simulation results (NflSimResult/
+  NflSimGame) — written by a daily background job (_simulate_nfl_week(),
+  app.py's own cron registration), never computed here. See
+  nfl_game_simulator.py's module docstring for what the simulation does
+  (resamples real historical plays drive-by-drive, correlated player
+  outcomes within each simulated game) and doesn't (no live game-clock —
+  the 'quarter' breakdown is an approximation by drive order, not real
+  elapsed time; hand-set 4th-down go-for-it rate; league-wide not team-
+  conditioned play sampling, which is why game-level win% here shouldn't
+  be read as a real moneyline estimate — see this app's actual NFL win-
+  probability model, nfl_model.py, for that).
 
   `week` (optional query param): same pattern as /nfl/lineup; defaults to
   the current week. A week with no stored results yet (the background job
@@ -6233,6 +6305,7 @@ def nfl_simulations_page():
   season, actual_week = week_ctx['season'], week_ctx['week']
 
   results_by_game = nfl_stats_db.get_sim_results_db(season, actual_week)
+  game_summaries = nfl_stats_db.get_sim_game_summary_db(season, actual_week)
   games = []
   for g in week_ctx['games']:
     teams = results_by_game.get(g['game_id'], {})
@@ -6240,7 +6313,13 @@ def nfl_simulations_page():
     away_rows = teams.get(g['away'].get('id'), [])
     if not home_rows and not away_rows:
       continue
-    games.append({**g, 'home_players': home_rows, 'away_players': away_rows})
+    games.append({
+      **g,
+      'home_players': home_rows, 'away_players': away_rows,
+      'home_starters': _nfl_sim_card_starters(home_rows),
+      'away_starters': _nfl_sim_card_starters(away_rows),
+      'summary': game_summaries.get(g['game_id']),
+    })
 
   resp = make_response(render_template('nfl_simulations.html', subnav_sport='NFL',
                          week_ctx=week_ctx, season=season, week=actual_week, games=games))

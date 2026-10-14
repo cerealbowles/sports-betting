@@ -1547,3 +1547,62 @@ def get_sim_results_db(season, week):
                 'sim': _json.loads(r.sim_draws_json) if r.sim_draws_json else [],
             })
         return {gid: dict(teams) for gid, teams in out.items()}
+
+
+def persist_sim_game_summary_db(season, week, game_id, home_team_id, away_team_id, summary):
+    """Upserts one NflSimGame row — the team-score-level companion to
+    persist_sim_results_db()'s per-player rows: win/loss/tie counts,
+    average final score, and the approximate quarter-by-quarter scoring
+    breakdown (see nfl_game_simulator._approx_quarter()'s "no real game
+    clock" caveat — this is NOT a precise clock-based quarter). `summary`
+    is simulate_matchup()'s own 'game' dict, passed straight through.
+    Upserts on (season, week, game_id), same overwrite-previous-day
+    convention as NflSimResult."""
+    import json as _json
+    from app import app as flask_app, db, NflSimGame
+
+    with flask_app.app_context():
+        row = NflSimGame.query.filter_by(season=season, week=week, game_id=game_id).first()
+        if row is None:
+            row = NflSimGame(season=season, week=week, game_id=game_id)
+            db.session.add(row)
+        row.home_team_id = home_team_id
+        row.away_team_id = away_team_id
+        row.n_sims = summary['n']
+        row.home_wins = summary['home_wins']
+        row.away_wins = summary['away_wins']
+        row.ties = summary['ties']
+        row.home_avg_score = summary['home_avg_score']
+        row.away_avg_score = summary['away_avg_score']
+        row.quarter_scores_json = _json.dumps({
+            'home': summary['home_quarter_avg'], 'away': summary['away_quarter_avg'],
+        })
+        db.session.commit()
+
+
+def get_sim_game_summary_db(season, week):
+    """{game_id: {...}} — every stored NflSimGame row for one week. Each
+    value: {'n_sims', 'home_wins', 'away_wins', 'ties', 'home_win_pct',
+    'away_win_pct', 'home_avg_score', 'away_avg_score',
+    'home_quarter_avg', 'away_quarter_avg'} (the last two: [Q1, Q2, Q3,
+    Q4] average points, approximate — see persist_sim_game_summary_db()'s
+    docstring). Win percentages are computed here from the stored counts
+    rather than also stored as their own columns, so they can never drift
+    from n_sims/home_wins/away_wins."""
+    import json as _json
+    from app import app as flask_app, NflSimGame
+
+    with flask_app.app_context():
+        rows = NflSimGame.query.filter_by(season=season, week=week).all()
+        out = {}
+        for r in rows:
+            qs = (_json.loads(r.quarter_scores_json) if r.quarter_scores_json
+                  else {'home': [0, 0, 0, 0], 'away': [0, 0, 0, 0]})
+            out[r.game_id] = {
+                'n_sims': r.n_sims, 'home_wins': r.home_wins, 'away_wins': r.away_wins, 'ties': r.ties,
+                'home_win_pct': round(100 * r.home_wins / r.n_sims, 1) if r.n_sims else 0.0,
+                'away_win_pct': round(100 * r.away_wins / r.n_sims, 1) if r.n_sims else 0.0,
+                'home_avg_score': r.home_avg_score, 'away_avg_score': r.away_avg_score,
+                'home_quarter_avg': qs.get('home', [0, 0, 0, 0]), 'away_quarter_avg': qs.get('away', [0, 0, 0, 0]),
+            }
+        return out
