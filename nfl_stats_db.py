@@ -1300,9 +1300,13 @@ def get_simulator_play_pool_db(seasons=None):
       mechanics needed. Still excludes Punt/Kickoff/Field Goal Good/
       Missed — those aren't situated on a normal down (kickoffs are
       down=0; a punt/FG's own down/distance describes the decision TO
-      kick, not a resampleable "what happens on this down" outcome) and
-      the drive simulator has no punt-distance or FG make/miss mechanics
-      to consume them yet — see nfl_game_simulator.py's module docstring.
+      kick, not a resampleable "what happens on this down" outcome); see
+      get_fourth_down_pool_db()/get_kickoff_pool_db() for those.
+    - `end_yards_to_endzone` is the real ESPN-computed field position
+      after the play, already in the new-possessor's own reference frame
+      (confirmed live — see NflPlay.end_down's column comment, app.py) —
+      used by simulate_game() to hand the next drive real field position
+      after a turnover instead of resetting to a fixed spot.
     - `is_turnover` IS now read straight off NflPlay.is_turnover — this
       used to be a text-regex workaround (INTERCEPTED|FUMBLES over the
       play's own text) because that column was never actually set on any
@@ -1334,7 +1338,8 @@ def get_simulator_play_pool_db(seasons=None):
         if seasons:
             q = q.filter(NflPlay.season.in_(seasons))
         rows = q.with_entities(NflPlay.down, NflPlay.distance, NflPlay.yards_to_endzone,
-                                NflPlay.play_type, NflPlay.yards_gained, NflPlay.is_turnover).all()
+                                NflPlay.play_type, NflPlay.yards_gained, NflPlay.is_turnover,
+                                NflPlay.end_yards_to_endzone).all()
 
     return [{
         'down': r.down,
@@ -1343,7 +1348,71 @@ def get_simulator_play_pool_db(seasons=None):
         'play_type': r.play_type,
         'yards_gained': r.yards_gained or 0.0,
         'is_turnover': bool(r.is_turnover),
+        'end_yards_to_endzone': r.end_yards_to_endzone,
     } for r in rows if r.yards_to_endzone is not None]
+
+
+def get_fourth_down_pool_db(seasons=None):
+    """Real Punt / Field Goal Good / Field Goal Missed plays:
+    [{yards_to_endzone, play_type, end_yards_to_endzone}] — feeds
+    nfl_game_simulator.py's 4th-down decision. Deliberately does NOT pick
+    "punt vs. attempt a kick" with a hand-set distance cutoff: a real
+    team's own choice between the two, at whatever field position it
+    actually happened, is baked into which play gets resampled — the
+    exact same "let the real data decide" approach the rest of this
+    sampler already uses, rather than inventing a threshold. `distance`/
+    `down` aren't returned: these plays' own down/distance describes
+    the decision TO kick (always down=4), not a resampleable in-down
+    outcome the way a scrimmage play's does — only field position
+    matters for bucketing here. `end_yards_to_endzone` is None for a
+    missed FG past the point ESPN's `end` object bothers tracking (rare)
+    — caller falls back to a fixed spot in that case.
+
+    `seasons`: same as get_simulator_play_pool_db()."""
+    from app import app as flask_app, NflPlay
+
+    with flask_app.app_context():
+        q = NflPlay.query.filter(
+            NflPlay.play_type.in_(['Punt', 'Field Goal Good', 'Field Goal Missed']),
+            NflPlay.is_no_play.isnot(True),
+        )
+        if seasons:
+            q = q.filter(NflPlay.season.in_(seasons))
+        rows = q.with_entities(NflPlay.yards_to_endzone, NflPlay.play_type,
+                                NflPlay.end_yards_to_endzone).all()
+
+    return [{
+        'yards_to_endzone': r.yards_to_endzone,
+        'play_type': r.play_type,
+        'end_yards_to_endzone': r.end_yards_to_endzone,
+    } for r in rows if r.yards_to_endzone is not None]
+
+
+def get_kickoff_pool_db(seasons=None):
+    """Real Kickoff / Kickoff Return Touchdown plays:
+    [{end_yards_to_endzone, is_scoring_play}] — feeds the field position
+    the simulator hands the receiving team after a touchdown or a made
+    field goal. is_scoring_play flags the rare (~0.3% of kickoffs,
+    confirmed on this app's 2024-2026 warehouse) return-touchdown case,
+    which the caller should treat as an immediate score for the
+    RECEIVING side rather than the start of a normal drive.
+
+    `seasons`: same as get_simulator_play_pool_db()."""
+    from app import app as flask_app, NflPlay
+
+    with flask_app.app_context():
+        q = NflPlay.query.filter(
+            NflPlay.play_type.in_(['Kickoff', 'Kickoff Return Touchdown']),
+            NflPlay.is_no_play.isnot(True),
+        )
+        if seasons:
+            q = q.filter(NflPlay.season.in_(seasons))
+        rows = q.with_entities(NflPlay.end_yards_to_endzone, NflPlay.is_scoring_play).all()
+
+    return [{
+        'end_yards_to_endzone': r.end_yards_to_endzone,
+        'is_scoring_play': bool(r.is_scoring_play),
+    } for r in rows if r.end_yards_to_endzone is not None]
 
 
 def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
