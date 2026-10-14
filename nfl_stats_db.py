@@ -261,6 +261,8 @@ def ingest_play_by_play(event_id, game_date_et, season, game_type, summary):
                     'penalty_team_id': p['penalty_team_id'], 'penalty_player_id': p['penalty_player_id'],
                     'penalty_type': p['penalty_type'], 'penalty_yards': p['penalty_yards'],
                     'penalty_status': p['penalty_status'],
+                    'end_down': p['end_down'], 'end_distance': p['end_distance'],
+                    'end_yards_to_endzone': p['end_yards_to_endzone'], 'end_team_id': p['end_team_id'],
                 })
             else:
                 db.session.add(NflPlay(
@@ -277,6 +279,8 @@ def ingest_play_by_play(event_id, game_date_et, season, game_type, summary):
                     penalty_team_id=p['penalty_team_id'], penalty_player_id=p['penalty_player_id'],
                     penalty_type=p['penalty_type'], penalty_yards=p['penalty_yards'],
                     penalty_status=p['penalty_status'],
+                    end_down=p['end_down'], end_distance=p['end_distance'],
+                    end_yards_to_endzone=p['end_yards_to_endzone'], end_team_id=p['end_team_id'],
                 ))
 
         for player_id, splits in result['player_splits'].items():
@@ -1277,3 +1281,118 @@ def get_player_articles(player_id=None, team_id=None, start=None, end=None, limi
             'source': r.source, 'sentiment_score': r.sentiment_score,
             'matched_terms': json.loads(r.matched_terms_json or '[]'),
         } for r in rows]
+
+
+def get_simulator_play_pool_db(seasons=None):
+    """One flat list of usable scrimmage plays for nfl_game_simulator.py's
+    bootstrap play sampler: [{down, distance, yards_to_endzone,
+    play_type, yards_gained, is_turnover}], oldest filtering decisions
+    baked in here rather than left to the caller:
+
+    - Drops Penalty plays and any is_no_play row (down replayed) — neither
+      carries a clean down/distance/yards signal a drive simulator can
+      chain on. Still scrimmage-only (Rush/Pass/Sack/TD types) — this
+      does NOT include the special-teams/turnover-result play types
+      NflPlay gained alongside this function's is_turnover fix (Punt,
+      Kickoff, Field Goal Good/Missed, Pass Interception Return, Fumble
+      Recovery — see NflPlay's class docstring in app.py); the drive
+      simulator doesn't yet have mechanics that consume those (no punt-
+      distance or FG make/miss modeling — see nfl_game_simulator.py's
+      module docstring), so pulling them in here would just be dead data.
+    - `is_turnover` IS now read straight off NflPlay.is_turnover — this
+      used to be a text-regex workaround (INTERCEPTED|FUMBLES over the
+      play's own text) because that column was never actually set on any
+      stored row; the real bug was the ingestion parser silently dropping
+      every interception/fumble-recovery play before it ever reached a
+      branch that would write is_turnover (see nfl_playbyplay_api.py's
+      _SPECIAL_TEAMS_AND_TURNOVER_TYPES). Now fixed at the source, so this
+      reads the real ESPN-reported flag. Games ingested before that fix
+      still need nfl_playbyplay_backfill.py re-run against them once to
+      pick up the correction retroactively — until then, their rows here
+      simply won't ever be turnovers (same "no signal yet" as any other
+      not-yet-backfilled gap in this app, not silently wrong).
+
+    `seasons` (optional, e.g. [2024, 2025, 2026]): restricts to those
+    seasons; None (the default) uses everything stored. Returns plain
+    dicts, not ORM rows — this is meant to be loaded once and bucketed/
+    resampled many times in pure Python, not re-queried per draw."""
+    from app import app as flask_app, NflPlay
+
+    with flask_app.app_context():
+        q = NflPlay.query.filter(
+            NflPlay.play_type.in_(['Rush', 'Pass Reception', 'Pass Incompletion',
+                                    'Sack', 'Passing Touchdown', 'Rushing Touchdown']),
+            NflPlay.down.in_([1, 2, 3, 4]),
+            NflPlay.is_no_play.isnot(True),
+        )
+        if seasons:
+            q = q.filter(NflPlay.season.in_(seasons))
+        rows = q.with_entities(NflPlay.down, NflPlay.distance, NflPlay.yards_to_endzone,
+                                NflPlay.play_type, NflPlay.yards_gained, NflPlay.is_turnover).all()
+
+    return [{
+        'down': r.down,
+        'distance': r.distance if r.distance is not None else 10,
+        'yards_to_endzone': r.yards_to_endzone,
+        'play_type': r.play_type,
+        'yards_gained': r.yards_gained or 0.0,
+        'is_turnover': bool(r.is_turnover),
+    } for r in rows if r.yards_to_endzone is not None]
+
+
+def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
+    """Recent offensive usage for one team, derived from NflPlay (not the
+    CURRENT-roster-gated nfl_roster_api path build_player_pool() uses) —
+    feeds nfl_game_simulator.py's player attribution step, which needs
+    "who gets the ball when the offense runs/throws," not just "who's on
+    the roster." Scoped to that team's last `window_games` distinct
+    game_ids (most recent first) so a depth-chart change (new starter,
+    committee shift) isn't diluted by stale early-season shares.
+
+    Returns {'qb_id': str or None, 'rush_shares': {player_id: fraction},
+    'rec_shares': {player_id: fraction}} — shares sum to ~1.0 across
+    players who touched the ball in that window; a team with zero stored
+    plays in the window returns all-empty (caller's problem to decide a
+    fallback, same "real gap beats a guess" convention as the rest of
+    this module). qb_id is whoever passed most often in the window — not
+    injury-aware (see InjuryStatus for that signal if the caller needs a
+    QB1/QB2 distinction)."""
+    from app import app as flask_app, NflPlay
+
+    with flask_app.app_context():
+        q = NflPlay.query.filter(NflPlay.offense_team_id == team_id, NflPlay.is_no_play.isnot(True))
+        if before_date:
+            q = q.filter(NflPlay.game_date < before_date)
+        game_ids = [r[0] for r in (q.with_entities(NflPlay.game_id)
+                                    .distinct()
+                                    .order_by(NflPlay.game_date.desc())
+                                    .limit(window_games).all())]
+        if not game_ids:
+            return {'qb_id': None, 'rush_shares': {}, 'rec_shares': {}}
+
+        rows = (NflPlay.query
+                .filter(NflPlay.offense_team_id == team_id, NflPlay.game_id.in_(game_ids),
+                        NflPlay.is_no_play.isnot(True))
+                .with_entities(NflPlay.play_type, NflPlay.passer_id, NflPlay.rusher_id,
+                                NflPlay.receiver_id)
+                .all())
+
+    pass_counts = defaultdict(int)
+    rush_counts = defaultdict(int)
+    rec_counts = defaultdict(int)
+    for play_type, passer_id, rusher_id, receiver_id in rows:
+        if passer_id and play_type in ('Pass Reception', 'Pass Incompletion', 'Passing Touchdown', 'Sack'):
+            pass_counts[passer_id] += 1
+        if rusher_id and play_type in ('Rush', 'Rushing Touchdown'):
+            rush_counts[rusher_id] += 1
+        if receiver_id and play_type in ('Pass Reception', 'Passing Touchdown'):
+            rec_counts[receiver_id] += 1
+
+    qb_id = max(pass_counts, key=pass_counts.get) if pass_counts else None
+    rush_total = sum(rush_counts.values())
+    rec_total = sum(rec_counts.values())
+    return {
+        'qb_id': qb_id,
+        'rush_shares': {pid: c / rush_total for pid, c in rush_counts.items()} if rush_total else {},
+        'rec_shares': {pid: c / rec_total for pid, c in rec_counts.items()} if rec_total else {},
+    }

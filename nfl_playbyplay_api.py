@@ -97,6 +97,23 @@ _ALT_PASS_RE = re.compile(rf"^({_FULLNAME})\s+(?:\d+\s+Yd\s+)?[Pp]ass\s+[Ff]rom\
 _ALT_RUSH_RE = re.compile(rf"^({_FULLNAME})\s+\d+\s+Yd\s+(?:Rush|Run)\b")
 _SKIP_RE = re.compile(r"\bkneels\b|\bspiked the ball\b", re.IGNORECASE)
 
+# Special-teams and turnover-RESULT play types — real, distinctly-typed
+# ESPN plays (confirmed live, 2026-10-14, against a completed game's raw
+# summary?event= payload) that this parser previously had no branch for
+# at all, so they silently fell through the rush/pass/sack/penalty
+# if/elif chain and were never stored. Not an exhaustive list of every
+# ESPN play type that exists (timeouts, period markers, extra points and
+# two-point conversions are embedded in a scoring play's own text rather
+# than issued as separate plays at all, and remain genuinely unhandled —
+# see nfl_fantasy.py's documented 2-point-conversion gap) — just the ones
+# that carry real down/distance/field-position/turnover/scoring signal.
+_SPECIAL_TEAMS_AND_TURNOVER_TYPES = frozenset({
+    'Punt', 'Kickoff', 'Kickoff Return Touchdown',
+    'Field Goal Good', 'Field Goal Missed',
+    'Pass Interception Return', 'Fumble Recovery (Own)', 'Fumble Recovery (Opponent)',
+    'Sack Opp Fumble Recovery',
+})
+
 # A play's own structured `penalty` dict (yards/type/status) turned out to
 # be a newer ESPN addition — confirmed ABSENT entirely on 2024-season
 # games, present on 2025 ones — so this can't be relied on and text
@@ -351,6 +368,7 @@ def parse_play_splits(summary):
             yards = play.get('statYardage') or 0
             is_td = bool(play.get('scoringPlay')) and ptype in ('Rushing Touchdown', 'Passing Touchdown')
             no_play = ptype != 'Penalty' and _is_no_play(text)
+            end = play.get('end') or {}
             base_record = {
                 'play_id': play.get('id'), 'drive_id': drive.get('id'),
                 'sequence_number': play.get('sequenceNumber'),
@@ -367,6 +385,12 @@ def parse_play_splits(summary):
                 'passer_id': None, 'rusher_id': None, 'receiver_id': None,
                 'penalty_team_id': None, 'penalty_player_id': None,
                 'penalty_type': None, 'penalty_yards': None, 'penalty_status': None,
+                # ESPN's own computed resulting state — see NflPlay.end_down's
+                # column comment (app.py) for why this is captured verbatim
+                # rather than derived from yards_gained.
+                'end_down': end.get('down'), 'end_distance': end.get('distance'),
+                'end_yards_to_endzone': end.get('yardsToEndzone'),
+                'end_team_id': (end.get('team') or {}).get('id'),
             }
 
             if ptype == 'Penalty':
@@ -518,6 +542,16 @@ def parse_play_splits(summary):
                     player_splits[pid]['sacks_taken'] += 1
                 else:
                     skipped += 1
+
+            elif ptype in _SPECIAL_TEAMS_AND_TURNOVER_TYPES:
+                # Stored for down/distance/field-position/turnover/scoring
+                # signal only (e.g. nfl_game_simulator.py's drive engine) —
+                # no participant resolution (punter/kicker/returner) is
+                # attempted here, so these never touch player_splits. See
+                # NflPlay's class docstring (app.py) for why these types
+                # exist as their own branch instead of falling through
+                # unhandled the way they used to.
+                raw_plays.append(base_record)
 
         if drive_redzone and def_team:
             team_allowed[def_team]['redzone_trips_allowed'] += 1

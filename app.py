@@ -350,10 +350,24 @@ class NflPlay(db.Model):
   api.py's module docstring for why raw plays are kept here instead of
   being discarded after aggregation.
 
-  Scope: offensive scrimmage plays this app's parser actually attributes
-  (rush, pass — complete/incomplete/TD —, sack, penalty) — not special-
-  teams or clock-management plays (punts, kickoffs, kneels, timeouts),
-  which carry none of the per-player signal this table exists for.
+  Scope: offensive scrimmage plays (rush, pass — complete/incomplete/TD —,
+  sack, penalty) this app's parser fully attributes to a participant, PLUS
+  (as of this column set) special-teams and turnover-result plays (punt,
+  kickoff, field goal good/missed, interception return, fumble recovery)
+  — stored for their down/distance/field-position/turnover/scoring signal
+  even though this parser doesn't resolve a specific punter/kicker/
+  returner for them. Clock-management plays (kneels, spiked balls,
+  timeouts, period-end markers) are still not stored — no down/distance/
+  yardage signal to capture there at all. ESPN's free play-by-play DOES
+  carry all of the above as real, distinctly-typed plays (confirmed live,
+  2026-10-14) — an earlier version of this table's docstring described
+  special-teams/turnover plays as out of ESPN's own scope, which was
+  wrong: they were simply never given a parser branch, so every such
+  play silently fell through and was never written here at all. That
+  also explains why is_turnover looked permanently unset on real
+  interception/fumble plays before this fix — see git history for the
+  fix and nfl_playbyplay_backfill.py for the one-time re-ingest of
+  already-stored games.
 
   participant ids (passer_id/rusher_id/receiver_id/penalty_player_id) are
   frequently NULL — ESPN's free play-by-play has no structured athlete-id
@@ -394,6 +408,20 @@ class NflPlay(db.Model):
   penalty_type      = db.Column(db.String(60))
   penalty_yards     = db.Column(db.Integer)
   penalty_status    = db.Column(db.String(20))   # 'Accepted' | 'Declined' | 'No Play'
+  # The play's resulting state, straight from ESPN's own `end` object —
+  # added alongside special-teams play types (Punt/Kickoff/Field Goal/
+  # Pass Interception Return/Fumble Recovery, previously silently dropped
+  # entirely, see nfl_playbyplay_api.py's module docstring) because those
+  # plays don't have a simple "yards_gained off the start spot" relationship
+  # the way a rush/pass does (a punt's statYardage is RETURN yardage, not
+  # punt distance; a turnover's end spot depends on the return). Captured
+  # generically for every play type, not just the new ones, since it's
+  # also a more accurate source of the end-of-play state than re-deriving
+  # it from down/distance/yards_gained the way callers previously had to.
+  end_down             = db.Column(db.Integer)
+  end_distance         = db.Column(db.Integer)
+  end_yards_to_endzone = db.Column(db.Integer)
+  end_team_id          = db.Column(db.String(20))  # team in possession AFTER the play (changes on turnovers/punts)
   created_at       = db.Column(db.DateTime(timezone=True),
                                 default=lambda: datetime.now(timezone.utc))
 
@@ -603,6 +631,10 @@ def ensure_column_exists():
     _add('game_predictions', 'blended_total_over_prob',   'FLOAT DEFAULT NULL')
     _add('game_predictions', 'blended_total_went_over',   'BOOLEAN DEFAULT NULL')
     _add('game_predictions', 'blended_total_pick_roi',    'FLOAT DEFAULT NULL')
+    _add('nfl_plays', 'end_down',             'INTEGER DEFAULT NULL')
+    _add('nfl_plays', 'end_distance',         'INTEGER DEFAULT NULL')
+    _add('nfl_plays', 'end_yards_to_endzone', 'INTEGER DEFAULT NULL')
+    _add('nfl_plays', 'end_team_id',          'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
