@@ -52,14 +52,23 @@ nfl_fantasy.py's own documented scoring gaps):
     get drawn more/less often within a bucket — a play near the top of
     its bucket's own yardage distribution gets upweighted for a favorable
     matchup, one near the bottom for an unfavorable one. Still resampling
-    real plays, never inventing yardage. Only applies to downs 1-3 and
-    the short-yardage 4th-down go-for-it sampling — 4th-down punt/FG
-    decisions and kickoffs are NOT conditioned (see _sample_fourth_down()/
-    _resolve_kickoff_start(), unchanged). The conditioning strength
-    (TEAM_CONDITIONING_K) is hand-set, not backtested — same category of
-    gap as FOURTH_DOWN_GO_FOR_IT_RATE, for the same reason (no clean way
-    to fit "how much should a 0.3-grade mismatch skew play selection"
-    from what's stored).
+    real plays, never inventing yardage. Applies to downs 1-3, the
+    short-yardage 4th-down go-for-it sampling, AND the punt/field-goal
+    draw when the sim doesn't go for it (_sample_fourth_down() — a
+    favorable tilt skews toward made field goals and better punts, via
+    the same real-play-reweighting mechanism and the same offense/
+    defense grade, since this app has no dedicated special-teams grade
+    to condition on instead). The go-for-it RATE itself is also nudged by
+    tilt (_effective_go_for_it_rate() — a confident matchup goes for it
+    a bit more often). Kickoffs (_resolve_kickoff_start()) are the one
+    remaining unconditioned piece — a kickoff's outcome depends on the
+    return man/coverage unit, not offense/defense grades, so there's no
+    honest signal to condition it on with what this app tracks. The
+    conditioning strength (TEAM_CONDITIONING_K, FOURTH_DOWN_GO_FOR_IT_
+    TILT_SCALE) is hand-set, not backtested — same category of gap as
+    FOURTH_DOWN_GO_FOR_IT_RATE itself, for the same reason (no clean way
+    to fit "how much should a 0.3-grade mismatch skew outcomes" from
+    what's stored).
   - No game clock. Drives run until they end on their own merits (score/
     turnover/turnover-on-downs/stalled-4th-down); `drives_per_team`
     stands in for a real half/game duration rather than a clock that can
@@ -99,6 +108,26 @@ KICKOFF_YARDS_TO_ENDZONE = 75  # fallback-only now — see _resolve_kickoff_star
 # from real plays — see build_fourth_down_pool().
 FOURTH_DOWN_SHORT_YARDAGE = 2     # only distances at or under this are ever "gone for"
 FOURTH_DOWN_GO_FOR_IT_RATE = 0.3  # ...and even then, only this fraction of the time
+
+# How much a drive's own matchup tilt (see TEAM_CONDITIONING_K below)
+# nudges the go-for-it rate above — a confident, favorable-matchup
+# offense goes for it a bit more than FOURTH_DOWN_GO_FOR_IT_RATE's own
+# baseline, an unfavorable one a bit less. Hand-set, additive, clamped to
+# a sane range — not fit from data, same reasoning as every other
+# constant in this 4th-down block (nothing to fit it against)."""
+FOURTH_DOWN_GO_FOR_IT_TILT_SCALE = 0.2
+FOURTH_DOWN_GO_FOR_IT_RATE_MIN = 0.05
+FOURTH_DOWN_GO_FOR_IT_RATE_MAX = 0.6
+
+
+def _effective_go_for_it_rate(tilt):
+    """FOURTH_DOWN_GO_FOR_IT_RATE, nudged by this drive's own tilt (see
+    TEAM_CONDITIONING_K) and clamped to [FOURTH_DOWN_GO_FOR_IT_RATE_MIN,
+    FOURTH_DOWN_GO_FOR_IT_RATE_MAX] — tilt=0 (no conditioning, e.g. a
+    team with no usable grade) returns the original flat rate unchanged."""
+    rate = FOURTH_DOWN_GO_FOR_IT_RATE + FOURTH_DOWN_GO_FOR_IT_TILT_SCALE * tilt
+    return max(FOURTH_DOWN_GO_FOR_IT_RATE_MIN, min(FOURTH_DOWN_GO_FOR_IT_RATE_MAX, rate))
+
 
 # Team-conditioning strength for _sample_play()'s weighted draw — see
 # module docstring's "Play sampling is league-wide" bullet for the full
@@ -194,6 +223,32 @@ def build_play_buckets(plays):
     return dict(buckets)
 
 
+def _fourth_down_value(p):
+    """A single scalar ranking how good a real Punt/FG play turned out
+    FOR THE TEAM THAT KICKED — needed because these three play types
+    don't share one natural continuous outcome the way scrimmage yardage
+    does (a punt's own end_yards_to_endzone means "how pinned back is the
+    opponent," not comparable on the same scale to a binary FG make/
+    miss). Hand-set, not fit — see TEAM_CONDITIONING_K's comment for the
+    same category of gap:
+      - Field Goal Good: 100 — unambiguously the best 4th-down outcome
+        (3 points), always ranks at/near the top of its bucket.
+      - Punt: the resulting opponent field position (end_yards_to_endzone
+        — higher means the opponent starts further from their own end
+        zone, i.e. a better punt). Typically lands well below 100, so
+        a made FG still outranks even a great punt, matching reality
+        (3 points beats great field position).
+      - Field Goal Missed: 10 — worse than a real punt almost always
+        (no points, and the opponent typically takes over in
+        reasonable field position near the kick spot), but kept above
+        0 rather than tied for last with the worst punts."""
+    if p['play_type'] == 'Field Goal Good':
+        return 100.0
+    if p['play_type'] == 'Field Goal Missed':
+        return 10.0
+    return p['end_yards_to_endzone'] if p['end_yards_to_endzone'] is not None else 50.0
+
+
 def build_fourth_down_pool(fourth_down_plays):
     """fourth_down_plays: nfl_stats_db.get_fourth_down_pool_db()'s output
     (real Punt/Field Goal Good/Field Goal Missed plays). Returns
@@ -202,10 +257,21 @@ def build_fourth_down_pool(fourth_down_plays):
     just where on the field the decision happened). See
     _sample_fourth_down() for how a real team's own punt-vs-kick choice
     at a given field position becomes the simulator's choice too, instead
-    of a hand-set distance cutoff."""
+    of a hand-set distance cutoff.
+
+    Also mutates each play dict in place, adding '_percentile' — its own
+    rank by _fourth_down_value() within its bucket (0.0 = worst outcome
+    for the kicking team, 1.0 = best) — same precompute-once-not-per-draw
+    reasoning as build_play_buckets(), feeding _sample_fourth_down()'s own
+    team-conditioned weighted sampling."""
     buckets = defaultdict(list)
     for p in fourth_down_plays:
         buckets[_field_bucket(p['yards_to_endzone'])].append(p)
+    for candidates in buckets.values():
+        ranked = sorted(candidates, key=_fourth_down_value)
+        n = len(ranked)
+        for i, p in enumerate(ranked):
+            p['_percentile'] = i / (n - 1) if n > 1 else 0.5
     return dict(buckets)
 
 
@@ -265,7 +331,7 @@ def _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=0.0):
     return rng.choice(all_plays)
 
 
-def _sample_fourth_down(yards_to_endzone, pools, rng):
+def _sample_fourth_down(yards_to_endzone, pools, rng, tilt=0.0):
     """Draws a real Punt/Field Goal Good/Field Goal Missed play from
     roughly this field position — the decision (punt vs. attempt) AND
     its outcome (good/missed) both come from the same real play, so
@@ -273,15 +339,31 @@ def _sample_fourth_down(yards_to_endzone, pools, rng):
     whatever a real team in a real, similar spot actually got. Backs off
     to the full fourth-down pool (ignoring field position) if the local
     bucket is thin — same philosophy as _sample_play(), simpler backoff
-    since there's only one dimension here. Returns None only if this
+    since there's only one dimension here (and untilted at that backoff
+    level, also same as _sample_play()). Returns None only if this
     sim run has zero stored punt/FG plays at all (caller falls back to a
-    fixed spot — see _resolve_kickoff_start())."""
+    fixed spot — see _resolve_kickoff_start()).
+
+    `tilt`: the SAME offense-vs-defense signal _sample_play() uses for
+    this drive (see TEAM_CONDITIONING_K) — reused here rather than a
+    dedicated special-teams grade (this app doesn't have one), on the
+    reasoning that a team good enough to grade well on offense/defense
+    generally also executes better on 4th down (a sharper kicker, a
+    punter who directs the ball better) than a below-average team. At
+    the finest bucket, weights by each candidate's precomputed
+    '_percentile' (see build_fourth_down_pool()/_fourth_down_value()) —
+    a favorable tilt skews toward made field goals and better punts, an
+    unfavorable one toward misses and short punts. Still only ever
+    returns a real historical play."""
     if not pools.fourth_down_plays:
         return None
     field_b = _field_bucket(yards_to_endzone)
     candidates = pools.fourth_down_buckets.get(field_b, [])
     if len(candidates) >= MIN_BUCKET_SAMPLES:
-        return rng.choice(candidates)
+        if tilt == 0.0:
+            return rng.choice(candidates)
+        weights = [math.exp(TEAM_CONDITIONING_K * p['_percentile'] * tilt) for p in candidates]
+        return rng.choices(candidates, weights=weights, k=1)[0]
     return rng.choice(pools.fourth_down_plays)
 
 
@@ -346,9 +428,10 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
 
     for _ in range(MAX_PLAYS_PER_DRIVE):
         if down == 4:
-            go_for_it = distance <= FOURTH_DOWN_SHORT_YARDAGE and rng.random() <= FOURTH_DOWN_GO_FOR_IT_RATE
+            go_for_it = (distance <= FOURTH_DOWN_SHORT_YARDAGE
+                         and rng.random() <= _effective_go_for_it_rate(tilt))
             if not go_for_it:
-                fd_play = _sample_fourth_down(yards_to_endzone, pools, rng)
+                fd_play = _sample_fourth_down(yards_to_endzone, pools, rng, tilt=tilt)
                 if fd_play is None:
                     return drive_plays, 'turnover_on_downs', _resolve_kickoff_start(pools, rng)
                 drive_plays.append(fd_play)

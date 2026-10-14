@@ -4,7 +4,7 @@
 {% block head %}
 <style>
 .sim-game-card { padding-bottom: 10px; }
-.sim-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 14px 10px; }
+.sim-starters { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 0 14px 10px; }
 .sim-starters h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
@@ -16,7 +16,7 @@
 .sim-starter-median { font-weight: 700; font-family: var(--font-mono); }
 .sim-starter-empty { color: var(--text-muted); font-style: italic; }
 .sim-details { margin: 0 14px 4px; }
-.sim-subtables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px 0 0; }
+.sim-subtables { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 10px 0 0; }
 .sim-subtables h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
@@ -24,7 +24,6 @@
 .sim-quarter-table { margin-bottom: 14px; }
 .sim-quarter-table th, .sim-quarter-table td { text-align: center; }
 .sim-quarter-table td:first-child, .sim-quarter-table th:first-child { text-align: left; }
-@media (max-width: 700px) { .sim-subtables, .sim-starters { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
 
