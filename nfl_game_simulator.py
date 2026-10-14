@@ -695,27 +695,40 @@ def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None,
     wrote via nfl_stats_db.get_sim_results_db() rather than ever calling
     this directly on a request.
 
-    `week`/`season` (optional): defaults to nfl_api.get_current_week()'s
-    answer, same as every other "current week" caller in this app. Builds
+    `week`/`season` (optional): default to nfl_api.get_current_week()'s
+    answer, same as every other "current week" caller in this app. Pass
+    an explicit `season` to simulate a PAST season's week instead (e.g.
+    validating the simulator against 2024/2025, which this app's
+    warehouse has full seasons of — see nfl_api.build_week_games_light()'s
+    own `season` override, which this passes straight through; ESPN's
+    scoreboard serves an old season's games the same way it serves the
+    current one). Combine with `before_date` for a genuine no-leakage
+    backtest, same discipline as nfl_recap.py. Builds
     every resampling pool ONCE for the whole week (league-wide, not
     game-specific — see build_sim_pools()) and reuses it across every
     matchup, same batching rationale as simulate_matchup()'s own `pools`
     parameter exists for.
 
-    Player names/positions are resolved via a live nfl_roster_api fetch
-    per team (one per game, 2x per game for each side) — the same
-    CURRENT-roster-gated source build_player_pool() uses elsewhere in
-    this app, with that function's own documented staleness caveat (a
-    player traded/cut since this ran won't reflect it until the next
-    day's run). A player whose name doesn't resolve is still persisted
-    (as player_name=None — nfl_stats_db.get_sim_results_db() falls back
-    to showing their id) rather than dropped, matching this app's "a real
-    gap beats a wrong guess" convention."""
+    Player names/positions are resolved via nfl_stats_db.get_or_fetch_
+    roster_db() — a DB-backed cache in front of nfl_roster_api's own live
+    fetch (see that function's docstring for why: nfl_roster_api's
+    in-process cache doesn't survive across separate script runs, which
+    made a multi-week backfill like "simulate weeks 1-4" needlessly
+    re-fetch every team's roster live once per week instead of once
+    total, confirmed live as the dominant cost of a standalone run — ~18
+    minutes for one week's 32 lookups, almost entirely ESPN round-trips).
+    Still the same CURRENT-roster-gated source build_player_pool() uses
+    elsewhere in this app, with that function's own documented staleness
+    caveat (a player traded/cut since the last snapshot won't reflect it
+    until the next refresh, max_age_hours after). A player whose name
+    doesn't resolve is still persisted (as player_name=None —
+    nfl_stats_db.get_sim_results_db() falls back to showing their id)
+    rather than dropped, matching this app's "a real gap beats a wrong
+    guess" convention."""
     import nfl_api
-    import nfl_roster_api
 
     rng = rng or random.Random()
-    week_ctx = nfl_api.build_week_games_light(week)
+    week_ctx = nfl_api.build_week_games_light(week, season=season)
     actual_season, actual_week = week_ctx['season'], week_ctx['week']
     games = week_ctx['games']
     if not games:
@@ -731,7 +744,7 @@ def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None,
                                 window_games=window_games, drives_per_team=drives_per_team,
                                 rng=rng, pools=pools)
         for side, team_id, opponent_id in (('home', home_id, away_id), ('away', away_id, home_id)):
-            roster = {p['id']: p for p in nfl_roster_api.get_skill_players(team_id)}
+            roster = {p['id']: p for p in nfl_stats_db.get_or_fetch_roster_db(team_id)}
             results = []
             for player_id, outcome in sim['players'][side].items():
                 info = roster.get(player_id, {})

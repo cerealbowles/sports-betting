@@ -1606,3 +1606,46 @@ def get_sim_game_summary_db(season, week):
                 'home_quarter_avg': qs.get('home', [0, 0, 0, 0]), 'away_quarter_avg': qs.get('away', [0, 0, 0, 0]),
             }
         return out
+
+
+def get_or_fetch_roster_db(team_id, max_age_hours=24):
+    """Returns [{'id', 'name', 'position'}, ...] for team_id's current
+    skill-position roster — same shape/content as nfl_roster_api.
+    get_skill_players(team_id), but checks NflRosterSnapshot (a DB-backed
+    cache ANY process can share, see that model's class docstring in
+    app.py for why nfl_roster_api's own 24h cache doesn't help a one-off
+    script) before making a live ESPN call, and persists what it fetches
+    for the next caller.
+
+    A stored snapshot younger than `max_age_hours` is returned as-is, no
+    live call at all. An older or missing one triggers a live
+    nfl_roster_api.get_skill_players() fetch, whose result both answers
+    this call AND fully replaces this team's stored snapshot (delete +
+    bulk insert, not a merge) — a player who's been cut/traded since the
+    last snapshot must disappear here too, not linger from a stale row
+    nothing happened to overwrite. If the live fetch itself comes back
+    empty (ESPN hiccup, see nfl_roster_api._get()'s own fail-backoff),
+    the stale snapshot already in the DB is returned instead of an empty
+    list, same "a real gap beats a wrong guess" convention as the rest of
+    this app — better a few-days-stale roster than silently losing every
+    player from this team's pool for one bad fetch."""
+    import nfl_roster_api
+    from datetime import datetime, timedelta, timezone
+    from app import app as flask_app, db, NflRosterSnapshot
+
+    with flask_app.app_context():
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        rows = NflRosterSnapshot.query.filter_by(team_id=team_id).all()
+        if rows and all(r.fetched_at and r.fetched_at.replace(tzinfo=timezone.utc) >= cutoff for r in rows):
+            return [{'id': r.player_id, 'name': r.player_name, 'position': r.position} for r in rows]
+
+        live = nfl_roster_api.get_skill_players(team_id)
+        if not live:
+            return [{'id': r.player_id, 'name': r.player_name, 'position': r.position} for r in rows]
+
+        NflRosterSnapshot.query.filter_by(team_id=team_id).delete()
+        for p in live:
+            db.session.add(NflRosterSnapshot(team_id=team_id, player_id=p['id'],
+                                              player_name=p['name'], position=p.get('position')))
+        db.session.commit()
+        return live

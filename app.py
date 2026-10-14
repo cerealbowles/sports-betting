@@ -639,6 +639,35 @@ class NflSimGame(db.Model):
   __table_args__ = (db.UniqueConstraint('season', 'week', 'game_id', name='uq_nfl_sim_game'),)
 
 
+class NflRosterSnapshot(db.Model):
+  """DB-persisted cache of nfl_roster_api.get_skill_players(team_id) —
+  that module already has its own 24h cache, but it's just a module-level
+  dict, so it only helps repeat calls WITHIN one long-lived process (the
+  real gunicorn app). Every separate `docker exec python3 -c` invocation
+  (e.g. nfl_game_simulator.simulate_week() run standalone to backfill
+  several weeks of simulations) starts with an empty cache and re-fetches
+  every team live from ESPN, even within the same 24h window a DIFFERENT
+  process already covered — confirmed live: this was the dominant cost of
+  simulate_week() run standalone (roughly 18 minutes for one week's 32
+  team lookups, almost entirely live ESPN round-trips). This table gives
+  every caller, in every process, a shared cache underneath nfl_roster_
+  api's own — see nfl_stats_db.get_or_fetch_roster_db().
+
+  One row per (team_id, player_id) — see get_or_fetch_roster_db()'s
+  docstring for why a stale snapshot is fully replaced, not merged, when
+  refetched (a cut/traded player must disappear, not linger from an old
+  row no later fetch happened to overwrite)."""
+  __tablename__ = 'nfl_roster_snapshots'
+  id          = db.Column(db.Integer, primary_key=True)
+  team_id     = db.Column(db.String(20), nullable=False, index=True)
+  player_id   = db.Column(db.String(20), nullable=False)
+  player_name = db.Column(db.String(80), nullable=False)
+  position    = db.Column(db.String(10))
+  fetched_at  = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('team_id', 'player_id', name='uq_nfl_roster_snapshot'),)
+
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()

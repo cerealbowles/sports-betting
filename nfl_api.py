@@ -1077,7 +1077,7 @@ def build_week_schedule_context(week=None):
     }
 
 
-def build_week_games_light(week=None):
+def build_week_games_light(week=None, season=None):
     """Minimal version of build_week_schedule_context() for callers that only
     need game_id/home/away/kickoff time — no model, no odds, no weather/
     injuries, no DB ensemble-blend queries. Used by /nfl/lineup, which never
@@ -1088,8 +1088,19 @@ def build_week_games_light(week=None):
     per-game weather/injury prefetch and ensemble-blend DB queries) is pure
     waste here. Shares the same scoreboard cache key/TTL as the full
     function, so this never duplicates the ESPN fetch build_week_schedule_
-    context (or the background warmer) already did for the same week."""
-    season, current_week = get_current_week()
+    context (or the background warmer) already did for the same week.
+
+    `season` (optional): overrides get_current_week()'s own season pick —
+    every other caller wants "whatever season is live right now," but a
+    historical backtest (e.g. nfl_game_simulator.simulate_week() walking a
+    past season for validation) needs a specific past season's scoreboard,
+    not the current one. ESPN's scoreboard endpoint serves old seasons the
+    same way it serves the current one, so this is just a parameter
+    passthrough — no new fetch path. `is_current_week` in the return value
+    is still computed against the REAL current week (not meaningful for a
+    past-season call — the caller already knows it asked for history)."""
+    current_season, current_week = get_current_week()
+    season = season or current_season
     if week is None:
         week = current_week
     week = max(1, min(_REG_SEASON_WEEKS, week))
