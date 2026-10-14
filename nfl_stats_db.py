@@ -1480,16 +1480,28 @@ def persist_sim_results_db(season, week, game_id, team_id, opponent_id, results)
     constraint — overwrites yesterday's run for the same week rather than
     accumulating a history, since what matters is today's best estimate
     (see NflSimResult's class docstring, app.py). Called by
-    nfl_game_simulator.simulate_week(), itself called from a daily
-    background job (app.py's cron registration) — never on a live request
-    path."""
+    nfl_game_simulator.simulate_week() once per (game, side) — i.e.
+    multiple times per week, each with a different `team_id` — so the
+    existing-row lookup below is deliberately NOT scoped to `team_id`:
+    the real unique constraint is (season, week, player_id) only, and a
+    player really can turn up under two different team_ids within the
+    same week's run (confirmed live — a recently-traded player whose
+    get_team_usage_shares_db() attribution still reflects their OLD
+    team's recent plays while nfl_roster_api's CURRENT roster already has
+    them on the NEW team crashed an early version of this function with
+    a real UNIQUE-constraint IntegrityError, scoping the lookup to
+    team_id meant the second team's call never saw the first team's
+    already-committed row). Scoping to (season, week) only means that
+    rare case just gets overwritten by whichever call processes them
+    last, rather than crashing the whole week's run over one player's
+    ambiguous attribution."""
     import json as _json
     from app import app as flask_app, db, NflSimResult
 
     with flask_app.app_context():
         existing = {
             r.player_id: r for r in
-            NflSimResult.query.filter_by(season=season, week=week, team_id=team_id).all()
+            NflSimResult.query.filter_by(season=season, week=week).all()
         }
         for r in results:
             row = existing.get(r['player_id'])
