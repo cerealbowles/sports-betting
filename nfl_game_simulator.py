@@ -40,13 +40,26 @@ nfl_fantasy.py's own documented scoring gaps):
     noisier than a real coach's actual rotation. Punts/kickoffs/field
     goals are never attributed to a player at all (this app doesn't
     roster punters/kickers for fantasy).
-  - League-wide play sampling, not team- or opponent-conditioned: a play
-    is drawn from ALL teams' historical plays in a matching situation,
-    not this specific offense's or defense's own tendencies. Two seasons
-    across 32 teams isn't deep enough to split by team AND situation
-    without most buckets going empty. A real per-team pass-rate/
-    explosiveness signal (nfl_player_model.py's offense/defense grades)
-    isn't factored in here at all yet.
+  - Play sampling is league-wide (a play is drawn from ALL teams'
+    historical plays in a matching situation — two seasons across 32
+    teams isn't deep enough to split by team AND situation without most
+    buckets going empty), but the SELECTION within that league-wide pool
+    is now team-conditioned: see TEAM_CONDITIONING_K / _sample_play()'s
+    `tilt` parameter. Each offense's nfl_player_model.compute_offense_
+    grade() vs. the opposing defense's compute_defense_grade() (the same
+    signal this app's real win-probability model partially blends in —
+    see nfl_player_model.predict()) shifts which REAL historical plays
+    get drawn more/less often within a bucket — a play near the top of
+    its bucket's own yardage distribution gets upweighted for a favorable
+    matchup, one near the bottom for an unfavorable one. Still resampling
+    real plays, never inventing yardage. Only applies to downs 1-3 and
+    the short-yardage 4th-down go-for-it sampling — 4th-down punt/FG
+    decisions and kickoffs are NOT conditioned (see _sample_fourth_down()/
+    _resolve_kickoff_start(), unchanged). The conditioning strength
+    (TEAM_CONDITIONING_K) is hand-set, not backtested — same category of
+    gap as FOURTH_DOWN_GO_FOR_IT_RATE, for the same reason (no clean way
+    to fit "how much should a 0.3-grade mismatch skew play selection"
+    from what's stored).
   - No game clock. Drives run until they end on their own merits (score/
     turnover/turnover-on-downs/stalled-4th-down); `drives_per_team`
     stands in for a real half/game duration rather than a clock that can
@@ -62,10 +75,12 @@ nfl_fantasy.py's own documented scoring gaps):
     trust for anything that needs a real clock (2-minute-drill behavior,
     which team has the ball at the 2:00 warning, etc.).
 """
+import math
 import random
 from collections import defaultdict, namedtuple
 
 import nfl_fantasy
+import nfl_player_model as pm
 import nfl_stats_db
 
 MIN_BUCKET_SAMPLES = 25   # below this, back off to a coarser bucket — see _sample_play()
@@ -84,6 +99,21 @@ KICKOFF_YARDS_TO_ENDZONE = 75  # fallback-only now — see _resolve_kickoff_star
 # from real plays — see build_fourth_down_pool().
 FOURTH_DOWN_SHORT_YARDAGE = 2     # only distances at or under this are ever "gone for"
 FOURTH_DOWN_GO_FOR_IT_RATE = 0.3  # ...and even then, only this fraction of the time
+
+# Team-conditioning strength for _sample_play()'s weighted draw — see
+# module docstring's "Play sampling is league-wide" bullet for the full
+# mechanism. `tilt` passed into _sample_play() is (offense_grade -
+# defense_grade), roughly -0.5..+0.5 for a real but not extreme mismatch
+# (both grades center on 1.0 — see nfl_player_model.py). Each candidate
+# play's weight is exp(K * percentile * tilt), where percentile is that
+# play's own rank (0=worst, 1=best) by yards_gained within its bucket —
+# so at tilt=+0.3 (a real favorable matchup) the best play in a bucket
+# ends up roughly exp(K*0.3) times more likely to be drawn than the
+# worst, tilt=0 (neutral/unknown matchup) reduces to the original uniform
+# draw. K=2.5 makes that ratio ~2.1x at tilt=0.3, ~3.5x at tilt=0.5 — a
+# real, noticeable skew without letting one lopsided matchup dominate
+# every single play. Hand-set, not backtested — see module docstring.
+TEAM_CONDITIONING_K = 2.5
 
 SCORING_PLAY_TYPES = {'Rushing Touchdown', 'Passing Touchdown'}
 RUSH_PLAY_TYPES = {'Rush', 'Rushing Touchdown'}
@@ -139,11 +169,28 @@ def build_play_buckets(plays):
     {(down, dist_bucket, field_bucket): [play, ...]} — the finest-grained
     index _sample_play() tries first before backing off. Built once per
     simulation run (not per draw) — reused across every drive of every
-    simulated game; see build_sim_pools()."""
+    simulated game; see build_sim_pools().
+
+    Also mutates each play dict in place, adding '_percentile' — its own
+    rank by yards_gained within its bucket (0.0 = worst play in the
+    bucket, 1.0 = best), computed once here rather than per-draw so
+    _sample_play()'s team-conditioned weighted sampling (see
+    TEAM_CONDITIONING_K) stays cheap. Safe to mutate: build_sim_pools()
+    builds this from a freshly-loaded play list each run, and each play
+    belongs to exactly one bucket (a strict partition), so this never
+    overwrites a percentile some other bucket already assigned. Only
+    computed at THIS finest-bucket level — _sample_play()'s backoff
+    levels (coarser candidate sets) sample uniformly, untilted; see that
+    function's docstring."""
     buckets = defaultdict(list)
     for p in plays:
         key = (p['down'], _distance_bucket(p['distance']), _field_bucket(p['yards_to_endzone']))
         buckets[key].append(p)
+    for candidates in buckets.values():
+        ranked = sorted(candidates, key=lambda p: p['yards_gained'])
+        n = len(ranked)
+        for i, p in enumerate(ranked):
+            p['_percentile'] = i / (n - 1) if n > 1 else 0.5
     return dict(buckets)
 
 
@@ -180,20 +227,32 @@ def build_sim_pools(seasons=None):
     )
 
 
-def _sample_play(down, distance, yards_to_endzone, pools, rng):
+def _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=0.0):
     """Backs off from the finest (down, distance-bucket, field-bucket) key
     to coarser ones when there aren't enough real plays to draw from —
     4th-and-long from your own 10 is a real but rare situation; forcing a
     draw from just those few stored plays would make one or two outlier
     games dictate the whole sample. Backoff order: drop field position,
     then drop distance, then (last resort) draw from every stored play at
-    that down."""
+    that down.
+
+    `tilt`: (offense_grade - defense_grade) for this specific drive's
+    matchup direction, 0.0 for no conditioning (the default — also what
+    every backoff level below the finest bucket uses, see
+    TEAM_CONDITIONING_K's comment for why). At the finest bucket, a
+    nonzero tilt switches from a uniform draw to one weighted by each
+    candidate's precomputed '_percentile' (see build_play_buckets()) —
+    still only ever returns a REAL historical play, just a different one
+    more or less often depending on how favorable this matchup is."""
     dist_b, field_b = _distance_bucket(distance), _field_bucket(yards_to_endzone)
     all_plays = pools.scrimmage_plays
 
     candidates = pools.scrimmage_buckets.get((down, dist_b, field_b), [])
     if len(candidates) >= MIN_BUCKET_SAMPLES:
-        return rng.choice(candidates)
+        if tilt == 0.0:
+            return rng.choice(candidates)
+        weights = [math.exp(TEAM_CONDITIONING_K * p['_percentile'] * tilt) for p in candidates]
+        return rng.choices(candidates, weights=weights, k=1)[0]
 
     by_down_dist = [p for p in all_plays if p['down'] == down and _distance_bucket(p['distance']) == dist_b]
     if len(by_down_dist) >= MIN_BUCKET_SAMPLES:
@@ -245,7 +304,7 @@ def _resolve_kickoff_start(pools, rng):
     return kickoff['end_yards_to_endzone'] if kickoff['end_yards_to_endzone'] is not None else KICKOFF_YARDS_TO_ENDZONE
 
 
-def simulate_drive(pools, rng, start_yards_to_endzone=None):
+def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
     """Simulates one team's possession by chaining resampled real plays
     together, down by down, with continuous real field position (not a
     fixed restart spot — see _resolve_kickoff_start()/this module's
@@ -264,12 +323,16 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None):
 
     `start_yards_to_endzone=None` (the default) draws an opening kickoff;
     pass a number directly to start from a specific spot (mainly useful
-    for testing one situation in isolation).
+    for testing one situation in isolation). `tilt` (default 0.0, no
+    conditioning): this drive's offense-vs-defense matchup signal, passed
+    straight through to _sample_play() — see TEAM_CONDITIONING_K's
+    comment and simulate_game()'s docstring for where it comes from.
 
     4th down does NOT sample from the scrimmage play buckets like downs
     1-3 do — see FOURTH_DOWN_GO_FOR_IT_RATE's comment for why a real
     go-rate can't be fit from what's stored. Most 4th downs instead draw
-    a real punt/field-goal play via _sample_fourth_down()."""
+    a real punt/field-goal play via _sample_fourth_down() (NOT tilted —
+    see this module's docstring)."""
     if start_yards_to_endzone is None:
         start_yards_to_endzone = _resolve_kickoff_start(pools, rng)
 
@@ -297,7 +360,7 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None):
                 return drive_plays, outcome, next_start
             # else: short-yardage go-for-it — fall through to sample a normal play below.
 
-        play = _sample_play(down, distance, yards_to_endzone, pools, rng)
+        play = _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=tilt)
         drive_plays.append(play)
 
         if play['is_turnover']:
@@ -321,7 +384,7 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None):
     return drive_plays, 'max_plays', _resolve_kickoff_start(pools, rng)
 
 
-def simulate_game(pools, rng, drives_per_team=10):
+def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
     """Alternates possession between 'home' and 'away' for `drives_per_team`
     drives each (10 is this app's own stored-data average — 20.3 distinct
     drive_ids/game across the warehouse, roughly half per side). Field
@@ -333,13 +396,22 @@ def simulate_game(pools, rng, drives_per_team=10):
     Field Goal plays), for attribute_plays_to_players(); 'drives' is one
     {'outcome', 'points', 'quarter'} per drive (see DRIVE_POINTS/
     _approx_quarter()) for simulate_matchup()'s game-level summary (final
-    score, win/loss, quarter breakdown)."""
+    score, win/loss, quarter breakdown).
+
+    `home_tilt`/`away_tilt` (default 0.0, no conditioning): each side's
+    own offense-vs-opposing-defense matchup signal — home's drives use
+    `home_tilt` (home offense vs. away defense), away's use `away_tilt`
+    (away offense vs. home defense). See simulate_matchup() for where
+    these come from (nfl_player_model's offense/defense grades) and
+    TEAM_CONDITIONING_K for the mechanism."""
     out = {'home': {'plays': [], 'drives': []}, 'away': {'plays': [], 'drives': []}}
     side_drive_idx = {'home': 0, 'away': 0}
+    tilt_by_side = {'home': home_tilt, 'away': away_tilt}
     next_start = _resolve_kickoff_start(pools, rng)  # opening kickoff of the game
     for i in range(drives_per_team * 2):
         side = 'home' if i % 2 == 0 else 'away'
-        plays, outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start)
+        plays, outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start,
+                                                      tilt=tilt_by_side[side])
         out[side]['plays'].extend(plays)
         out[side]['drives'].append({
             'outcome': outcome,
@@ -419,6 +491,22 @@ def attribute_plays_to_players(plays, usage_shares, rng):
 DEFAULT_SIM_DRAWS = 150
 
 
+GRADE_WINDOW = 5  # matches nfl_player_model.QB_WINDOW/DEF_WINDOW — the window those grades were designed around
+
+
+def _team_grades(team_id, before_date=None):
+    """(offense_grade, defense_grade) for one team — reuses nfl_stats_db.
+    get_team_game_aggregates_db() (the same batched read nfl_api.py's live
+    win-probability predictions and nfl_fantasy.build_player_pool() both
+    already use) rather than re-deriving team-game aggregates here. Either
+    value is None if this team has no usable stored history yet (a bye-
+    heavy early season, a brand-new team context) — simulate_matchup()
+    treats a None grade as "no conditioning for this side," not an error."""
+    off_games, def_games = nfl_stats_db.get_team_game_aggregates_db(team_id, before_date=before_date,
+                                                                      limit=GRADE_WINDOW)
+    return pm.compute_offense_grade(off_games), pm.compute_defense_grade(def_games)
+
+
 def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_date=None, window_games=5,
                       seasons=None, drives_per_team=10, rng=None, pools=None):
     """Top-level entry point: runs `n` full, independent game simulations
@@ -442,7 +530,15 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     caveat, module docstring). player_id only, no name/position
     resolution here (that needs a roster lookup, a separate concern —
     see nfl_roster_api.get_skill_players() for a live mapping, or resolve
-    the ids the way build_player_pool() does)."""
+    the ids the way build_player_pool() does).
+
+    Each side's play sampling is conditioned on real team strength — see
+    _team_grades()/TEAM_CONDITIONING_K: home's tilt is home's own offense
+    grade minus away's defense grade (and symmetrically for away), both
+    from nfl_player_model.py's existing offense/defense grade signal. A
+    team with no usable stored history (grade is None on either side)
+    falls back to tilt=0.0 for that side — the original untilted,
+    league-wide-uniform behavior — rather than guessing a grade."""
     rng = rng or random.Random()
     pools = pools or build_sim_pools(seasons=seasons)
 
@@ -451,12 +547,18 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     away_shares = nfl_stats_db.get_team_usage_shares_db(away_team_id, before_date=before_date,
                                                           window_games=window_games)
 
+    home_off, home_def = _team_grades(home_team_id, before_date=before_date)
+    away_off, away_def = _team_grades(away_team_id, before_date=before_date)
+    home_tilt = (home_off - away_def) if (home_off is not None and away_def is not None) else 0.0
+    away_tilt = (away_off - home_def) if (away_off is not None and home_def is not None) else 0.0
+
     draws = {'home': defaultdict(list), 'away': defaultdict(list)}
     home_wins = away_wins = ties = 0
     scores = {'home': [], 'away': []}
     quarter_points = {'home': [0, 0, 0, 0], 'away': [0, 0, 0, 0]}
     for _ in range(n):
-        game = simulate_game(pools, rng, drives_per_team=drives_per_team)
+        game = simulate_game(pools, rng, drives_per_team=drives_per_team,
+                              home_tilt=home_tilt, away_tilt=away_tilt)
         side_score = {}
         for side, shares in (('home', home_shares), ('away', away_shares)):
             side_score[side] = sum(d['points'] for d in game[side]['drives'])
@@ -496,6 +598,7 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
         'away_avg_score': round(sum(scores['away']) / n, 1),
         'home_quarter_avg': [round(q / n, 1) for q in quarter_points['home']],
         'away_quarter_avg': [round(q / n, 1) for q in quarter_points['away']],
+        'home_tilt': round(home_tilt, 3), 'away_tilt': round(away_tilt, 3),
     }
     return {'players': players, 'game': game_summary}
 
