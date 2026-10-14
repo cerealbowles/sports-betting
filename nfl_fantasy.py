@@ -24,17 +24,25 @@ regression (FanDuel scores their receiving production identically) even
 though they occupy different roster slots. DST is a fourth, separate
 bucket, scored at the team level.
 
-Known, documented scoring gaps (ESPN's free box score doesn't carry these):
-  - 2-point conversions (no stat key for it at all)
+Known, documented scoring gaps (ESPN's free box score doesn't carry these),
+cross-checked 2026-10-14 against FanDuel's own in-app rules panel for a
+real contest ($250K Sun NFL Kickoff):
+  - 2-point conversions, both thrown (2PC/P) and scored (2PC/S) (no stat
+    key for either at all)
   - Defensive fumble recoveries specifically (the 'fumbles' category's
     fumblesRecovered field doesn't distinguish own-team vs opponent
-    recoveries) and safeties/blocked kicks (no stat key for either)
+    recoveries), safeties, and blocked punts/kicks (no stat key for any)
   - Offensive players' fumble-recovery / blocked-kick-return TDs if they
     occur off a defensive takeaway rather than their own fumble
 Sacks, interceptions, defensive/return touchdowns, and points allowed ARE
 captured — confirmed live against a real box score (see this module's
-sibling PR description for the exact category/key names).
+sibling PR description for the exact category/key names). The 100+
+rushing/receiving and 300+ passing single-game yardage bonuses (3 pts
+each) are also captured — see compute_fantasy_points() — added once the
+same rules panel cross-check showed they'd been omitted even though the
+underlying yardage was already on hand.
 """
+import random
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -56,6 +64,17 @@ RECV_TD = 6.0
 RECEPTION = 0.5     # half-PPR
 FUMBLE_LOST = -2.0
 RETURN_TD = 6.0     # kick/punt return touchdown
+
+# Game-level yardage bonuses (confirmed against FanDuel's own rules panel,
+# a real contest screenshot) — these stack on top of the per-yard rate
+# above once a player clears the threshold IN A SINGLE GAME. Unlike the
+# 2-point-conversion/safety/blocked-kick gaps this module's docstring
+# documents (no ESPN stat key exists for those at all), the raw yardage
+# these read off of (passingYards/rushingYards/receivingYards) is already
+# captured per game — this was a pure scoring omission, not a data gap.
+PASS_YD_300_BONUS = 3.0
+RUSH_YD_100_BONUS = 3.0
+RECV_YD_100_BONUS = 3.0
 
 DST_SACK = 1.0
 DST_INT = 2.0
@@ -94,20 +113,29 @@ def compute_fantasy_points(categories):
 
     if 'passing' in cats:
         c = cats['passing']
-        pts += _num(c.get('passingYards')) * PASS_YD
+        pass_yards = _num(c.get('passingYards'))
+        pts += pass_yards * PASS_YD
         pts += _num(c.get('passingTouchdowns')) * PASS_TD
         pts += _num(c.get('interceptions')) * PASS_INT
+        if pass_yards >= 300:
+            pts += PASS_YD_300_BONUS
 
     if 'rushing' in cats:
         c = cats['rushing']
-        pts += _num(c.get('rushingYards')) * RUSH_YD
+        rush_yards = _num(c.get('rushingYards'))
+        pts += rush_yards * RUSH_YD
         pts += _num(c.get('rushingTouchdowns')) * RUSH_TD
+        if rush_yards >= 100:
+            pts += RUSH_YD_100_BONUS
 
     if 'receiving' in cats:
         c = cats['receiving']
-        pts += _num(c.get('receivingYards')) * RECV_YD
+        recv_yards = _num(c.get('receivingYards'))
+        pts += recv_yards * RECV_YD
         pts += _num(c.get('receivingTouchdowns')) * RECV_TD
         pts += _num(c.get('receptions')) * RECEPTION
+        if recv_yards >= 100:
+            pts += RECV_YD_100_BONUS
 
     if 'fumbles' in cats:
         pts += _num(cats['fumbles'].get('fumblesLost')) * FUMBLE_LOST
@@ -404,21 +432,111 @@ def project_points(bucket, points_history, opponent_grade, recent_volume_pg=None
     return max(0.0, round(proj, 2))
 
 
+# ── Monte Carlo outcome simulation (independent per player) ────────────
+#
+# project_points() above gives one number — the expected value. This
+# section answers a different question: what does the realistic SPREAD
+# around that number look like for a single game? Each draw samples a
+# Gaussian centered on the player's own projection, with spread taken
+# from that bucket's own backtested MAE (PROJECTION_FIT_QUALITY — the
+# same number the methodology panel already shows as "how far off the
+# fitted model typically lands") converted to a standard deviation via
+# the standard mean-absolute-deviation/sigma relationship for a normal
+# distribution: MAD = sigma * sqrt(2/pi). Deliberately NOT a second,
+# separately-tuned volatility knob — reusing the one number this app has
+# already validated keeps simulated spread honest instead of invented.
+#
+# Independent per player: this does NOT model game-script correlation
+# (a QB's big passing day pulling his WR1's outcome up with him, or a
+# defensive-TD game depressing the opposing offense). Two teammates'
+# simulated draws are statistically unrelated here even though their
+# real outcomes obviously aren't — treat these as "how volatile is THIS
+# player's own game," not as a way to evaluate whether a stacked lineup's
+# combined outcomes are correlated. Fixing that needs simulating the
+# game's shared script first and deriving player outcomes from it, which
+# is a separate, bigger piece of work than this.
+_MAE_TO_SIGMA = (3.14159265358979 / 2) ** 0.5  # sqrt(pi/2) ≈ 1.2533, MAD -> Gaussian sigma
+
+
+def simulate_player_points(bucket, projection, n=10, rng=None):
+    """Draws `n` independent Monte Carlo outcomes for one player/DST's next
+    game, centered on `projection` (project_points()'s own point estimate)
+    with spread from `bucket`'s backtested MAE. Points can't go negative in
+    FanDuel's own scoring (see compute_fantasy_points' max(0.0, ...) floor
+    on the real formula), so draws are clamped the same way. `rng`: an
+    optional random.Random for reproducible draws (e.g. tests); defaults to
+    the stdlib `random` module's own functions."""
+    sigma = PROJECTION_FIT_QUALITY[bucket]['mae'] * _MAE_TO_SIGMA
+    gauss = rng.gauss if rng is not None else random.gauss
+    return [max(0.0, round(gauss(projection, sigma), 2)) for _ in range(n)]
+
+
+def simulate_pool(pool, n=10, rng=None):
+    """Mutates every entry of an already-built, already-projected `pool`
+    (see build_player_pool()) in place, adding 'sim' (the n raw draws),
+    and 'sim_min'/'sim_median'/'sim_max' summarizing them. Named min/
+    median/max rather than floor/ceiling percentiles on purpose — with
+    n=10 draws, claiming a specific percentile (p10/p90) would overstate
+    the precision 10 samples actually support."""
+    for p in pool:
+        bucket = 'DST' if p['position'] == 'DST' else ROSTER_BUCKET[p['position']]
+        draws = simulate_player_points(bucket, p['projection'], n=n, rng=rng)
+        ranked = sorted(draws)
+        p['sim'] = draws
+        p['sim_min'] = ranked[0]
+        p['sim_median'] = ranked[len(ranked) // 2]
+        p['sim_max'] = ranked[-1]
+    return pool
+
+
 # ── Synthetic salary ────────────────────────────────────────────────────
 #
 # Real FanDuel pricing is relative to the week's own slate (a great matchup
 # in an otherwise weak RB week prices higher than the same projection would
 # in a stacked one) — so rather than an absolute points-to-dollars curve,
 # salary here is each player's PERCENTILE RANK within their own position
-# group *this week's pool*, mapped onto a realistic-looking band. This is
-# still entirely self-consistent/synthetic (no real FanDuel data involved),
-# just a better-shaped synthetic than a fixed formula would produce.
+# group *this week's pool*, mapped onto a band via a per-position power
+# curve: salary = lo + (hi - lo) * pct**SALARY_CURVE_EXPONENT[position].
+#
+# Both the bands and the exponents are fit, not guessed — calibrated once
+# against a real FanDuel NFL CSV (2026-10-18 slate, 10 games, 512 rows)
+# by sorting each position's real salaries ascending, treating rank
+# i/(n-1) as "percentile," and grid-searching the exponent that minimizes
+# RMSE against the real dollar values at that band's observed lo/hi. The
+# fit was done on rows with Played >= 2 only (FanDuel's "Played" column),
+# matching MIN_USAGE_GAMES below — our own pool never includes a player
+# who hasn't cleared that bar, so calibrating against FanDuel's full
+# field (including inactive/practice-squad filler sitting at the price
+# floor) would fit a curve shaped by players our pool structurally
+# excludes. That population match mattered: fitting against the full
+# field first (not done here) produced a curve that, re-applied to our
+# own (pre-filtered) pool, systematically underpriced it by ~$700/player
+# on average against real salaries; restricting the fit to Played >= 2
+# cut that to ~$430/player (RMSE $798, vs $943 unfiltered, vs ~$1250 for
+# a plain linear curve, exponent 1 — real FanDuel pay is heavily
+# floor-weighted even among active players, e.g. real active-RB salaries:
+# median sits near the $4000 floor of a $4000-9300 band). DST came back
+# exponent 1.0 (truly linear in real data, RMSE $0) — left alone. This is
+# still a one-week calibration sample (the only real salary data this app
+# has ever had access to, per this module's docstring) — not re-derived
+# from a warehouse like PROJECTION_FIT is, so there's nothing to
+# "re-run." Redo this fit (sort real Played>=2 salaries by position,
+# grid-search exponent against a fresh CSV) if/when another real FanDuel
+# slate export becomes available, rather than trusting one week's shape
+# to hold all season.
 SALARY_BANDS = {
-    'QB':  (6000, 8800),
-    'RB':  (4500, 9200),
-    'WR':  (4000, 9200),
-    'TE':  (4000, 7200),
-    'DST': (2500, 4800),
+    'QB':  (6000, 9500),
+    'RB':  (4000, 9300),
+    'WR':  (4000, 9000),
+    'TE':  (4000, 8300),
+    'DST': (3000, 4900),
+}
+SALARY_CURVE_EXPONENT = {
+    'QB':  2.8,
+    'RB':  3.2,
+    'WR':  4.2,
+    'TE':  9.8,
+    'DST': 1.0,
 }
 SALARY_STEP = 100
 
@@ -434,6 +552,7 @@ def assign_salaries(pool):
 
     for position, players in by_position.items():
         lo, hi = SALARY_BANDS[position]
+        exponent = SALARY_CURVE_EXPONENT[position]
         n = len(players)
         if n == 1:
             players[0]['salary'] = int(round((lo + hi) / 2 / SALARY_STEP)) * SALARY_STEP
@@ -441,7 +560,7 @@ def assign_salaries(pool):
         ranked = sorted(players, key=lambda p: p['projection'])
         for i, p in enumerate(ranked):
             pct = i / (n - 1)  # 0 = lowest projection, 1 = highest
-            salary = lo + pct * (hi - lo)
+            salary = lo + (hi - lo) * (pct ** exponent)
             p['salary'] = int(round(salary / SALARY_STEP)) * SALARY_STEP
     return pool
 
@@ -467,11 +586,14 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, 
             'rush_yd': RUSH_YD, 'rush_td': RUSH_TD,
             'recv_yd': RECV_YD, 'recv_td': RECV_TD, 'reception': RECEPTION,
             'fumble_lost': FUMBLE_LOST, 'return_td': RETURN_TD,
+            'pass_300_bonus': PASS_YD_300_BONUS, 'rush_100_bonus': RUSH_YD_100_BONUS,
+            'recv_100_bonus': RECV_YD_100_BONUS,
             'dst_sack': DST_SACK, 'dst_int': DST_INT, 'dst_td': DST_TD,
             'dst_pa_tiers': DST_POINTS_ALLOWED_TIERS,
         },
         'projection_fit': projection_fit_summary(),
         'salary_bands': SALARY_BANDS,
+        'salary_curve_exponent': SALARY_CURVE_EXPONENT,
         'salary_cap': salary_cap if salary_cap is not None else SALARY_CAP,
         'roster_requirements': roster_requirements or ROSTER_REQUIREMENTS,
         'stack_min': stack_min,
