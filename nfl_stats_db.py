@@ -1291,14 +1291,18 @@ def get_simulator_play_pool_db(seasons=None):
 
     - Drops Penalty plays and any is_no_play row (down replayed) — neither
       carries a clean down/distance/yards signal a drive simulator can
-      chain on. Still scrimmage-only (Rush/Pass/Sack/TD types) — this
-      does NOT include the special-teams/turnover-result play types
-      NflPlay gained alongside this function's is_turnover fix (Punt,
-      Kickoff, Field Goal Good/Missed, Pass Interception Return, Fumble
-      Recovery — see NflPlay's class docstring in app.py); the drive
-      simulator doesn't yet have mechanics that consume those (no punt-
-      distance or FG make/miss modeling — see nfl_game_simulator.py's
-      module docstring), so pulling them in here would just be dead data.
+      chain on.
+    - Includes the turnover-RESULT types that occur WITHIN a normal down
+      1-4 scrimmage situation (Pass Interception Return, Fumble Recovery
+      (Own)/(Opponent), Sack Opp Fumble Recovery) — simulate_drive()
+      checks is_turnover before anything else, so these slot straight
+      into the existing down/distance bucket sampling with no new
+      mechanics needed. Still excludes Punt/Kickoff/Field Goal Good/
+      Missed — those aren't situated on a normal down (kickoffs are
+      down=0; a punt/FG's own down/distance describes the decision TO
+      kick, not a resampleable "what happens on this down" outcome) and
+      the drive simulator has no punt-distance or FG make/miss mechanics
+      to consume them yet — see nfl_game_simulator.py's module docstring.
     - `is_turnover` IS now read straight off NflPlay.is_turnover — this
       used to be a text-regex workaround (INTERCEPTED|FUMBLES over the
       play's own text) because that column was never actually set on any
@@ -1321,7 +1325,9 @@ def get_simulator_play_pool_db(seasons=None):
     with flask_app.app_context():
         q = NflPlay.query.filter(
             NflPlay.play_type.in_(['Rush', 'Pass Reception', 'Pass Incompletion',
-                                    'Sack', 'Passing Touchdown', 'Rushing Touchdown']),
+                                    'Sack', 'Passing Touchdown', 'Rushing Touchdown',
+                                    'Pass Interception Return', 'Fumble Recovery (Own)',
+                                    'Fumble Recovery (Opponent)', 'Sack Opp Fumble Recovery']),
             NflPlay.down.in_([1, 2, 3, 4]),
             NflPlay.is_no_play.isnot(True),
         )
