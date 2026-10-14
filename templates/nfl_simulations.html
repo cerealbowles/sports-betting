@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}NFL Game Simulations — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.sim-game-card { margin-bottom: 14px; }
+.sim-game-hdr { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.sim-game-hdr h2 { font-family: var(--font-display); font-size: 1.05rem; }
+.sim-subtables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
+.sim-subtables h3 {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); margin-bottom: 6px;
+}
+@media (max-width: 700px) { .sim-subtables { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+<h1>Game Simulations</h1>
+<p class="dfs-subhead">Each player's floor/median/ceiling from {{ games[0].home_players[0].n_draws if games and games[0].home_players else '—' }} full drive-by-drive simulated games — resampled from real play-by-play, re-run once a day in the background (not live) — see <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">🏆 Lineup Builder</a> for the point-projection version.</p>
+
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('nfl_simulations_page', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('nfl_simulations_page', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+{% if not games %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🎲</div>
+    <div class="offseason-title">No simulated results stored for this week yet</div>
+    <p class="dfs-subhead">The daily background job hasn't run against this week yet — check back after 7:30 AM ET, or see the <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">live projection-based builder</a> in the meantime.</p>
+</div>
+{% else %}
+
+{% macro player_rows(players) %}
+<table class="table">
+    <thead><tr><th>Player</th><th>Pos</th><th>Floor</th><th>Median</th><th>Ceiling</th></tr></thead>
+    <tbody>
+    {% for p in players %}
+    <tr>
+        <td>{{ p.player_name }}</td>
+        <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
+        <td>{{ '%.1f' | format(p.sim_min) }}</td>
+        <td><strong>{{ '%.1f' | format(p.sim_median) }}</strong></td>
+        <td>{{ '%.1f' | format(p.sim_max) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}
+
+{% for g in games %}
+<div class="card sim-game-card">
+    <div class="sim-game-hdr">
+        <h2>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</h2>
+    </div>
+    <div class="sim-subtables">
+        <div>
+            <h3>{{ g.away.name }} (away)</h3>
+            {{ player_rows(g.away_players) }}
+        </div>
+        <div>
+            <h3>{{ g.home.name }} (home)</h3>
+            {{ player_rows(g.home_players) }}
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+
+</div>
+{% endblock %}

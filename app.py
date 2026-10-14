@@ -550,6 +550,53 @@ class NflRecapWeek(db.Model):
   __table_args__ = (db.UniqueConstraint('season', 'week', name='uq_nfl_recap_week'),)
 
 
+class NflSimResult(db.Model):
+  """One player's simulated-fantasy-outcome summary for one upcoming NFL
+  week, written by nfl_game_simulator.simulate_week() from a DAILY
+  BACKGROUND JOB (see _simulate_nfl_week()'s cron registration below) —
+  never computed on a live request. A full-slate simulation at a useful
+  draw count (100+ games per matchup, pure Python, no numpy) takes
+  minutes, not the sub-3-second budget a page load gets elsewhere in this
+  app (see nfl_fantasy.build_player_pool()'s own docstring for that
+  budget) — so /nfl/simulations reads this table instead of re-running
+  anything. See nfl_game_simulator.py's module docstring for what the
+  simulation itself does and doesn't model.
+
+  Upserts on (season, week, player_id) — each day's run OVERWRITES the
+  previous one for the same week rather than accumulating a run history,
+  since what matters to the page is "today's best estimate," not a time
+  series of estimates (unlike NflRecapWeek, which stores a PAST week's
+  permanently-settled result exactly once — this is a rolling estimate
+  for a week that hasn't been played yet, recomputed daily as usage
+  shares/injury news shift through the week).
+
+  sim_draws_json keeps every individual simulated-game point total (not
+  just min/median/max) — same "store the raw data, not just aggregates"
+  reasoning as NflPlay's raw-play rows — so a future UI could show a real
+  distribution (a histogram, a specific percentile) without re-running
+  the simulation."""
+  __tablename__ = 'nfl_sim_results'
+  id              = db.Column(db.Integer, primary_key=True)
+  season          = db.Column(db.Integer, nullable=False, index=True)
+  week            = db.Column(db.Integer, nullable=False, index=True)
+  game_id         = db.Column(db.String(20), nullable=False, index=True)
+  team_id         = db.Column(db.String(20), nullable=False, index=True)
+  opponent_id     = db.Column(db.String(20))
+  player_id       = db.Column(db.String(20), nullable=False, index=True)
+  player_name     = db.Column(db.String(80))
+  position        = db.Column(db.String(10))
+  n_draws         = db.Column(db.Integer, nullable=False)
+  sim_min         = db.Column(db.Float, nullable=False)
+  sim_median      = db.Column(db.Float, nullable=False)
+  sim_max         = db.Column(db.Float, nullable=False)
+  sim_mean        = db.Column(db.Float, nullable=False)
+  sim_draws_json  = db.Column(db.Text)
+  computed_at     = db.Column(db.DateTime(timezone=True),
+                               default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('season', 'week', 'player_id', name='uq_nfl_sim_result'),)
+
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()
@@ -6167,6 +6214,38 @@ def nfl_lineup():
                                                                        max_low_tier)))
   return _set_last_sport_cookie(resp, 'NFL')
 
+@app.route('/nfl/simulations')
+def nfl_simulations_page():
+  """Shows this week's stored game-simulation results (NflSimResult) —
+  written by a daily background job (_simulate_nfl_week(), app.py's own
+  cron registration), never computed here. See nfl_game_simulator.py's
+  module docstring for what the simulation does (resamples real historical
+  plays drive-by-drive, correlated player outcomes within each simulated
+  game) and doesn't (no live game-clock, hand-set 4th-down go-for-it
+  rate, league-wide not team-conditioned play sampling).
+
+  `week` (optional query param): same pattern as /nfl/lineup; defaults to
+  the current week. A week with no stored results yet (the background job
+  hasn't run since this week became current, or every game is a bye)
+  renders the empty state rather than an error."""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_games_light(week)
+  season, actual_week = week_ctx['season'], week_ctx['week']
+
+  results_by_game = nfl_stats_db.get_sim_results_db(season, actual_week)
+  games = []
+  for g in week_ctx['games']:
+    teams = results_by_game.get(g['game_id'], {})
+    home_rows = teams.get(g['home'].get('id'), [])
+    away_rows = teams.get(g['away'].get('id'), [])
+    if not home_rows and not away_rows:
+      continue
+    games.append({**g, 'home_players': home_rows, 'away_players': away_rows})
+
+  resp = make_response(render_template('nfl_simulations.html', subnav_sport='NFL',
+                         week_ctx=week_ctx, season=season, week=actual_week, games=games))
+  return _set_last_sport_cookie(resp, 'NFL')
+
 @app.route('/nfl/recap')
 def nfl_recap_page():
   """Season recap — every already-completed NFL week this season, the
@@ -7757,6 +7836,23 @@ def _nhl_stats_self_heal():
         pass
 
 
+def _simulate_nfl_week():
+    """Daily background job: runs nfl_game_simulator.simulate_week() for
+    the current NFL week and persists results to NflSimResult (see that
+    model's class docstring for why this can't just run on a page
+    request — a full-slate simulation at a useful draw count takes
+    minutes). Scheduled after the stats self-heal / news-ingestion jobs
+    above so the usage-share and injury data it reads is already caught
+    up for the day. Off-season / bye-week-only weeks naturally produce
+    zero games from nfl_api and this is a no-op, same as the other
+    self-heal jobs' own graceful-empty-case handling."""
+    try:
+        import nfl_game_simulator
+        nfl_game_simulator.simulate_week()
+    except Exception:
+        pass
+
+
 def _ingest_nfl_news():
     """Daily news-sentiment ingestion (nfl_news.py) — fetches ESPN's news
     JSON + the configured RSS feeds, matches to players/teams, scores, and
@@ -7819,6 +7915,16 @@ def _start_cache_warmer():
                       hour=7, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_news_ingest')
+    # NFL game-outcome simulation — 7:30 am ET daily, after the stats
+    # self-heal block (needs a caught-up warehouse for usage shares) and
+    # news ingestion above. Slow (minutes, not seconds — see NflSimResult's
+    # class docstring) by design: this is exactly why it's a daily batch
+    # job writing to a table instead of something /nfl/simulations computes
+    # live.
+    scheduler.add_job(_simulate_nfl_week, 'cron',
+                      hour=7, minute=30,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nfl_simulate_week')
     # Pace-stats-only pre-warm — every 20 min, much more often than the full
     # warmer above since it's cheap (no DB writes) and the whole point is
     # shrinking the window a cold/expired pace cache can sit in.

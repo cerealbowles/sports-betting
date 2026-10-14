@@ -1471,3 +1471,67 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
         'rush_shares': {pid: c / rush_total for pid, c in rush_counts.items()} if rush_total else {},
         'rec_shares': {pid: c / rec_total for pid, c in rec_counts.items()} if rec_total else {},
     }
+
+
+def persist_sim_results_db(season, week, game_id, team_id, opponent_id, results):
+    """Upserts one NflSimResult row per player in `results` (each:
+    {player_id, player_name, position, n_draws, sim_min, sim_median,
+    sim_max, sim_mean, sim}), on the (season, week, player_id) unique
+    constraint — overwrites yesterday's run for the same week rather than
+    accumulating a history, since what matters is today's best estimate
+    (see NflSimResult's class docstring, app.py). Called by
+    nfl_game_simulator.simulate_week(), itself called from a daily
+    background job (app.py's cron registration) — never on a live request
+    path."""
+    import json as _json
+    from app import app as flask_app, db, NflSimResult
+
+    with flask_app.app_context():
+        existing = {
+            r.player_id: r for r in
+            NflSimResult.query.filter_by(season=season, week=week, team_id=team_id).all()
+        }
+        for r in results:
+            row = existing.get(r['player_id'])
+            if row is None:
+                row = NflSimResult(season=season, week=week, player_id=r['player_id'])
+                db.session.add(row)
+            row.game_id = game_id
+            row.team_id = team_id
+            row.opponent_id = opponent_id
+            row.player_name = r.get('player_name')
+            row.position = r.get('position')
+            row.n_draws = r['n_draws']
+            row.sim_min = r['sim_min']
+            row.sim_median = r['sim_median']
+            row.sim_max = r['sim_max']
+            row.sim_mean = r['sim_mean']
+            row.sim_draws_json = _json.dumps(r['sim'])
+        db.session.commit()
+
+
+def get_sim_results_db(season, week):
+    """{game_id: {team_id: [{...}, ...]}} — every stored NflSimResult row
+    for one week, grouped by game then by team, each team's list sorted
+    by sim_median descending. Deliberately keyed by team_id rather than
+    'home'/'away' — this function has no opinion on which side is which
+    (the caller — /nfl/simulations — already has that from nfl_api's own
+    game list, no reason to duplicate it here). Position players only
+    (this app doesn't roster/attribute punters or kickers — see
+    nfl_game_simulator.py's docstring)."""
+    import json as _json
+    from app import app as flask_app, NflSimResult
+
+    with flask_app.app_context():
+        rows = (NflSimResult.query.filter_by(season=season, week=week)
+                .order_by(NflSimResult.sim_median.desc()).all())
+        out = defaultdict(lambda: defaultdict(list))
+        for r in rows:
+            out[r.game_id][r.team_id].append({
+                'player_id': r.player_id, 'player_name': r.player_name or f'id:{r.player_id}',
+                'position': r.position or '?', 'opponent_id': r.opponent_id,
+                'n_draws': r.n_draws, 'sim_min': r.sim_min, 'sim_median': r.sim_median,
+                'sim_max': r.sim_max, 'sim_mean': r.sim_mean,
+                'sim': _json.loads(r.sim_draws_json) if r.sim_draws_json else [],
+            })
+        return {gid: dict(teams) for gid, teams in out.items()}

@@ -373,25 +373,38 @@ def attribute_plays_to_players(plays, usage_shares, rng):
     return dict(cats)
 
 
-def simulate_matchup(home_team_id, away_team_id, n=10, before_date=None, window_games=5,
-                      seasons=None, drives_per_team=10, rng=None):
+# Default Monte Carlo draw count for simulate_matchup()/simulate_week().
+# 10 (this module's original default) made min/max essentially just "the
+# worst and best of 10 random games" — too few samples for a real floor/
+# ceiling. At ~0.11s/game (pure Python, no numpy, confirmed on this app's
+# production warehouse), 150 costs ~16-18s per matchup — far too slow for
+# a live page request, but exactly the kind of cost a DAILY BACKGROUND JOB
+# (see simulate_week()/app.py's cron registration) should absorb instead
+# of a visitor's page load.
+DEFAULT_SIM_DRAWS = 150
+
+
+def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_date=None, window_games=5,
+                      seasons=None, drives_per_team=10, rng=None, pools=None):
     """Top-level entry point: runs `n` full, independent game simulations
     for one real matchup and returns each involved player's simulated
     fantasy-point outcomes, WITH game-script correlation preserved within
     each of the n games (see module docstring for how that differs from
     nfl_fantasy.simulate_pool()).
 
-    Loads and buckets every resampling pool ONCE (see build_sim_pools()),
-    then reuses them across all n simulated games, same spirit as
-    build_player_pool()'s own batching rationale elsewhere in this app.
+    `pools` (optional): a pre-built SimPools (see build_sim_pools()) — pass
+    this when simulating multiple matchups in one run (see simulate_week())
+    so the league-wide play pools, which don't vary by matchup, are only
+    built once instead of once per game. None (the default) builds them
+    here, for simulating a single matchup standalone.
 
     Returns {'home': {player_id: {'sim': [n values], 'sim_min',
-    'sim_median', 'sim_max'}}, 'away': {...}} — player_id only, no name/
-    position resolution here (that needs a roster lookup, a separate
-    concern — see nfl_roster_api.get_skill_players() for a live mapping,
-    or resolve the ids the way build_player_pool() does)."""
+    'sim_median', 'sim_max', 'sim_mean'}}, 'away': {...}} — player_id
+    only, no name/position resolution here (that needs a roster lookup, a
+    separate concern — see nfl_roster_api.get_skill_players() for a live
+    mapping, or resolve the ids the way build_player_pool() does)."""
     rng = rng or random.Random()
-    pools = build_sim_pools(seasons=seasons)
+    pools = pools or build_sim_pools(seasons=seasons)
 
     home_shares = nfl_stats_db.get_team_usage_shares_db(home_team_id, before_date=before_date,
                                                          window_games=window_games)
@@ -412,6 +425,7 @@ def simulate_matchup(home_team_id, away_team_id, n=10, before_date=None, window_
         for player_id, pts in draws[side].items():
             ranked = sorted(pts)
             side_out[player_id] = {
+                'sim_mean': round(sum(pts) / len(pts), 2),
                 'sim': pts,
                 'sim_min': ranked[0],
                 'sim_median': ranked[len(ranked) // 2],
@@ -419,3 +433,63 @@ def simulate_matchup(home_team_id, away_team_id, n=10, before_date=None, window_
             }
         result[side] = side_out
     return result
+
+
+def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None, window_games=5,
+                   seasons=None, drives_per_team=10, rng=None):
+    """Runs simulate_matchup() for every game in one NFL week and PERSISTS
+    the results (nfl_stats_db.persist_sim_results_db()) instead of
+    returning them — this is the function app.py's daily background job
+    (_simulate_nfl_week()) calls; /nfl/simulations then reads what this
+    wrote via nfl_stats_db.get_sim_results_db() rather than ever calling
+    this directly on a request.
+
+    `week`/`season` (optional): defaults to nfl_api.get_current_week()'s
+    answer, same as every other "current week" caller in this app. Builds
+    every resampling pool ONCE for the whole week (league-wide, not
+    game-specific — see build_sim_pools()) and reuses it across every
+    matchup, same batching rationale as simulate_matchup()'s own `pools`
+    parameter exists for.
+
+    Player names/positions are resolved via a live nfl_roster_api fetch
+    per team (one per game, 2x per game for each side) — the same
+    CURRENT-roster-gated source build_player_pool() uses elsewhere in
+    this app, with that function's own documented staleness caveat (a
+    player traded/cut since this ran won't reflect it until the next
+    day's run). A player whose name doesn't resolve is still persisted
+    (as player_name=None — nfl_stats_db.get_sim_results_db() falls back
+    to showing their id) rather than dropped, matching this app's "a real
+    gap beats a wrong guess" convention."""
+    import nfl_api
+    import nfl_roster_api
+
+    rng = rng or random.Random()
+    week_ctx = nfl_api.build_week_games_light(week)
+    actual_season, actual_week = week_ctx['season'], week_ctx['week']
+    games = week_ctx['games']
+    if not games:
+        return
+
+    pools = build_sim_pools(seasons=seasons)
+
+    for g in games:
+        home_id, away_id = g['home'].get('id'), g['away'].get('id')
+        if not home_id or not away_id:
+            continue
+        sim = simulate_matchup(home_id, away_id, n=n, before_date=before_date,
+                                window_games=window_games, drives_per_team=drives_per_team,
+                                rng=rng, pools=pools)
+        for side, team_id, opponent_id in (('home', home_id, away_id), ('away', away_id, home_id)):
+            roster = {p['id']: p for p in nfl_roster_api.get_skill_players(team_id)}
+            results = []
+            for player_id, outcome in sim[side].items():
+                info = roster.get(player_id, {})
+                results.append({
+                    'player_id': player_id,
+                    'player_name': info.get('name'),
+                    'position': info.get('position'),
+                    'n_draws': len(outcome['sim']),
+                    **outcome,
+                })
+            nfl_stats_db.persist_sim_results_db(actual_season, actual_week, g['game_id'],
+                                                 team_id, opponent_id, results)
