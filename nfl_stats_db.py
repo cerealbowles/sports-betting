@@ -1649,3 +1649,66 @@ def get_or_fetch_roster_db(team_id, max_age_hours=24):
                                               player_name=p['name'], position=p.get('position')))
         db.session.commit()
         return live
+
+
+def get_sim_week_accuracy_db(season, week):
+    """Compares this week's stored NflSimGame rows against REAL completed
+    results (TeamGameStat) — only games already Final count, so an
+    upcoming/in-progress week naturally returns games_final=0 (and every
+    metric None) rather than erroring or comparing against nothing.
+    Mirrors the ad-hoc comparison script this app's own session history
+    used to validate the simulator week by week, now a reusable query so
+    /nfl/simulations can show it directly instead of it only ever being a
+    one-off script.
+
+    Returns {'games_final', 'win_pick_correct', 'win_pick_accuracy',
+    'brier', 'mean_abs_score_error'}. win_pick_accuracy: % of Final games
+    where the side with the higher simulated win count actually won (a
+    50/50 split counts as picking home, same tie-break simulate_matchup()
+    itself doesn't need to resolve since real games don't tie there).
+    brier: mean squared error between simulated home-win fraction and the
+    real 0/1 outcome — 0.25 is what guessing 50/50 every time scores,
+    lower is better (same convention as this app's real betting-model
+    performance page, model_performance.html). mean_abs_score_error:
+    average |simulated avg score - real final score|, per team."""
+    from app import app as flask_app, NflSimGame, TeamGameStat
+
+    with flask_app.app_context():
+        sims = NflSimGame.query.filter_by(season=season, week=week).all()
+        if not sims:
+            return {'games_final': 0, 'win_pick_correct': 0, 'win_pick_accuracy': None,
+                    'brier': None, 'mean_abs_score_error': None}
+        game_ids = [s.game_id for s in sims]
+        real_rows = {
+            r.game_id: r for r in
+            TeamGameStat.query.filter(TeamGameStat.sport == 'NFL', TeamGameStat.game_id.in_(game_ids),
+                                       TeamGameStat.is_home.is_(True)).all()
+        }
+
+    correct = 0
+    total = 0
+    brier_sum = 0.0
+    score_err_sum = 0.0
+    score_err_n = 0
+    for s in sims:
+        r = real_rows.get(s.game_id)
+        if r is None or r.won is None or not s.n_sims:
+            continue
+        total += 1
+        home_frac = s.home_wins / s.n_sims
+        real_home_won = bool(r.won)
+        picked_home = s.home_wins >= s.away_wins
+        if picked_home == real_home_won:
+            correct += 1
+        brier_sum += (home_frac - (1.0 if real_home_won else 0.0)) ** 2
+        if r.points is not None and r.points_allowed is not None:
+            score_err_sum += abs(s.home_avg_score - r.points) + abs(s.away_avg_score - r.points_allowed)
+            score_err_n += 2
+
+    return {
+        'games_final': total,
+        'win_pick_correct': correct,
+        'win_pick_accuracy': round(100 * correct / total, 1) if total else None,
+        'brier': round(brier_sum / total, 4) if total else None,
+        'mean_abs_score_error': round(score_err_sum / score_err_n, 1) if score_err_n else None,
+    }

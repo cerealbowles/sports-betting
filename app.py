@@ -6317,13 +6317,18 @@ def nfl_simulations_page():
   NflSimGame) — written by a daily background job (_simulate_nfl_week(),
   app.py's own cron registration), never computed here. See
   nfl_game_simulator.py's module docstring for what the simulation does
-  (resamples real historical plays drive-by-drive, correlated player
-  outcomes within each simulated game) and doesn't (no live game-clock —
-  the 'quarter' breakdown is an approximation by drive order, not real
-  elapsed time; hand-set 4th-down go-for-it rate; league-wide not team-
-  conditioned play sampling, which is why game-level win% here shouldn't
-  be read as a real moneyline estimate — see this app's actual NFL win-
-  probability model, nfl_model.py, for that).
+  (resamples real historical plays drive-by-drive, team-conditioned by
+  offense/defense grade, correlated player outcomes within each simulated
+  game) and doesn't (no live game-clock — the 'quarter' breakdown is an
+  approximation by drive order, not real elapsed time; hand-set, not
+  backtested, conditioning/4th-down constants), which is why game-level
+  win% here shouldn't be read as a real moneyline estimate — see this
+  app's actual NFL win-probability model, nfl_model.py, for that.
+
+  Also shows this week's real-vs-simulated accuracy (get_sim_week_
+  accuracy_db()) at the top — win-pick accuracy/Brier/score error against
+  whichever of this week's games are already Final; naturally empty for a
+  week that hasn't been played yet.
 
   `week` (optional query param): same pattern as /nfl/lineup; defaults to
   the current week. A week with no stored results yet (the background job
@@ -6335,6 +6340,7 @@ def nfl_simulations_page():
 
   results_by_game = nfl_stats_db.get_sim_results_db(season, actual_week)
   game_summaries = nfl_stats_db.get_sim_game_summary_db(season, actual_week)
+  week_accuracy = nfl_stats_db.get_sim_week_accuracy_db(season, actual_week)
   games = []
   for g in week_ctx['games']:
     teams = results_by_game.get(g['game_id'], {})
@@ -6351,7 +6357,8 @@ def nfl_simulations_page():
     })
 
   resp = make_response(render_template('nfl_simulations.html', subnav_sport='NFL',
-                         week_ctx=week_ctx, season=season, week=actual_week, games=games))
+                         week_ctx=week_ctx, season=season, week=actual_week, games=games,
+                         week_accuracy=week_accuracy))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/recap')

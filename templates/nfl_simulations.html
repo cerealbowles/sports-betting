@@ -3,8 +3,16 @@
 
 {% block head %}
 <style>
-.sim-game-card { padding-bottom: 10px; }
-.sim-starters { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 0 14px 10px; }
+.sim-perf-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+}
+@media (max-width: 700px) { .sim-perf-grid { grid-template-columns: 1fr 1fr; } }
+
+.sim-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 0 14px 10px; }
+@media (max-width: 420px) { .sim-starters { grid-template-columns: 1fr; } }
 .sim-starters h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
@@ -15,7 +23,8 @@
 .sim-starter-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sim-starter-median { font-weight: 700; font-family: var(--font-mono); }
 .sim-starter-empty { color: var(--text-muted); font-style: italic; }
-.sim-details { margin: 0 14px 4px; }
+.sim-tap-hint { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 2px 0 10px; }
+
 .sim-subtables { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 10px 0 0; }
 .sim-subtables h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
@@ -33,7 +42,7 @@
 {% set current_sport = 'NFL' %}
 {% include "_sport_pills.html" %}
 <h1>Game Simulations</h1>
-<p class="dfs-subhead">Each card: {{ games[0].summary.n_sims if games and games[0].summary else '—' }} full drive-by-drive simulated games, resampled from real play-by-play, re-run once a day in the background (not live). Win % is from this simulator's own game outcomes, not this app's real betting model — see <a href="{{ url_for('nfl_schedule') }}" class="refresh-link">🏈 Schedule</a> for that. · <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">🏆 Lineup Builder</a> for the point-projection version.</p>
+<p class="dfs-subhead">Each card: {{ games[0].summary.n_sims if games and games[0].summary else '—' }} full drive-by-drive simulated games, resampled from real play-by-play and team-conditioned by offense/defense grade, re-run once a day in the background (not live). Win % is from this simulator's own game outcomes, not this app's real betting model — see <a href="{{ url_for('nfl_schedule') }}" class="refresh-link">🏈 Schedule</a> for that. · <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">🏆 Lineup Builder</a> for the point-projection version.</p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
@@ -51,6 +60,31 @@
     <span class="week-nav-btn week-nav-disabled">▸</span>
     {% endif %}
 </div>
+
+{% if week_accuracy and week_accuracy.games_final %}
+<div class="sim-perf-grid">
+    <div class="stat-card">
+        <div class="stat-label">Win-Pick Accuracy</div>
+        <div class="stat-value" style="color: {% if week_accuracy.win_pick_accuracy >= 55 %}var(--win){% elif week_accuracy.win_pick_accuracy < 50 %}var(--loss){% else %}var(--text){% endif %}">{{ week_accuracy.win_pick_accuracy }}%</div>
+        <div class="stat-sub">{{ week_accuracy.win_pick_correct }}/{{ week_accuracy.games_final }} correct so far</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Brier Score</div>
+        <div class="stat-value" style="color: {% if week_accuracy.brier < 0.22 %}var(--win){% elif week_accuracy.brier > 0.25 %}var(--loss){% else %}var(--text){% endif %}">{{ week_accuracy.brier }}</div>
+        <div class="stat-sub">lower is better · 0.25 = random</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Score Error</div>
+        <div class="stat-value">{{ week_accuracy.mean_abs_score_error if week_accuracy.mean_abs_score_error is not none else '—' }}</div>
+        <div class="stat-sub">pts/team vs. real final score</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Games Final</div>
+        <div class="stat-value">{{ week_accuracy.games_final }}</div>
+        <div class="stat-sub">of {{ games | length }} simulated this week</div>
+    </div>
+</div>
+{% endif %}
 
 {% if not games %}
 <div class="card offseason-card">
@@ -94,8 +128,8 @@
 
 <div class="games-grid">
 {% for g in games %}
-<div class="card game-card sim-game-card">
-    <div class="game-card-summary">
+<div class="card game-card sim-game-card" id="gc-sim-{{ g.game_id }}">
+    <div class="game-card-summary" role="button" tabindex="0" aria-label="View full breakdown for {{ g.away.abbrev }} at {{ g.home.abbrev }}">
 
         <div class="game-header">
             <span class="status-final">SIMULATED</span>
@@ -143,44 +177,60 @@
                 {{ starter_rows(g.home_starters) }}
             </div>
         </div>
+        <div class="sim-tap-hint">Tap for full game breakdown ▸</div>
 
-        <details class="lineup-details sim-details">
-        <summary class="lineup-summary">Full game breakdown</summary>
-        <div style="padding: 10px 0;">
+    </div>
 
-            {% if g.summary %}
-            <table class="table sim-quarter-table">
-                <thead><tr><th>Avg score by quarter<sup>*</sup></th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Final</th></tr></thead>
-                <tbody>
-                <tr>
-                    <td>{{ g.away.abbrev }}</td>
-                    {% for q in g.summary.away_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
-                    <td><strong>{{ '%.1f' | format(g.summary.away_avg_score) }}</strong></td>
-                </tr>
-                <tr>
-                    <td>{{ g.home.abbrev }}</td>
-                    {% for q in g.summary.home_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
-                    <td><strong>{{ '%.1f' | format(g.summary.home_avg_score) }}</strong></td>
-                </tr>
-                </tbody>
-            </table>
-            <p style="color: var(--text-muted); font-size: 0.75rem; margin: -6px 0 14px;">*Approximate — this simulator has no real game clock, so "quarter" is each side's own drives split into four roughly-equal groups by order, not actual elapsed time.</p>
-            {% endif %}
+    <div class="game-card-details" id="gd-sim-{{ g.game_id }}" hidden>
+        <div class="sheet-game-title">{{ g.away.abbrev }} @ {{ g.home.abbrev }}</div>
 
-            <div class="sim-subtables">
-                <div>
-                    <h3>{{ g.away.name }} (away) — full roster</h3>
-                    {{ player_rows(g.away_players) }}
-                </div>
-                <div>
-                    <h3>{{ g.home.name }} (home) — full roster</h3>
-                    {{ player_rows(g.home_players) }}
+        <div class="scoreboard" style="margin-bottom:14px;">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ g.away.logo_url }}" alt="{{ g.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.away.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.away_win_pct }}% to win</div>{% endif %}
                 </div>
             </div>
-
+            <div class="sb-center"></div>
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.home.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.home_win_pct }}% to win</div>{% endif %}
+                </div>
+                <img class="team-logo" src="{{ g.home.logo_url }}" alt="{{ g.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
         </div>
-        </details>
 
+        {% if g.summary %}
+        <table class="table sim-quarter-table">
+            <thead><tr><th>Avg score by quarter<sup>*</sup></th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Final</th></tr></thead>
+            <tbody>
+            <tr>
+                <td>{{ g.away.abbrev }}</td>
+                {% for q in g.summary.away_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                <td><strong>{{ '%.1f' | format(g.summary.away_avg_score) }}</strong></td>
+            </tr>
+            <tr>
+                <td>{{ g.home.abbrev }}</td>
+                {% for q in g.summary.home_quarter_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                <td><strong>{{ '%.1f' | format(g.summary.home_avg_score) }}</strong></td>
+            </tr>
+            </tbody>
+        </table>
+        <p style="color: var(--text-muted); font-size: 0.75rem; margin: -6px 0 14px;">*Approximate — this simulator has no real game clock, so "quarter" is each side's own drives split into four roughly-equal groups by order, not actual elapsed time.</p>
+        {% endif %}
+
+        <div class="sim-subtables">
+            <div>
+                <h3>{{ g.away.name }} (away) — full roster</h3>
+                {{ player_rows(g.away_players) }}
+            </div>
+            <div>
+                <h3>{{ g.home.name }} (home) — full roster</h3>
+                {{ player_rows(g.home_players) }}
+            </div>
+        </div>
     </div>
 </div>
 {% endfor %}
