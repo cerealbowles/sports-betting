@@ -72,12 +72,21 @@ def _parse_linescores(comp, regulation_periods=4):
     return periods
 
 
+# Set True (via app.py's _cache_only() context manager) to make _cached_get
+# serve whatever's already cached, however stale, instead of ever blocking on
+# a live fetch — used by the Tonight hub, which just needs a fast best-effort
+# summary and shouldn't pay the cost of this module's full live pipeline.
+_CACHE_ONLY = False
+
+
 def _cached_get(url, params, key, ttl):
     now = time.time()
     if key in _cache:
         data, ts = _cache[key]
-        if now - ts < ttl:
+        if _CACHE_ONLY or now - ts < ttl:
             return data
+    if _CACHE_ONLY:
+        return None
     try:
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()

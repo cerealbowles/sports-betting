@@ -23,12 +23,20 @@ _PATHS = {
 _cache = {}
 _TTL   = 3600  # 1 hour
 
+# Set True (via app.py's _cache_only() context manager) to serve whatever's
+# already cached, however stale, instead of ever blocking on a live fetch —
+# used by the Tonight hub (NHL's card), which just needs a fast best-effort
+# summary.
+_CACHE_ONLY = False
+
 
 def _get(url):
     if url in _cache:
         data, ts = _cache[url]
-        if time.time() - ts < _TTL:
+        if _CACHE_ONLY or time.time() - ts < _TTL:
             return data
+    if _CACHE_ONLY:
+        return None
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()

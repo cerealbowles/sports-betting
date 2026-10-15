@@ -23,6 +23,7 @@ import re
 import time
 import threading
 import atexit
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import mlb_api
 import mlb_model
@@ -39,6 +40,7 @@ import nba_api
 import nba_model
 import wnba_api
 import wnba_model
+import injuries_api
 import market_edge_calibration
 import spread_proxy
 import spread_model
@@ -3717,6 +3719,28 @@ _HUB_SPORTS = [
 ]
 
 
+@contextmanager
+def _cache_only(*modules):
+    """Makes the given API modules' _cached_get serve whatever's already
+    cached, however stale, instead of ever blocking on a live fetch — see
+    each module's _CACHE_ONLY. Used around the Tonight hub's per-sport
+    builder calls below: the hub only needs a fast best-effort summary, not
+    the live-freshness guarantee each sport's own schedule page pays for.
+
+    Caveat: _CACHE_ONLY is a plain module-level flag, not thread-local, so
+    it's briefly visible to any other concurrent call into the same module —
+    acceptable here since this is a low-traffic personal app, but it would
+    need to be thread-local (or the flag passed explicitly as a parameter)
+    if real concurrent multi-user traffic ever became a concern."""
+    for m in modules:
+        m._CACHE_ONLY = True
+    try:
+        yield
+    finally:
+        for m in modules:
+            m._CACHE_ONLY = False
+
+
 def _hub_sport_data(sport, icon, href, today_str):
   """One sport's slice of the Today hub: fetch its schedule, run the same
   prep each sport's own page runs, and rank its recommendations. Runs
@@ -3733,7 +3757,8 @@ def _hub_sport_data(sport, icon, href, today_str):
       top_picks = []
 
       if sport == 'MLB':
-        schedule = mlb_api.build_schedule_context(target_date=today_str)
+        with _cache_only(mlb_api):
+          schedule = mlb_api.build_schedule_context(target_date=today_str)
         # No _upsert_predictions here — this is a read-only display, and
         # writing from 6 threads at once against one SQLite file serializes
         # (and can stall) on the DB's write lock. /mlb's own page, and the
@@ -3764,18 +3789,23 @@ def _hub_sport_data(sport, icon, href, today_str):
       else:
         if sport == 'NHL':
           day_nav = _build_day_nav(0)
-          schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
+          with _cache_only(nhl_api, injuries_api):
+            schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
         elif sport == 'NBA':
           day_nav = _build_day_nav(0)
-          schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
+          with _cache_only(nba_api):
+            schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
         elif sport == 'WNBA':
           day_nav = _build_day_nav(0)
-          schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
+          with _cache_only(wnba_api):
+            schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
         elif sport == 'NFL':
-          week_ctx = nfl_api.build_week_schedule_context()
+          with _cache_only(nfl_api):
+            week_ctx = nfl_api.build_week_schedule_context()
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
         else:  # CFB
-          week_ctx = cfb_api.build_week_schedule_context()
+          with _cache_only(cfb_api):
+            week_ctx = cfb_api.build_week_schedule_context()
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
 
         # See the MLB branch above re: no _upsert_predictions here.
