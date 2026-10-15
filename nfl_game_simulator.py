@@ -25,7 +25,23 @@ nfl_fantasy.py's own documented scoring gaps):
     fit from data — see FOURTH_DOWN_GO_FOR_IT_RATE's comment for why a
     real rate can't be measured from what's stored. Punts and field goal
     attempts/results themselves ARE resampled from real plays (see
-    build_fourth_down_pool()) once the sim decides not to go for it.
+    build_fourth_down_pool()) once the sim decides not to go for it. A
+    real bug (fixed — see docs/nfl_game_simulator_validation.md) had a
+    FAILED go-for-it never actually ending the drive: simulate_drive()
+    now correctly resolves it as 'turnover_on_downs' instead of letting
+    down climb past 4 into an unconditioned, backed-off-all-the-way play
+    draw. Confirmed this was inflating total scoring (simulated
+    turnover_on_downs was 0.00% of drives vs. 6.16% real, punt rate was
+    +10.4 points too high as those undying drives resolved some other
+    way, team score ran +6.1% hot) — a 2024+2025 backtest documents the
+    before/after.
+  - A touchdown scored via the generic "yardage crossed the goal line"
+    check (as opposed to an explicitly-labeled Rushing/Passing Touchdown
+    play) is now relabeled before being handed to attribute_plays_to_
+    players() (also fixed, same backtest) — previously the drive
+    correctly registered as a score for team-level purposes but silently
+    credited no player with it, understating exactly the plays that
+    matter most for fantasy points.
   - Turnovers are real (NflPlay.is_turnover, ESPN-reported) and hand the
     next drive real field position (the turnover play's own
     end_yards_to_endzone) — but WHO recovers an own fumble/interception
@@ -477,10 +493,13 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
     bullet; simulate_game() is what actually credits those 7 points to
     the OPPOSING side's scoreboard, since this function only knows about
     the offense currently driving), 'field_goal_good',
-    'field_goal_missed', 'punt', 'turnover_on_downs' (only when this sim
-    run has zero stored fourth-down plays to resample at all — see
-    _sample_fourth_down()), 'max_plays' (the safety-valve case, should be
-    rare — see MAX_PLAYS_PER_DRIVE). `next_start` is the real field
+    'field_goal_missed', 'punt', 'turnover_on_downs' (a real stop: either
+    zero stored fourth-down plays to resample at all — see
+    _sample_fourth_down() — or, far more often, a short-yardage 4th-down
+    "go for it" that didn't convert; a real confirmed bug had this never
+    ending the drive at all, see git history / docs/nfl_game_simulator_
+    validation.md for the before/after), 'max_plays' (the safety-valve
+    case, should be rare — see MAX_PLAYS_PER_DRIVE). `next_start` is the real field
     position (that team's own frame) whichever side gets the ball NEXT
     should start from — feed it straight into the next simulate_drive()
     call, same way simulate_game() does.
@@ -509,6 +528,7 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
         return drive_plays, 'touchdown', _resolve_kickoff_start(pools, rng)
 
     for _ in range(MAX_PLAYS_PER_DRIVE):
+        fourth_down_attempt = False
         if down == 4:
             go_for_it = (distance <= FOURTH_DOWN_SHORT_YARDAGE
                          and rng.random() <= _effective_go_for_it_rate(tilt))
@@ -524,6 +544,7 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
                 outcome = 'field_goal_missed' if fd_play['play_type'] == 'Field Goal Missed' else 'punt'
                 return drive_plays, outcome, next_start
             # else: short-yardage go-for-it — fall through to sample a normal play below.
+            fourth_down_attempt = True
 
         play = _sample_play(down, distance, yards_to_endzone, pools, rng, tilt=tilt)
         drive_plays.append(play)
@@ -540,10 +561,37 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
 
         yards_to_endzone = max(0.0, yards_to_endzone - play['yards_gained'])
         if yards_to_endzone <= 0:
+            # Scored via yardage alone, even though this play's own real
+            # label isn't an explicit touchdown type (the donor play may
+            # not have scored in ITS OWN original context — it's only a
+            # score here because of THIS drive's field position). Relabel
+            # a COPY so attribute_plays_to_players() correctly credits a
+            # player — never mutate `play` itself, which is the actual
+            # object cached in pools.scrimmage_buckets/scrimmage_plays and
+            # reused across every other draw and game; a real confirmed
+            # bug had this case silently crediting no one despite the
+            # drive correctly registering as a score.
+            if play['play_type'] in RUSH_PLAY_TYPES:
+                drive_plays[-1] = {**play, 'play_type': 'Rushing Touchdown'}
+            elif play['play_type'] in RECEPTION_PLAY_TYPES:
+                drive_plays[-1] = {**play, 'play_type': 'Passing Touchdown'}
             return drive_plays, 'touchdown', _resolve_kickoff_start(pools, rng)
 
         if play['yards_gained'] >= distance:
             down, distance = 1, min(10, yards_to_endzone)
+        elif fourth_down_attempt:
+            # A real stop: the short-yardage go-for-it didn't convert,
+            # didn't score, wasn't a turnover — possession flips here. A
+            # real confirmed bug had this fall through to `down += 1`
+            # instead, letting the drive continue with down=5, 6... and
+            # _sample_play()'s backoff chain (no real down-5+ data exists)
+            # landing on a fully unconditioned draw from the whole pool —
+            # see docs/nfl_game_simulator_validation.md for the before/
+            # after this fix produced (confirmed: simulated turnover_on_
+            # downs was 0.00% of drives before this, vs. 6.16% real).
+            next_start = (play['end_yards_to_endzone'] if play['end_yards_to_endzone'] is not None
+                          else max(0.0, 100.0 - yards_to_endzone))
+            return drive_plays, 'turnover_on_downs', next_start
         else:
             down += 1
             distance = max(1, distance - play['yards_gained'])

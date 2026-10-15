@@ -23,6 +23,14 @@ forever.
   turnover. A controlled before/after comparison (same games, same RNG
   seed, isolating just this fix) found no change in win-pick accuracy
   (defensive TDs are too rare to flip a pick) and an IMPROVED Brier score
+- A 2024+2025 Sim Median accuracy backtest found two real drive-loop
+  bugs: a failed 4th-down "go for it" never ended the drive (inflating
+  team score +6.1% and punt rate +10.4pp), and a touchdown scored via
+  the generic field-position check wasn't credited to any player
+  (undercounting rush TDs by -16.3%). Both fixed — team score inflation
+  roughly halved, rush TD rate corrected, Sim Median's bias shrank at
+  every position — though its raw MAE didn't improve and it still trails
+  plain Projection on accuracy. See the dedicated section below.
   — see "D/ST scoring + defensive-touchdown fix" below.
 
 ## Methodology
@@ -210,6 +218,105 @@ bug rather than introducing a new assumption. No regression found; a full
 grid-search re-run against the full 2024/2025 warehouse remains a cheap
 confidence-builder to do later if anyone wants the exact K=0.5 figure
 re-confirmed, but nothing here suggests it would move.
+
+## Two drive-loop bugs fixed, found via a Sim Median accuracy backtest (2026-10-15)
+
+A full 2024+2025 backtest (544 games, ~10,000 QB/RB/WR+TE player-games — the
+same 544-game set as the grid search above) compared Projection, Sim Median,
+and Sim Ceiling point estimates against real actual fantasy points. Sim
+Median (meant to be a stable, central-tendency estimate like Projection, not
+a variance play) came back both less accurate (worse MAE at every position)
+and running systematically LOW vs. real outcomes:
+
+| Bucket | Projection MAE / bias | Sim Median MAE / bias | Sim Ceiling MAE / bias |
+|---|---|---|---|
+| QB | 6.50 / +0.28 | 7.66 / **+2.23** | 9.23 / −3.17 |
+| RB | 4.93 / +0.10 | 5.41 / **+0.72** | 7.15 / −3.97 |
+| WR/TE | 4.07 / +0.17 | 4.15 / **+1.47** | 5.30 / −2.27 |
+
+(bias = `actual − estimate`, so positive means the real result exceeded the
+estimate — Sim Median under-predicts. Sim Ceiling's negative bias is
+expected/correct — it targets the 80th percentile on purpose.)
+
+A follow-up drive-outcome diagnostic (same 544 games, real drive outcomes
+derived directly from stored play-by-play via `drive_id` vs. simulated
+`simulate_game()` drive outcomes) found two real, root-cause bugs in
+`simulate_drive()`, not a calibration issue:
+
+**Bug 1 — a failed 4th-down "go for it" never ended the drive.** The
+short-yardage go-for-it branch fell through to a normal play sample, but on
+a failed conversion the loop just did `down += 1` and kept going — no branch
+resolved it as `turnover_on_downs`. Down climbed to 5, 6..., and
+`_sample_play()`'s bucket-backoff chain (no real down-5+ data exists) landed
+on a fully unconditioned `rng.choice(all_plays)` draw, letting the drive run
+indefinitely with bonus plays. Confirmed directly: simulated
+`turnover_on_downs` was **0.00%** of 217,600 drives vs. **6.16%** real; `punt`
+rate was inflated **+10.4 points** (44.9% vs 34.5%) as those undying drives
+eventually resolved some other way; total team score ran **+6.1%** hot.
+
+**Bug 2 — a touchdown scored via the generic field-position check wasn't
+credited to any player.** A drive can score two ways: an explicit
+`'Rushing Touchdown'`/`'Passing Touchdown'` play type, or the generic
+`yards_to_endzone <= 0` check after an ordinarily-labeled `'Rush'`/`'Pass
+Reception'` play (the resampled real play's yardage happened to be enough
+to cross the goal line in *this* drive's field position, even if the donor
+play didn't score in its own original context). The drive correctly
+registered as a `'touchdown'` for team-score purposes either way, but
+`attribute_plays_to_players()` only checked the explicit play-type label —
+the generic path silently credited no one.
+
+**Fix**: `simulate_drive()` now tracks whether the current play is a
+short-yardage 4th-down attempt; if it doesn't convert, doesn't score, and
+isn't a turnover, the drive now correctly ends as `'turnover_on_downs'`
+(possession flips at the play's own real `end_yards_to_endzone`, or the
+same mirrored-position fallback the turnover branch already used). At the
+generic-touchdown check, a **copy** of the just-appended play (never the
+original — it's a shared object cached in `pools.scrimmage_buckets` and
+reused across every other draw and game) gets relabeled to its touchdown
+equivalent before being handed to `attribute_plays_to_players()`, which
+itself needed zero changes — it already checks for exactly these literal
+play-type strings.
+
+**Validation — four checks, same 544-game set, before vs. after:**
+
+1. Drive-outcome distribution: `turnover_on_downs` moved from a hard 0.00%
+   to **1.84%** — confirms the drive-ending bug is genuinely fixed. Still
+   below the real 6.16%, but that remainder is a separate, already-
+   documented limitation: the simulator only ever considers going for it on
+   *short-yardage* 4th downs (`FOURTH_DOWN_SHORT_YARDAGE=2`), while real
+   turnover-on-downs includes longer-distance desperation attempts the
+   simulator never attempts in the first place — out of scope for this fix
+   (see `FOURTH_DOWN_GO_FOR_IT_RATE`'s own comment on why that rate can't be
+   fit from stored data). Field-goal-good/missed rates stayed within ~1
+   point of real both before and after — confirmed not a side effect.
+2. Team-level score/yardage/TD diagnostic: team score inflation roughly
+   halved (+6.1% → **+2.8%**); rush TD rate went from badly undercounted
+   (-16.3%) to essentially correct (**+2.3%**) — direct confirmation Bug 2's
+   fix works. Passing TD rate overshot from -4.1% to **+11.1%**, a new,
+   smaller, one-sided nuance likely from field-position-bucket granularity
+   (a reception play's donor context doesn't always closely match the
+   field position it gets resampled into near the goal line) — flagged,
+   not re-engineered further this round.
+3. Full player-level backtest: Sim Median's bias improved at every position
+   (QB +2.23→+1.53, RB +0.72→+0.43, WR/TE +1.47→+1.43) — the systematic
+   under-prediction genuinely shrank. Its MAE, however, did **not**
+   meaningfully improve (QB 7.66→7.71, RB 5.41→5.48, WR/TE 4.15→4.19) — Sim
+   Median is less *biased* than before but not more *precise*, and still
+   has a meaningfully worse MAE than plain Projection at QB/RB specifically
+   (WR/TE was already near parity). Honest bottom line: this fix corrects
+   two real engine bugs and measurably improves calibration, but doesn't
+   close the gap that makes Projection the more reliable point estimate
+   today.
+4. Win-probability sanity check (same games, same RNG seed, old vs. new
+   drive logic, `n=30` draws/game): accuracy **improved** (55.5% → 57.4%),
+   Brier score moved slightly the other way (0.2446 → 0.2488). That Brier
+   drift is about a tenth the size of the swing the original K=2.5→0.5
+   recalibration produced, and accuracy went up, not down — read as "holds
+   roughly steady," not a regression worth blocking on. `TEAM_CONDITIONING_K`
+   was fit against the old (buggy) drive logic, though, so a full grid-search
+   re-run against the fixed logic would be a reasonable future confidence
+   check if anyone wants the exact K=0.5 figure re-confirmed — nothing here
+   suggests it would move much.
 
 ## Known gaps carried forward (see `nfl_game_simulator.py`'s own module docstring for the full list)
 
