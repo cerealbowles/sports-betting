@@ -10,13 +10,27 @@
 .recap-compare .recap-label { color: var(--text-muted); margin-right: 6px; }
 .recap-compare .recap-value { color: var(--text); font-weight: 700; }
 .recap-infeasible { color: var(--text-muted); font-size: 0.82rem; padding: 2px 0 4px; }
-.recap-subtables { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
+/* minmax(0, 1fr), not plain 1fr: a bare 1fr track still won't shrink
+   below its content's min-content width, so a wide 6-7-column picks
+   table forced every column wider than its fair share and blew the
+   whole row out past the card's edge with no way to scroll back to it.
+   minmax(0, ...) lets the track actually shrink to the column's share;
+   .recap-subtables > div's min-width: 0 is required for that to reach
+   the table inside (grid/flex children default to min-width: auto,
+   which otherwise overrides the parent track's own minmax). The table
+   itself still scrolls horizontally within its own column if its
+   content doesn't fit even at the column's full share, instead of
+   overflowing the page. */
+.recap-subtables { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
+.recap-subtables > div { min-width: 0; }
+.recap-subtables .recap-picks-scroll { overflow-x: auto; }
+.recap-subtables .recap-picks-scroll table { white-space: nowrap; }
 .recap-subtables h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
 }
-@media (max-width: 900px) { .recap-subtables { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 500px) { .recap-subtables { grid-template-columns: 1fr; } }
+@media (max-width: 1300px) { .recap-subtables { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .recap-subtables { grid-template-columns: minmax(0, 1fr); } }
 
 /* ── Season-aggregate track record ── */
 .recap-summary-table { width: 100%; }
@@ -67,6 +81,7 @@
 {% endif %}
 
 {% macro picks_table(lineup, show_proj=False) %}
+<div class="recap-picks-scroll">
 <table class="table">
     <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th>{% if show_proj %}<th>Proj</th>{% endif %}<th>Actual</th></tr></thead>
     <tbody>
@@ -83,6 +98,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% endmacro %}
 
 {% for w in weeks %}
