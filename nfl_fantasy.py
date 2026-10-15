@@ -506,6 +506,27 @@ def simulate_pool(pool, n=10, rng=None):
 # replaces the independent-Gaussian functions above.
 SIM_CEILING_PERCENTILE = 0.80
 
+# Sim Median was found (2026-10-15 backtest, docs/nfl_game_simulator_
+# validation.md) to run systematically low vs. real outcomes at every
+# position even after fixing the two drive-loop bugs that caused it. Rather
+# than trust the literal 50th percentile of each player's 150 draws, fit
+# the percentile that actually minimizes MAE against real results, same
+# train/holdout discipline as nfl_model_challengers.py (fit on 2024, verify
+# on a 2025 holdout before trusting it — a bucket whose "improvement"
+# doesn't replicate gets left alone, not shipped). Only RB showed a real,
+# holdout-confirmed effect (p50 -> p39 MAE 5.45 -> 5.35 on the SAME 2025
+# games the fit never saw): RB fantasy-point distributions are skewed
+# enough that a lower percentile of the simulator's own draws tracks the
+# real typical outcome better than the literal median, even though it
+# makes the raw signed bias worse (MAE and bias can move in opposite
+# directions on a skewed distribution — minimizing one doesn't minimize
+# the other). QB's own best-fit percentile (0.53) didn't hold up on
+# holdout (correctly rejected); WR/TE's (0.49) was statistically identical
+# to 0.50 (no real effect to apply). Buckets not listed here use the plain
+# 50th percentile — this dict only overrides where a real, validated
+# effect was found.
+SIM_MEDIAN_PERCENTILE_OVERRIDE = {'RB': 0.39}
+
 
 def _sim_rows_by_player(season, week):
     """{player_id: row} flattened from nfl_stats_db.get_sim_results_db()'s
@@ -530,18 +551,24 @@ def attach_sim_data(pool, season, week):
     nfl_game_simulator.py's daily run via NflSimResult (the same table
     /nfl/simulations already reads — no new DB code here).
 
-    A pool entry the simulator has no row for — every DST (the game
-    simulator computes team score and skill-player stat lines only; it
-    doesn't model sacks/INTs/points-allowed, see its own docstring) or a
-    skill player the daily 7:30am ET job hasn't caught yet (a just-added
-    game, a restart before today's run) — gets its sim_median/sim_mean/
-    sim_ceiling set equal to its own 'projection' instead, and no
-    'game_id'. This fallback is required, not cosmetic: optimize_lineup()
-    sums a bare `p[objective]` per pool entry, and DST is pinned to an
-    exact roster count, so it must stay selectable under every objective
-    or the ILP goes infeasible. Callers that display these values should
-    treat a missing 'game_id' as "this is a fallback, not a real simulated
-    figure" (see templates/nfl_lineup.html)."""
+    A pool entry the simulator has no row for — a skill player or DST the
+    daily 7:30am ET job hasn't caught yet (a just-added game, a restart
+    before today's run) — gets its sim_median/sim_mean/sim_ceiling set
+    equal to its own 'projection' instead, and no 'game_id'. This fallback
+    is required, not cosmetic: optimize_lineup() sums a bare
+    `p[objective]` per pool entry, and DST is pinned to an exact roster
+    count, so it must stay selectable under every objective or the ILP
+    goes infeasible. Callers that display these values should treat a
+    missing 'game_id' as "this is a fallback, not a real simulated figure"
+    (see templates/nfl_lineup.html).
+
+    'sim_median' is the SIM_MEDIAN_PERCENTILE_OVERRIDE-th percentile of
+    that player's draws for positions in that dict (currently just RB —
+    see its own comment for why), the literal 50th for everyone else —
+    not necessarily the actual median despite the name, which stays
+    because every caller (optimize_lineup's objective name, the UI label)
+    already uses it and a rename would be pure churn for no behavior
+    change."""
     by_player = _sim_rows_by_player(season, week)
 
     for p in pool:
@@ -550,12 +577,14 @@ def attach_sim_data(pool, season, week):
             p['sim_median'] = p['sim_mean'] = p['sim_ceiling'] = p['projection']
             continue
         draws = sorted(row['sim'])
-        idx = min(len(draws) - 1, int(round(SIM_CEILING_PERCENTILE * (len(draws) - 1))))
-        p['sim_median'] = row['sim_median']
+        ceil_idx = min(len(draws) - 1, int(round(SIM_CEILING_PERCENTILE * (len(draws) - 1))))
+        median_pct = SIM_MEDIAN_PERCENTILE_OVERRIDE.get(p['position'], 0.5)
+        median_idx = min(len(draws) - 1, int(round(median_pct * (len(draws) - 1))))
+        p['sim_median'] = round(draws[median_idx], 2) if median_pct != 0.5 else row['sim_median']
         p['sim_mean'] = row['sim_mean']
         p['sim_min'] = row['sim_min']
         p['sim_max'] = row['sim_max']
-        p['sim_ceiling'] = round(draws[idx], 2)
+        p['sim_ceiling'] = round(draws[ceil_idx], 2)
         p['game_id'] = row['game_id']
     return pool
 

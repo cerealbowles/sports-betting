@@ -23,6 +23,7 @@ forever.
   turnover. A controlled before/after comparison (same games, same RNG
   seed, isolating just this fix) found no change in win-pick accuracy
   (defensive TDs are too rare to flip a pick) and an IMPROVED Brier score
+  — see "D/ST scoring + defensive-touchdown fix" below.
 - A 2024+2025 Sim Median accuracy backtest found two real drive-loop
   bugs: a failed 4th-down "go for it" never ended the drive (inflating
   team score +6.1% and punt rate +10.4pp), and a touchdown scored via
@@ -30,8 +31,13 @@ forever.
   (undercounting rush TDs by -16.3%). Both fixed — team score inflation
   roughly halved, rush TD rate corrected, Sim Median's bias shrank at
   every position — though its raw MAE didn't improve and it still trails
-  plain Projection on accuracy. See the dedicated section below.
-  — see "D/ST scoring + defensive-touchdown fix" below.
+  plain Projection on accuracy. See "Two drive-loop bugs fixed" below.
+- Sim Median still ran low after those fixes, so its percentile (of each
+  player's 150 draws) was re-fit per position with a train(2024)/
+  holdout(2025) split — only RB showed a real, reproducible improvement
+  (p50 → p39, confirmed on data the fit never saw); QB's and WR/TE's
+  apparent gains didn't replicate and were correctly left alone. See
+  "RB-only Sim Median percentile calibration" below.
 
 ## Methodology
 
@@ -317,6 +323,40 @@ play-type strings.
    re-run against the fixed logic would be a reasonable future confidence
    check if anyone wants the exact K=0.5 figure re-confirmed — nothing here
    suggests it would move much.
+
+## RB-only Sim Median percentile calibration (2026-10-15)
+
+Even after the two drive-loop fixes above, Sim Median still ran low at every
+position. Rather than accept that or guess at a correction, fit the
+percentile (of each player's 150 stored draws) that actually minimizes MAE
+against real results — same train/holdout discipline `nfl_model_challengers.py`
+already uses for projection features: fit candidate percentiles (35-85, step
+2) on 2024 (272 games), then check whether the winner still helps on a 2025
+holdout (272 games) the fit never saw.
+
+| Bucket | Train (2024) MAE: p50 → best | Best % | Holdout (2025) MAE: p50 → chosen % | Holds up? |
+|---|---|---|---|---|
+| QB | 7.62 → 7.62 (no gain) | 0.53 | 7.72 → 7.79 | **No** — rejected |
+| RB | 5.31 → 5.20 | 0.39 | 5.45 → 5.35 | **Yes** — real, reproducible |
+| WR/TE | 4.34 → 4.35 (no gain) | 0.49 | 4.02 → 4.02 | No effect either way |
+
+Only RB showed a real, holdout-confirmed improvement — shipped as
+`nfl_fantasy.SIM_MEDIAN_PERCENTILE_OVERRIDE = {'RB': 0.39}`, applied in
+`attach_sim_data()`. QB's apparent train-set gain didn't replicate (correctly
+rejected, the same "one favorable split" trap `nfl_model_challengers.py`
+already guards against); WR/TE's best percentile (0.49) was statistically
+identical to the plain median, nothing to apply. QB/WR/TE/DST are
+byte-identical to before this change (verified: 0 mismatches across the full
+current-week pool) — only RB's `sim_median` value moves.
+
+Why a LOWER percentile (0.39, not higher) reduces MAE despite making the raw
+signed bias worse (RB bias went from +0.74/+1.01 to +2.02/+2.27 train/
+holdout): MAE and bias can genuinely move in opposite directions on a skewed
+distribution — RB fantasy-point outcomes are skewed enough that the
+simulator's own 150-draw median sits above the real "typical" outcome more
+than it sits below it on the rare big games, so pulling the point estimate
+down trades a little average signed accuracy for meaningfully less typical
+absolute error. This is a property of the distribution shape, not a new bug.
 
 ## Known gaps carried forward (see `nfl_game_simulator.py`'s own module docstring for the full list)
 
