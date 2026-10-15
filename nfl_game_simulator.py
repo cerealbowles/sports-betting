@@ -35,11 +35,20 @@ nfl_fantasy.py's own documented scoring gaps):
     roster defensive skill stats at the player level for fantasy anyway).
   - Player attribution is probability-weighted by each team's own recent
     (default: last 5 games) share of rush attempts / receptions from
-    NflPlay — not their real play-calling logic, injury status, or
-    matchup-specific usage. A committee backfield's shares will look
-    noisier than a real coach's actual rotation. Punts/kickoffs/field
-    goals are never attributed to a player at all (this app doesn't
-    roster punters/kickers for fantasy).
+    NflPlay — not their real play-calling logic or matchup-specific
+    usage. A committee backfield's shares will look noisier than a real
+    coach's actual rotation. Punts/kickoffs/field goals are never
+    attributed to a player at all (this app doesn't roster punters/
+    kickers for fantasy). Injury status IS now accounted for — see
+    nfl_stats_db.get_team_usage_shares_db()'s own docstring — a player
+    confirmed Out/IR/Suspended has their share redistributed to healthy
+    teammates (and an unavailable starting QB swapped for a roster
+    backup) rather than still drawing simulated volume for someone who
+    isn't playing. That only fixes WHO gets credited, though: a
+    redistributed share still draws from the SAME league-wide play pool
+    as before, so it doesn't model a genuinely different backup's own
+    skill or a real game-plan shift (e.g. a more run-heavy script with a
+    backup QB) — those remain real, undocumented-as-solved gaps.
   - Play sampling is league-wide (a play is drawn from ALL teams'
     historical plays in a matching situation — two seasons across 32
     teams isn't deep enough to split by team AND situation without most

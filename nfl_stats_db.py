@@ -1421,6 +1421,28 @@ def get_kickoff_pool_db(seasons=None):
     } for r in rows if r.end_yards_to_endzone is not None]
 
 
+def _redistribute_shares(shares, unavailable):
+    """shares: {player_id: fraction}, already summing to ~1.0. Zeroes out
+    any player in `unavailable` and redistributes their vacated share
+    proportionally across the REMAINING players (each remaining player's
+    share grows in proportion to their own existing share) — not a claim
+    that a specific backup "inherits" the injured player's exact role,
+    just scaling everyone else up so the injured player's historical
+    volume doesn't sit unused on someone who isn't playing. If every
+    player with a share is unavailable (no one left to redistribute to),
+    returns `shares` unchanged rather than going empty — same graceful-
+    degradation convention attribute_plays_to_players() already relies on
+    for a team with no stored shares at all."""
+    out_total = sum(v for pid, v in shares.items() if pid in unavailable)
+    if out_total <= 0:
+        return shares
+    remaining = {pid: v for pid, v in shares.items() if pid not in unavailable}
+    remaining_total = sum(remaining.values())
+    if remaining_total <= 0:
+        return shares
+    return {pid: v + (v / remaining_total) * out_total for pid, v in remaining.items()}
+
+
 def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
     """Recent offensive usage for one team, derived from NflPlay (not the
     CURRENT-roster-gated nfl_roster_api path build_player_pool() uses) —
@@ -1435,9 +1457,24 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
     players who touched the ball in that window; a team with zero stored
     plays in the window returns all-empty (caller's problem to decide a
     fallback, same "real gap beats a guess" convention as the rest of
-    this module). qb_id is whoever passed most often in the window — not
-    injury-aware (see InjuryStatus for that signal if the caller needs a
-    QB1/QB2 distinction)."""
+    this module).
+
+    INJURY-AWARE: the raw shares above are computed from recent real
+    plays only, which has no idea who's playing THIS week — so before
+    returning, any player confirmed unavailable as of `before_date` (None
+    = today, same "no cutoff" convention get_latest_injury_status() uses
+    — see get_unavailable_player_ids(), the same Out/IR/Suspended check
+    build_player_pool() already uses to drop a player from the pool
+    entirely) has their rush/rec share redistributed to healthy
+    teammates via _redistribute_shares(), and an unavailable qb_id is
+    swapped for another roster QB via get_or_fetch_roster_db() (first
+    available alternate found; left as the original if none can be
+    resolved — still strictly better than crediting a sidelined starter).
+    This only fixes WHO gets credited with the passing line, not HOW a
+    true backup's own play style would differ — the underlying play
+    outcomes still come from the league-wide resampled pool, tilted only
+    by team offense/defense grade (see nfl_game_simulator.py's own
+    documented scope)."""
     from app import app as flask_app, NflPlay
 
     with flask_app.app_context():
@@ -1472,10 +1509,24 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
     qb_id = max(pass_counts, key=pass_counts.get) if pass_counts else None
     rush_total = sum(rush_counts.values())
     rec_total = sum(rec_counts.values())
+    rush_shares = {pid: c / rush_total for pid, c in rush_counts.items()} if rush_total else {}
+    rec_shares = {pid: c / rec_total for pid, c in rec_counts.items()} if rec_total else {}
+
+    unavailable = get_unavailable_player_ids(team_id, before_date)
+    if unavailable:
+        rush_shares = _redistribute_shares(rush_shares, unavailable)
+        rec_shares = _redistribute_shares(rec_shares, unavailable)
+        if qb_id in unavailable:
+            roster = get_or_fetch_roster_db(team_id)
+            alt_qbs = [p['id'] for p in roster if p['position'] == 'QB'
+                       and p['id'] != qb_id and p['id'] not in unavailable]
+            if alt_qbs:
+                qb_id = alt_qbs[0]
+
     return {
         'qb_id': qb_id,
-        'rush_shares': {pid: c / rush_total for pid, c in rush_counts.items()} if rush_total else {},
-        'rec_shares': {pid: c / rec_total for pid, c in rec_counts.items()} if rec_total else {},
+        'rush_shares': rush_shares,
+        'rec_shares': rec_shares,
     }
 
 
