@@ -1,0 +1,25 @@
+{# Per-sport tool tab row — surfaces the pages built for `current_sport`
+   beyond its schedule (Players, Fantasy, Simulations, ...) as real nav
+   instead of inline text links buried in a subhead paragraph. Expects
+   `current_sport` (set by the including page, same as _sport_pills.html)
+   and `active_tool` (one of the keys below) to mark the current tab.
+
+   Sports with only Schedule built get no row at all — with nothing else to
+   switch to it'd just repeat the sport-pills row above it with no payoff.
+   Add a sport's entry here once it has a second tool (e.g. a Players pool). #}
+{% set _sport_tools = {
+    'NFL': [
+        ('schedule', '🏈 Schedule', 'nfl_schedule'),
+        ('players', '🧑 Players', 'nfl_players'),
+        ('fantasy', '🏆 Fantasy', 'nfl_lineup'),
+        ('simulations', '🎲 Simulations', 'nfl_simulations_page'),
+    ],
+} %}
+{% set _tools = _sport_tools.get(current_sport, []) %}
+{% if _tools|length > 1 %}
+<div role="group" aria-label="{{ current_sport }} tools" class="sport-chip-bar">
+{% for key, label, endpoint in _tools %}
+<a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if key == active_tool else '' }}">{{ label }}</a>
+{% endfor %}
+</div>
+{% endif %}

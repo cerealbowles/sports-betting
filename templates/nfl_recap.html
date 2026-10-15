@@ -24,8 +24,14 @@
 
 {% set current_sport = 'NFL' %}
 {% include "_sport_pills.html" %}
+{% set active_tool = 'fantasy' %}
+{% include "_sport_tools.html" %}
+<div role="group" aria-label="Fantasy view" class="sport-chip-bar">
+    <a href="{{ url_for('nfl_lineup') }}" class="sport-chip">Builder</a>
+    <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip sport-chip-active">Recap</a>
+</div>
 <h1>Season Recap</h1>
-<p class="dfs-subhead">For every completed week of the {{ season }} season: what the lineup builder would have recommended before kickoff, vs. the true best-possible lineup in hindsight — both scored by real results. · <a href="{{ url_for('nfl_lineup') }}" class="refresh-link">🏆 Lineup Builder</a></p>
+<p class="dfs-subhead">For every completed week of the {{ season }} season: what the lineup builder would have recommended before kickoff, vs. the true best-possible lineup in hindsight — both scored by real results.</p>
 
 {% if not weeks %}
 <div class="card offseason-card">

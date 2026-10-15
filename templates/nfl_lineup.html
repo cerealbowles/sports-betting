@@ -78,8 +78,14 @@
 
 {% set current_sport = 'NFL' %}
 {% include "_sport_pills.html" %}
+{% set active_tool = 'fantasy' %}
+{% include "_sport_tools.html" %}
+<div role="group" aria-label="Fantasy view" class="sport-chip-bar">
+    <a href="{{ url_for('nfl_lineup') }}" class="sport-chip sport-chip-active">Builder</a>
+    <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip">Recap</a>
+</div>
 <h1>Salary Cap Lineup Builder</h1>
-<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap. · <a href="{{ url_for('nfl_recap_page') }}" class="refresh-link">📊 See how past weeks' picks performed</a> · <a href="{{ url_for('nfl_simulations_page') }}" class="refresh-link">🎲 This week's simulated outcomes</a></p>
+<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap.</p>
 
 <div class="week-nav-header">
     {% if week_ctx.prev_week %}
