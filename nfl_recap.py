@@ -81,6 +81,9 @@ def _attach_actual_points(pool, week_games):
             p['actual'] = player_actual.get(p['id'], 0.0)
 
 
+TOP_PLAYERS_LIMIT = 20  # how many of the week's real top actual-point scorers recap keeps, see compute_week_recap()
+
+
 def compute_week_recap(week_ctx):
     """week_ctx: nfl_api.build_week_schedule_context(week)'s return value
     for an ALREADY-COMPLETE week (every game Final) — uses every game in
@@ -91,9 +94,13 @@ def compute_week_recap(week_ctx):
     rolling history exists). Otherwise returns {'is_feasible': True,
     'cutoff_date', 'recommended': {...optimize_lineup() result, plus
     'actual'...}, 'sim_median': {...}, 'sim_ceiling': {...},
-    'best_possible': {...}} — four candidates, same pool/salaries/actual
-    scores, each optimized for a different objective (see this module's
-    docstring for the sim-based candidates' own fidelity caveat)."""
+    'best_possible': {...}, 'top_players': [...]} — four lineup
+    candidates, same pool/salaries/actual scores, each optimized for a
+    different objective (see this module's docstring for the sim-based
+    candidates' own fidelity caveat), plus the TOP_PLAYERS_LIMIT highest
+    real scorers from the WHOLE pool that week (not just the 9 players in
+    any one lineup) — lets a caller show where a picked player actually
+    ranked against everyone else, not just whether they made a lineup."""
     week_games = [g for day in week_ctx['days'] for g in day['games']]
     cutoff = _week_cutoff_date(week_ctx)
 
@@ -111,6 +118,11 @@ def compute_week_recap(week_ctx):
     if recommended is None or sim_median is None or sim_ceiling is None or best_possible is None:
         return {'is_feasible': False}
 
+    top_players = sorted(pool, key=lambda p: p['actual'], reverse=True)[:TOP_PLAYERS_LIMIT]
+    top_players = [{'id': p['id'], 'name': p['name'], 'position': p['position'],
+                     'team': p['team'], 'opponent': p['opponent'], 'actual': p['actual']}
+                    for p in top_players]
+
     return {
         'is_feasible': True,
         'cutoff_date': cutoff,
@@ -118,6 +130,7 @@ def compute_week_recap(week_ctx):
         'sim_median': sim_median,
         'sim_ceiling': sim_ceiling,
         'best_possible': best_possible,
+        'top_players': top_players,
     }
 
 
@@ -148,6 +161,7 @@ def _persist(season, week, recap):
             row.best_salary              = best['total_salary']
             row.best_actual              = best.get('total_actual')
             row.best_players_json        = json.dumps(best['lineup'])
+            row.top_players_json         = json.dumps(recap['top_players'])
 
         if not existing:
             db.session.add(row)
@@ -181,6 +195,7 @@ def _row_to_dict(row):
             'total_actual': row.best_actual,
             'lineup': json.loads(row.best_players_json or '[]'),
         }
+        out['top_players'] = json.loads(row.top_players_json or '[]')
     return out
 
 
@@ -194,19 +209,21 @@ def get_or_compute_week_recap(season, week):
     yet — never writes a permanent row for a week that could still
     change.
 
-    A row that's feasible but has sim_median_actual still NULL predates
-    the Sim Median/Sim Ceiling candidates (added after this app already
-    had completed-week recaps persisted) — treated as stale and
+    A row that's feasible but has sim_median_actual or top_players_json
+    still NULL predates one of those fields (both added after this app
+    already had completed-week recaps persisted) — treated as stale and
     recomputed+overwritten here rather than trusted as-is, the one
     exception to "a past week's outcome never changes once settled" this
     module's docstring otherwise promises. Every other already-settled
     field (recommended/best_possible) comes out identical on recompute;
-    this just backfills the two that were missing."""
+    this just backfills whichever ones were missing."""
     from app import app as flask_app, NflRecapWeek
 
     with flask_app.app_context():
         existing = NflRecapWeek.query.filter_by(season=season, week=week).first()
-    if existing is not None and not (existing.is_feasible and existing.sim_median_actual is None):
+    stale = existing is not None and existing.is_feasible and (
+        existing.sim_median_actual is None or existing.top_players_json is None)
+    if existing is not None and not stale:
         return _row_to_dict(existing)
 
     week_ctx = nfl_api.build_week_schedule_context(week)

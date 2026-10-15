@@ -557,6 +557,12 @@ class NflRecapWeek(db.Model):
   best_salary              = db.Column(db.Integer)
   best_actual              = db.Column(db.Float)
   best_players_json        = db.Column(db.Text)
+  # The week's TOP_PLAYERS_LIMIT highest real actual-point scorers across
+  # the WHOLE pool (nfl_recap.compute_week_recap()), not just the 9 in any
+  # one lineup — lets the page show where a picked player actually ranked
+  # against everyone else that week. Added alongside sim_median/sim_
+  # ceiling's own later addition; same self-heal convention.
+  top_players_json         = db.Column(db.Text)
   created_at               = db.Column(db.DateTime(timezone=True),
                                         default=lambda: datetime.now(timezone.utc))
 
@@ -772,6 +778,7 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'sim_ceiling_salary',       'INTEGER DEFAULT NULL')
     _add('nfl_recap_weeks', 'sim_ceiling_actual',       'FLOAT DEFAULT NULL')
     _add('nfl_recap_weeks', 'sim_ceiling_players_json', 'TEXT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'top_players_json',          'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
