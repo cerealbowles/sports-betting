@@ -9,4 +9,5 @@ APScheduler>=3.10.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
 pulp>=2.8.0
+numpy>=1.26.0
 feedparser>=6.0.10
