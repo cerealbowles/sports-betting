@@ -543,6 +543,17 @@ class NflRecapWeek(db.Model):
   recommended_projection   = db.Column(db.Float)
   recommended_actual       = db.Column(db.Float)
   recommended_players_json = db.Column(db.Text)
+  # Sim Median / Sim Ceiling — the other two /nfl/lineup objectives (see
+  # nfl_fantasy.attach_sim_data()), added after this table/row shape
+  # already existed — see get_or_compute_week_recap()'s self-heal check
+  # (sim_median_actual IS NULL) for how already-persisted rows pick these
+  # up on their first view post-deploy instead of staying permanently null.
+  sim_median_salary        = db.Column(db.Integer)
+  sim_median_actual        = db.Column(db.Float)
+  sim_median_players_json  = db.Column(db.Text)
+  sim_ceiling_salary       = db.Column(db.Integer)
+  sim_ceiling_actual       = db.Column(db.Float)
+  sim_ceiling_players_json = db.Column(db.Text)
   best_salary              = db.Column(db.Integer)
   best_actual              = db.Column(db.Float)
   best_players_json        = db.Column(db.Text)
@@ -755,6 +766,12 @@ def ensure_column_exists():
     _add('nfl_plays', 'end_distance',         'INTEGER DEFAULT NULL')
     _add('nfl_plays', 'end_yards_to_endzone', 'INTEGER DEFAULT NULL')
     _add('nfl_plays', 'end_team_id',          'TEXT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_median_salary',        'INTEGER DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_median_actual',        'FLOAT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_median_players_json',  'TEXT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_ceiling_salary',       'INTEGER DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_ceiling_actual',       'FLOAT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'sim_ceiling_players_json', 'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -6411,6 +6428,53 @@ def nfl_simulations_page():
                          week_accuracy=week_accuracy))
   return _set_last_sport_cookie(resp, 'NFL')
 
+NFL_RECAP_OBJECTIVES = [('recommended', 'Projection'), ('sim_median', 'Sim Median'), ('sim_ceiling', 'Sim Ceiling')]
+
+def _nfl_recap_season_summary(weeks):
+  """weeks: nfl_recap_page()'s own already-fetched list of nfl_recap.
+  get_or_compute_week_recap() dicts — no new DB queries here, pure
+  aggregation. Compares the three PREDICTED candidates (not best_possible,
+  which by construction is always >= the others and isn't itself a
+  prediction to score) against each other and against that week's own
+  best_possible ceiling, across every is_feasible week. Returns None if
+  no week is feasible yet (season's earliest weeks, before enough rolling
+  history exists — see nfl_recap.compute_week_recap()).
+
+  Per objective: 'avg_capture_rate' (mean of actual/best_possible.
+  total_actual *100 across weeks where best_possible scored >0 — a week
+  with a real best_possible of 0 would divide by zero, not a real
+  scenario but guarded anyway) and 'weeks_won' (how many weeks THIS
+  objective had the single highest total_actual among the three — ties
+  count for every tied objective, no arbitrary tiebreak)."""
+  feasible = [w for w in weeks if w.get('is_feasible')]
+  if not feasible:
+    return None
+
+  by_key = {key: {'label': label, 'capture_rates': [], 'weeks_won': 0} for key, label in NFL_RECAP_OBJECTIVES}
+  for w in feasible:
+    best_actual = w['best_possible'].get('total_actual')
+    actuals = {key: w[key].get('total_actual') for key, _ in NFL_RECAP_OBJECTIVES}
+    if best_actual:
+      for key, _ in NFL_RECAP_OBJECTIVES:
+        if actuals[key] is not None:
+          by_key[key]['capture_rates'].append(100 * actuals[key] / best_actual)
+    scored = {k: v for k, v in actuals.items() if v is not None}
+    if scored:
+      top = max(scored.values())
+      for key, val in scored.items():
+        if val == top:
+          by_key[key]['weeks_won'] += 1
+
+  objectives = []
+  for key, _ in NFL_RECAP_OBJECTIVES:
+    rates = by_key[key]['capture_rates']
+    objectives.append({
+      'key': key, 'label': by_key[key]['label'],
+      'avg_capture_rate': round(sum(rates) / len(rates), 1) if rates else None,
+      'weeks_won': by_key[key]['weeks_won'],
+    })
+  return {'weeks_scored': len(feasible), 'objectives': objectives}
+
 @app.route('/nfl/recap')
 def nfl_recap_page():
   """Season recap — every already-completed NFL week this season, the
@@ -6424,8 +6488,10 @@ def nfl_recap_page():
     if recap is not None:
       weeks.append(recap)
   weeks.reverse()
+  recap_summary = _nfl_recap_season_summary(weeks)
 
   resp = make_response(render_template('nfl_recap.html', subnav_sport='NFL',
+                         recap_summary=recap_summary,
                          season=season, weeks=weeks,
                          methodology=nfl_fantasy.methodology_context()))
   return _set_last_sport_cookie(resp, 'NFL')
