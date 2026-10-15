@@ -47,6 +47,7 @@ states these plainly):
     Sim Ceiling just come out identical to 'recommended' for that week.
 """
 import json
+import random
 
 import nfl_api
 import nfl_fantasy
@@ -84,6 +85,51 @@ def _attach_actual_points(pool, week_games):
 TOP_PLAYERS_LIMIT = 20  # how many of the week's real top actual-point scorers recap keeps PER POSITION, see compute_week_recap()
 TOP_PLAYERS_POSITIONS = ('QB', 'RB', 'WR', 'TE', 'DST')
 
+COMPARISON_LINEUP_COUNT = 150  # matches nfl_game_simulator.DEFAULT_SIM_DRAWS — same sample-size convention
+
+
+def _generate_comparison_lineups(pool, n=COMPARISON_LINEUP_COUNT, rng=None):
+    """Generates `n` alternative PRE-GAME lineups to rank our actual picks
+    against — not random/garbage lineups (those would almost always score
+    worse than anything built from real projections, making a percentile
+    comparison meaningless), and deliberately NOT built from 'actual'
+    (that would be look-ahead bias — of course a lineup partly informed by
+    the real outcome would look good against it). Instead, each trial
+    draws 3 random non-negative weights summing to 1 and blends this
+    week's three already-computed PRE-GAME signals per player —
+    `projection`, `sim_median`, `sim_ceiling` (same three objectives
+    /nfl/lineup itself offers) — into a temporary '_trial_blend' field,
+    then runs the exact same nfl_fantasy.optimize_lineup() ILP every other
+    recap candidate uses. Each resulting lineup is therefore individually
+    defensible (literally optimal under SOME reasonable pre-game weighting
+    of the real available evidence), not noise.
+
+    Returns a SORTED list of `n` real total_actual scores (not the full
+    lineups — the question this answers is "where in the distribution of
+    outcomes do we fall," not "what were the other lineups," so there's no
+    reason to persist 150x the JSON a single lineup costs). A pool entry
+    missing sim_median/sim_ceiling (shouldn't happen post attach_sim_data,
+    which always backfills both) falls back to its own projection, same
+    convention attach_sim_data() itself already uses.
+
+    `rng`: an optional random.Random for reproducible trials (e.g. tests);
+    defaults to the stdlib `random` module's own functions."""
+    rand = rng.random if rng is not None else random.random
+    scores = []
+    for _ in range(n):
+        w1, w2, w3 = rand(), rand(), rand()
+        total = w1 + w2 + w3
+        w1, w2, w3 = w1 / total, w2 / total, w3 / total
+        for p in pool:
+            p['_trial_blend'] = (w1 * p['projection']
+                                  + w2 * p.get('sim_median', p['projection'])
+                                  + w3 * p.get('sim_ceiling', p['projection']))
+        lineup = nfl_fantasy.optimize_lineup(pool, objective='_trial_blend')
+        if lineup is not None:
+            scores.append(lineup.get('total_actual', 0.0))
+    scores.sort()
+    return scores
+
 
 def compute_week_recap(week_ctx):
     """week_ctx: nfl_api.build_week_schedule_context(week)'s return value
@@ -106,7 +152,12 @@ def compute_week_recap(week_ctx):
     {'QB': [...], 'RB': [...], ...}, each list independently ranked and
     capped at TOP_PLAYERS_LIMIT. Lets a caller show where a picked player
     actually ranked against their real positional peers, not just whether
-    they made a lineup."""
+    they made a lineup. Also 'comparison_lineup_scores': COMPARISON_
+    LINEUP_COUNT real scores from alternative pre-game lineups (see
+    _generate_comparison_lineups()) — lets a caller show what PERCENTILE
+    our actual picks landed at among a population of other defensible
+    pre-game lineups, not just how they compare to the single hindsight-
+    optimal one."""
     week_games = [g for day in week_ctx['days'] for g in day['games']]
     cutoff = _week_cutoff_date(week_ctx)
 
@@ -134,6 +185,8 @@ def compute_week_recap(week_ctx):
             for p in ranked
         ]
 
+    comparison_lineup_scores = _generate_comparison_lineups(pool)
+
     return {
         'is_feasible': True,
         'cutoff_date': cutoff,
@@ -142,6 +195,7 @@ def compute_week_recap(week_ctx):
         'sim_ceiling': sim_ceiling,
         'best_possible': best_possible,
         'top_players_by_position': top_players_by_position,
+        'comparison_lineup_scores': comparison_lineup_scores,
     }
 
 
@@ -173,6 +227,7 @@ def _persist(season, week, recap):
             row.best_actual              = best.get('total_actual')
             row.best_players_json        = json.dumps(best['lineup'])
             row.top_players_by_position_json = json.dumps(recap['top_players_by_position'])
+            row.comparison_lineup_scores_json = json.dumps(recap['comparison_lineup_scores'])
 
         if not existing:
             db.session.add(row)
@@ -207,6 +262,7 @@ def _row_to_dict(row):
             'lineup': json.loads(row.best_players_json or '[]'),
         }
         out['top_players_by_position'] = json.loads(row.top_players_by_position_json or '{}')
+        out['comparison_lineup_scores'] = json.loads(row.comparison_lineup_scores_json or '[]')
     return out
 
 
@@ -220,20 +276,22 @@ def get_or_compute_week_recap(season, week):
     yet — never writes a permanent row for a week that could still
     change.
 
-    A row that's feasible but has sim_median_actual or top_players_by_
-    position_json still NULL predates one of those fields (both added
-    after this app already had completed-week recaps persisted) —
-    treated as stale and recomputed+overwritten here rather than trusted
-    as-is, the one exception to "a past week's outcome never changes once
-    settled" this module's docstring otherwise promises. Every other
-    already-settled field (recommended/best_possible) comes out identical
-    on recompute; this just backfills whichever ones were missing."""
+    A row that's feasible but has sim_median_actual, top_players_by_
+    position_json, or comparison_lineup_scores_json still NULL predates
+    one of those fields (each added after this app already had
+    completed-week recaps persisted) — treated as stale and recomputed+
+    overwritten here rather than trusted as-is, the one exception to "a
+    past week's outcome never changes once settled" this module's
+    docstring otherwise promises. Every other already-settled field
+    (recommended/best_possible) comes out identical on recompute; this
+    just backfills whichever ones were missing."""
     from app import app as flask_app, NflRecapWeek
 
     with flask_app.app_context():
         existing = NflRecapWeek.query.filter_by(season=season, week=week).first()
     stale = existing is not None and existing.is_feasible and (
-        existing.sim_median_actual is None or existing.top_players_by_position_json is None)
+        existing.sim_median_actual is None or existing.top_players_by_position_json is None
+        or existing.comparison_lineup_scores_json is None)
     if existing is not None and not stale:
         return _row_to_dict(existing)
 

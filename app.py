@@ -568,6 +568,17 @@ class NflRecapWeek(db.Model):
   # column (no longer written to, left in place — this app has no DROP
   # COLUMN mechanism, same as every other superseded column here).
   top_players_by_position_json = db.Column(db.Text)
+  # COMPARISON_LINEUP_COUNT (150) real total_actual scores from alternative
+  # PRE-GAME lineups (nfl_recap._generate_comparison_lineups() — each one
+  # the ILP-optimal lineup under a randomly-weighted blend of this week's
+  # projection/sim_median/sim_ceiling, never 'actual' itself, which would
+  # be look-ahead bias). Lets the page show what PERCENTILE our actual
+  # picks landed at among a population of other defensible pre-game
+  # lineups, not just how they compare to the single hindsight-optimal
+  # one. Sorted list, not each trial's full lineup — the question is
+  # "where do we fall," not "what were the other lineups." Same self-heal
+  # convention as the two fields above it.
+  comparison_lineup_scores_json = db.Column(db.Text)
   created_at               = db.Column(db.DateTime(timezone=True),
                                         default=lambda: datetime.now(timezone.utc))
 
@@ -785,6 +796,7 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'sim_ceiling_players_json', 'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'top_players_json',          'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'top_players_by_position_json', 'TEXT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'comparison_lineup_scores_json', 'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -6488,6 +6500,36 @@ def _nfl_recap_season_summary(weeks):
     })
   return {'weeks_scored': len(feasible), 'objectives': objectives}
 
+def _attach_lineup_percentiles(weeks):
+  """Mutates each feasible week dict in place, adding 'lineup_percentiles'
+  ({objective_key: {'beat', 'n', 'percentile'}}) and 'comparison_
+  distribution' (min/p25/median/p75/max of that week's 150 alternative-
+  lineup scores — see nfl_recap._generate_comparison_lineups()). 'beat'
+  is how many of the stored comparison scores our actual score beat
+  (strictly), 'percentile' that as a 0-100 number. A week missing
+  comparison_lineup_scores (shouldn't happen once self-healed, but a
+  genuinely zero-game-history week never reaches here anyway since it's
+  not is_feasible) is left untouched rather than divide-by-zero."""
+  for w in weeks:
+    if not w.get('is_feasible'):
+      continue
+    scores = w.get('comparison_lineup_scores') or []
+    n = len(scores)
+    if not n:
+      continue
+    percentiles = {}
+    for key in ('recommended', 'sim_median', 'sim_ceiling'):
+      actual = w[key].get('total_actual')
+      if actual is None:
+        continue
+      beat = sum(1 for s in scores if s < actual)
+      percentiles[key] = {'beat': beat, 'n': n, 'percentile': round(100 * beat / n, 1)}
+    w['lineup_percentiles'] = percentiles
+    w['comparison_distribution'] = {
+      'min': scores[0], 'p25': scores[int(0.25 * (n - 1))], 'median': scores[n // 2],
+      'p75': scores[int(0.75 * (n - 1))], 'max': scores[-1],
+    }
+
 @app.route('/nfl/recap')
 def nfl_recap_page():
   """Season recap — every already-completed NFL week this season, the
@@ -6502,6 +6544,7 @@ def nfl_recap_page():
       weeks.append(recap)
   weeks.reverse()
   recap_summary = _nfl_recap_season_summary(weeks)
+  _attach_lineup_percentiles(weeks)
 
   resp = make_response(render_template('nfl_recap.html', subnav_sport='NFL',
                          recap_summary=recap_summary,

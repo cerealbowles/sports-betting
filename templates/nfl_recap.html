@@ -197,6 +197,31 @@
             </div>
         </div>
         {% endif %}
+        {% if w.lineup_percentiles %}
+        <div style="padding: 10px; border-top: 1px solid var(--border);">
+            <h3 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">Percentile vs. 150 alternative pre-game lineups</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Each of the 150 is the ILP-optimal lineup under its own random blend of this week's real projection/Sim Median/Sim Ceiling signals — not random guesses, each individually defensible — then scored by what actually happened, same as our own picks. Shows whether a miss was "we built a bad lineup" or "this was a genuinely hard week to predict" (real scores often cluster tightly when the three signals agree on who the best players were, same as this week's actual spread below).</p>
+            <table class="table">
+                <thead><tr><th>Objective</th><th>Actual</th><th>Beat</th><th>Percentile</th></tr></thead>
+                <tbody>
+                {% for key, label in [('recommended', 'Projection'), ('sim_median', 'Sim Median'), ('sim_ceiling', 'Sim Ceiling')] %}
+                {% set p = w.lineup_percentiles.get(key) %}
+                {% if p %}
+                <tr>
+                    <td>{{ label }}</td>
+                    <td>{{ w[key].total_actual }}</td>
+                    <td>{{ p.beat }} / {{ p.n }}</td>
+                    <td>{{ p.percentile }}%</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                </tbody>
+            </table>
+            {% if w.comparison_distribution %}
+            <p class="recap-summary-note">150-lineup real-score range: {{ w.comparison_distribution.min }} (min) – {{ w.comparison_distribution.p25 }} (p25) – {{ w.comparison_distribution.median }} (median) – {{ w.comparison_distribution.p75 }} (p75) – {{ w.comparison_distribution.max }} (max).</p>
+            {% endif %}
+        </div>
+        {% endif %}
     </details>
     {% endif %}
 </div>
