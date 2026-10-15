@@ -489,6 +489,134 @@ def simulate_pool(pool, n=10, rng=None):
     return pool
 
 
+# ── Game-simulator-informed objectives ──────────────────────────────────
+#
+# nfl_game_simulator.py (a separate module) runs a validated, calibrated
+# Monte Carlo simulation (150 drive-by-drive draws/game, resampling real
+# historical plays rather than drawing from a distribution — see its own
+# module docstring) daily for the current week, persisted to the
+# NflSimResult table. Unlike simulate_pool()/simulate_player_points()
+# above (independent per-player Gaussian, zero callers anywhere in this
+# codebase as of this writing), the game simulator's draws ARE correlated
+# across teammates in the same simulated game — draw index i for a QB and
+# his WR1 come from the same simulated drive sequence, so a big passing
+# game and a big receiving game show up together the way they really do.
+# attach_sim_data()/evaluate_lineup_distribution() below are what make use
+# of that correlation for the lineup builder; nothing here duplicates or
+# replaces the independent-Gaussian functions above.
+SIM_CEILING_PERCENTILE = 0.80
+
+
+def _sim_rows_by_player(season, week):
+    """{player_id: row} flattened from nfl_stats_db.get_sim_results_db()'s
+    {game_id: {team_id: [rows]}} shape, with 'game_id' added onto each row
+    (the one piece of context that shape only carries at the outer-dict
+    level). Shared by attach_sim_data()/evaluate_lineup_distribution()."""
+    by_player = {}
+    for game_id, teams in nfl_stats_db.get_sim_results_db(season, week).items():
+        for players in teams.values():
+            for row in players:
+                by_player[row['player_id']] = dict(row, game_id=game_id)
+    return by_player
+
+
+def attach_sim_data(pool, season, week):
+    """Mutates every entry of an already-built `pool` (see
+    build_player_pool()) in place, adding 'sim_median', 'sim_mean',
+    'sim_min', 'sim_max', 'sim_ceiling' (the SIM_CEILING_PERCENTILE-th
+    percentile of that player's own 150 stored draws — well-supported at
+    n=150, unlike simulate_pool()'s old n=10 Gaussian which deliberately
+    avoided naming a specific percentile) and 'game_id', sourced from
+    nfl_game_simulator.py's daily run via NflSimResult (the same table
+    /nfl/simulations already reads — no new DB code here).
+
+    A pool entry the simulator has no row for — every DST (the game
+    simulator computes team score and skill-player stat lines only; it
+    doesn't model sacks/INTs/points-allowed, see its own docstring) or a
+    skill player the daily 7:30am ET job hasn't caught yet (a just-added
+    game, a restart before today's run) — gets its sim_median/sim_mean/
+    sim_ceiling set equal to its own 'projection' instead, and no
+    'game_id'. This fallback is required, not cosmetic: optimize_lineup()
+    sums a bare `p[objective]` per pool entry, and DST is pinned to an
+    exact roster count, so it must stay selectable under every objective
+    or the ILP goes infeasible. Callers that display these values should
+    treat a missing 'game_id' as "this is a fallback, not a real simulated
+    figure" (see templates/nfl_lineup.html)."""
+    by_player = _sim_rows_by_player(season, week)
+
+    for p in pool:
+        row = by_player.get(p['id'])
+        if row is None or not row.get('sim'):
+            p['sim_median'] = p['sim_mean'] = p['sim_ceiling'] = p['projection']
+            continue
+        draws = sorted(row['sim'])
+        idx = min(len(draws) - 1, int(round(SIM_CEILING_PERCENTILE * (len(draws) - 1))))
+        p['sim_median'] = row['sim_median']
+        p['sim_mean'] = row['sim_mean']
+        p['sim_min'] = row['sim_min']
+        p['sim_max'] = row['sim_max']
+        p['sim_ceiling'] = round(draws[idx], 2)
+        p['game_id'] = row['game_id']
+    return pool
+
+
+def evaluate_lineup_distribution(lineup, season, week):
+    """lineup: optimize_lineup()'s own 'lineup' list (each entry needs 'id'
+    and 'projection' — meant to be called on the SAME pool entries
+    attach_sim_data() already touched, not a fresh lookup). Returns the
+    TRUE joint distribution of this specific lineup's combined fantasy
+    score, honoring the game simulator's within-game correlation (see
+    attach_sim_data()'s docstring) rather than summing each player's own
+    marginal sim_median/sim_ceiling independently, which would understate
+    a stacked QB+WR1 lineup's real combined ceiling.
+
+    Mechanism: every stored player carries 150 raw draws; draw index i for
+    every player in the SAME game_id is the same simulated game instance
+    (paired/correlated). Lineup entries are grouped by game_id, summed
+    elementwise within each game, then the resulting per-game totals are
+    summed elementwise across games — different games' outcomes are
+    treated as independent (no cross-game correlation exists in this
+    data). A lineup entry with no stored draws (DST, or a player the
+    simulator hasn't run for) contributes a constant equal to its own
+    'projection' to every draw, same convention as attach_sim_data().
+
+    Returns {'floor': p10, 'median', 'mean', 'ceiling': p90} of the
+    resulting lineup-total distribution, or None if nothing in the
+    lineup has real simulated draws (nothing to combine)."""
+    by_player = _sim_rows_by_player(season, week)
+
+    by_game = defaultdict(list)
+    constant = 0.0
+    for p in lineup:
+        row = by_player.get(p['id'])
+        if row is None or not row.get('sim'):
+            constant += p['projection']
+            continue
+        by_game[row['game_id']].append(row['sim'])
+
+    if not by_game:
+        return None
+
+    per_game_totals = []
+    for draw_lists in by_game.values():
+        n = min(len(d) for d in draw_lists)
+        per_game_totals.append([sum(d[i] for d in draw_lists) for i in range(n)])
+
+    n = min(len(t) for t in per_game_totals)
+    combined = sorted(constant + sum(t[i] for t in per_game_totals) for i in range(n))
+
+    def _pct(pct):
+        idx = min(len(combined) - 1, int(round(pct * (len(combined) - 1))))
+        return round(combined[idx], 2)
+
+    return {
+        'floor': _pct(0.10),
+        'median': _pct(0.50),
+        'mean': round(sum(combined) / len(combined), 2),
+        'ceiling': _pct(0.90),
+    }
+
+
 # ── Synthetic salary ────────────────────────────────────────────────────
 #
 # Real FanDuel pricing is relative to the week's own slate (a great matchup
@@ -565,7 +693,8 @@ def assign_salaries(pool):
     return pool
 
 
-def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, max_low_tier=None):
+def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, max_low_tier=None,
+                         sim_enabled=False, objective='projection'):
     """Everything templates/_nfl_methodology.html needs to render its
     'How is this calculated?' panel straight from this module's actual
     constants — the template never hand-types a number, so it can't drift
@@ -579,7 +708,12 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, 
     (0 / None — what /nfl/recap always gets): stack_min because it's an
     optional tournament tactic, max_low_tier because a real backtest found
     it hurts actual outcomes at every setting that does anything — see
-    MAX_LOW_TIER_DEFAULT's comment above optimize_lineup()."""
+    MAX_LOW_TIER_DEFAULT's comment above optimize_lineup().
+
+    `sim_enabled` (default False — what /nfl/recap always gets, since it
+    optimizes hindsight 'actual' outcomes, not a live simulator-informed
+    objective): True only from /nfl/lineup, to surface the game-simulator
+    paragraph and the active `objective` choice in the panel."""
     return {
         'scoring': {
             'pass_yd': PASS_YD, 'pass_td': PASS_TD, 'pass_int': PASS_INT,
@@ -599,6 +733,9 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, 
         'stack_min': stack_min,
         'max_low_tier': max_low_tier if max_low_tier is not None else MAX_LOW_TIER_DEFAULT,
         'balance_low_percentile': BALANCE_LOW_PERCENTILE,
+        'sim_enabled': sim_enabled,
+        'sim_ceiling_percentile': SIM_CEILING_PERCENTILE,
+        'objective': objective,
     }
 
 

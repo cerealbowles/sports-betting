@@ -6240,7 +6240,17 @@ def nfl_lineup():
   the week is eligible. `cap`, `req_<pos>`, and `stack_min` (optional):
   override the salary cap / roster position counts / QB-stack requirement
   for this request only — nothing is persisted, each is just a query param
-  on the same form/page-reload.
+  on the same form/page-reload. `objective` (optional: 'projection'
+  [default] / 'sim_median' / 'sim_ceiling'): which per-player field
+  optimize_lineup() maximizes — the latter two come from
+  nfl_game_simulator.py's daily Monte Carlo run (see nfl_fantasy.
+  attach_sim_data()), falling back to 'projection' for any player (e.g.
+  every DST) the simulator doesn't cover. `total_projection` on the
+  result is always summed from 'projection' regardless, so the page can
+  show what a sim-optimized lineup is "really" projected at. `sim_range`
+  is the chosen lineup's TRUE joint simulated distribution (floor/
+  median/mean/ceiling), honoring within-game correlation between
+  teammates — see nfl_fantasy.evaluate_lineup_distribution().
 
   Uses nfl_api.build_week_games_light() rather than build_week_schedule_
   context() — this page never renders odds/model/weather/injury data, so
@@ -6279,6 +6289,9 @@ def nfl_lineup():
     for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
   }
   stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
+  objective = request.args.get('objective', 'projection')
+  if objective not in ('projection', 'sim_median', 'sim_ceiling'):
+    objective = 'projection'
   # Non-DST roster size: the max_low_tier UI field's own "off" value (see
   # optimize_lineup()'s docstring — >= roster size disables the
   # constraint). Computed from the user's actual roster settings above
@@ -6294,8 +6307,13 @@ def nfl_lineup():
 
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
   nfl_fantasy.assign_salaries(pool)
+  if pool:
+    nfl_fantasy.attach_sim_data(pool, week_ctx['season'], week_ctx['week'])
   optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements,
+                                          objective=objective,
                                           stack_min=stack_min, max_low_tier=max_low_tier) if pool else None
+  sim_range = (nfl_fantasy.evaluate_lineup_distribution(optimal['lineup'], week_ctx['season'], week_ctx['week'])
+               if optimal else None)
 
   pool.sort(key=lambda p: p['projection'], reverse=True)
 
@@ -6306,13 +6324,14 @@ def nfl_lineup():
 
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
-                         pool=pool, optimal=optimal,
+                         pool=pool, optimal=optimal, objective=objective, sim_range=sim_range,
                          salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
                          max_low_tier=max_low_tier, max_low_tier_input=max_low_tier_input,
                          skill_roster_size=skill_roster_size,
                          roster_requirements_summary=roster_requirements_summary,
                          methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min,
-                                                                       max_low_tier)))
+                                                                       max_low_tier, sim_enabled=True,
+                                                                       objective=objective)))
   return _set_last_sport_cookie(resp, 'NFL')
 
 NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE')]
