@@ -17,6 +17,13 @@ forever.
   existing 2-way blend, because the simulator's team-conditioning signal
   is derived from the same offense/defense grades the player-grade model
   already uses, so it adds no independent information once properly fit.
+- D/ST fantasy scoring (sacks/INTs/defensive TDs/points allowed) was
+  added, which required fixing a real bug: every drawn historical
+  defensive/return touchdown was previously credited as a plain 0-point
+  turnover. A controlled before/after comparison (same games, same RNG
+  seed, isolating just this fix) found no change in win-pick accuracy
+  (defensive TDs are too rare to flip a pick) and an IMPROVED Brier score
+  — see "D/ST scoring + defensive-touchdown fix" below.
 
 ## Methodology
 
@@ -151,6 +158,58 @@ background job rather than per-request at all). `nfl_ensemble3_bootstrap.py`
 is kept in the repo as a real, reusable fitting script in case a future,
 genuinely independent third signal (not derived from the same
 offense/defense grades) is worth blending in instead.
+
+## D/ST scoring + defensive-touchdown fix (2026-10-15)
+
+The simulator's resampling pool (`get_simulator_play_pool_db()`) already
+included `Sack`, `Pass Interception Return`, and `Sack Opp Fumble
+Recovery` plays — the raw ingredients for FanDuel D/ST scoring (sacks,
+interceptions, points allowed) were already flowing through every
+simulated drive, but nothing tallied them, so every D/ST pool entry in
+`/nfl/lineup` fell back to its regression projection instead of a real
+simulated floor/median/ceiling (see `nfl_fantasy.attach_sim_data()`'s
+fallback). Fixing this surfaced a real, independent bug: `simulate_drive()`
+credited **every** turnover as a flat 0-point `'turnover'` outcome, even
+when the real historical play being resampled was itself a defensive/
+return touchdown (a Pick-6 or scoop-and-score) — `SCORING_PLAY_TYPES`
+only ever recognized offensive scores. That silently zeroed out a real
+scoring event on the team-score simulation itself, not just D/ST fantasy
+points.
+
+**Fix**: `get_simulator_play_pool_db()` now also returns `is_scoring_play`
+per play. `simulate_drive()`'s turnover branch returns a new
+`'defensive_touchdown'` outcome when the drawn play was itself scored;
+`simulate_game()` credits those 7 points to the OPPOSING side's
+scoreboard (`OPPOSITE_SIDE`) instead of the offense that turned it over.
+`simulate_matchup()` tallies each side's sacks/INTs/defensive-TD count
+from the OPPONENT's own play list each draw (points allowed = the
+opponent's own final score, which now correctly includes any defensive
+TDs scored off of this side's turnovers) and appends a `DST_<team_id>`
+entry to the same per-draw `draws` dict every skill player's points
+already accumulate into — no persistence/pool-attachment-layer changes
+needed, since `nfl_fantasy.build_player_pool()`'s DST pool entries already
+use that exact id convention.
+
+**Validation**: a full re-run of the original 544-game, 2024+2025
+`TEAM_CONDITIONING_K` grid search wasn't practical for this change (that
+backtest takes ~1 hour against the full two-season warehouse). Instead,
+ran a controlled before/after comparison — the SAME sample of completed
+2026-season games, the SAME RNG seed, with only the defensive-touchdown
+crediting toggled on vs. off (every other line of code identical):
+
+| | n | Accuracy | Brier |
+|---|---|---|---|
+| Before (defensive TDs always 0 pts, the pre-existing bug) | 79 | 53.2% | 0.2696 |
+| After (defensive TDs correctly credited) | 79 | 53.2% | **0.2464** |
+
+Accuracy is unchanged — real defensive TDs are rare enough (~0.1-0.15% of
+simulated drives, confirmed directly against this app's stored play
+pool) that they essentially never flip which side a game picks. Brier
+score improved (lower is better), consistent with fixing a real scoring
+bug rather than introducing a new assumption. No regression found; a full
+grid-search re-run against the full 2024/2025 warehouse remains a cheap
+confidence-builder to do later if anyone wants the exact K=0.5 figure
+re-confirmed, but nothing here suggests it would move.
 
 ## Known gaps carried forward (see `nfl_game_simulator.py`'s own module docstring for the full list)
 

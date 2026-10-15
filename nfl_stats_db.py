@@ -1286,8 +1286,8 @@ def get_player_articles(player_id=None, team_id=None, start=None, end=None, limi
 def get_simulator_play_pool_db(seasons=None):
     """One flat list of usable scrimmage plays for nfl_game_simulator.py's
     bootstrap play sampler: [{down, distance, yards_to_endzone,
-    play_type, yards_gained, is_turnover}], oldest filtering decisions
-    baked in here rather than left to the caller:
+    play_type, yards_gained, is_turnover, is_scoring_play}], oldest
+    filtering decisions baked in here rather than left to the caller:
 
     - Drops Penalty plays and any is_no_play row (down replayed) — neither
       carries a clean down/distance/yards signal a drive simulator can
@@ -1319,6 +1319,11 @@ def get_simulator_play_pool_db(seasons=None):
       pick up the correction retroactively — until then, their rows here
       simply won't ever be turnovers (same "no signal yet" as any other
       not-yet-backfilled gap in this app, not silently wrong).
+    - `is_scoring_play` lets simulate_drive() tell a plain turnover apart
+      from a real defensive/return touchdown (a resampled Pick-6 or
+      scoop-and-score) that happens to BE a turnover play — needed to
+      credit the right side's scoreboard and to tally nfl_fantasy.py's
+      DST_TD fantasy stat; see simulate_drive()'s own turnover branch.
 
     `seasons` (optional, e.g. [2024, 2025, 2026]): restricts to those
     seasons; None (the default) uses everything stored. Returns plain
@@ -1339,7 +1344,7 @@ def get_simulator_play_pool_db(seasons=None):
             q = q.filter(NflPlay.season.in_(seasons))
         rows = q.with_entities(NflPlay.down, NflPlay.distance, NflPlay.yards_to_endzone,
                                 NflPlay.play_type, NflPlay.yards_gained, NflPlay.is_turnover,
-                                NflPlay.end_yards_to_endzone).all()
+                                NflPlay.end_yards_to_endzone, NflPlay.is_scoring_play).all()
 
     return [{
         'down': r.down,
@@ -1349,6 +1354,7 @@ def get_simulator_play_pool_db(seasons=None):
         'yards_gained': r.yards_gained or 0.0,
         'is_turnover': bool(r.is_turnover),
         'end_yards_to_endzone': r.end_yards_to_endzone,
+        'is_scoring_play': bool(r.is_scoring_play),
     } for r in rows if r.yards_to_endzone is not None]
 
 

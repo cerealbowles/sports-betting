@@ -169,8 +169,19 @@ RUSH_PLAY_TYPES = {'Rush', 'Rushing Touchdown'}
 RECEPTION_PLAY_TYPES = {'Pass Reception', 'Passing Touchdown'}
 
 # Points credited per drive outcome — see this module's docstring for the
-# "extra point assumed automatic, no 2-point data" caveat.
+# "extra point assumed automatic, no 2-point data" caveat. A
+# 'defensive_touchdown' drive isn't looked up here — it scores 0 for the
+# offense that turned it over; simulate_game() credits DRIVE_POINTS['touchdown']
+# to the OTHER side instead (see OPPOSITE_SIDE).
 DRIVE_POINTS = {'touchdown': 7, 'field_goal_good': 3}
+
+# Which side's scoreboard/stats a drive's defense belongs to — simulate_game()
+# uses this to credit a 'defensive_touchdown' drive's points to the side that
+# WASN'T driving, and simulate_matchup() reuses it to find each side's
+# opposing offense when tallying that side's own DST stats (sacks/INTs/def
+# TDs a defense recorded are all plays that show up in the OPPONENT's own
+# play list, since this simulator only tracks each side's OFFENSIVE drives).
+OPPOSITE_SIDE = {'home': 'away', 'away': 'home'}
 
 
 def _approx_quarter(drive_index, drives_per_team):
@@ -451,7 +462,12 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
     list of play dicts that occurred (for attribute_plays_to_players() to
     assign to specific players; a 4th-down Punt/Field Goal play is
     included here too, though it's never attributed to a fantasy player),
-    `outcome` is one of 'touchdown', 'turnover', 'field_goal_good',
+    `outcome` is one of 'touchdown', 'turnover', 'defensive_touchdown'
+    (a turnover play whose real historical row was itself a Pick-6/
+    scoop-and-score — see get_simulator_play_pool_db()'s is_scoring_play
+    bullet; simulate_game() is what actually credits those 7 points to
+    the OPPOSING side's scoreboard, since this function only knows about
+    the offense currently driving), 'field_goal_good',
     'field_goal_missed', 'punt', 'turnover_on_downs' (only when this sim
     run has zero stored fourth-down plays to resample at all — see
     _sample_fourth_down()), 'max_plays' (the safety-valve case, should be
@@ -504,6 +520,8 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
         drive_plays.append(play)
 
         if play['is_turnover']:
+            if play.get('is_scoring_play'):
+                return drive_plays, 'defensive_touchdown', _resolve_kickoff_start(pools, rng)
             next_start = (play['end_yards_to_endzone'] if play['end_yards_to_endzone'] is not None
                           else max(0.0, 100.0 - yards_to_endzone))
             return drive_plays, 'turnover', next_start
@@ -531,20 +549,30 @@ def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
     position now carries over continuously from one drive to the next real
     kickoff/punt/turnover result (see simulate_drive()) instead of
     resetting to a fixed spot every time. Returns {'home': {'plays': [...],
-    'drives': [...]}, 'away': {...}} per side — 'plays' is every play from
-    all of that side's drives, flattened (including any 4th-down Punt/
-    Field Goal plays), for attribute_plays_to_players(); 'drives' is one
-    {'outcome', 'points', 'quarter'} per drive (see DRIVE_POINTS/
-    _approx_quarter()) for simulate_matchup()'s game-level summary (final
-    score, win/loss, quarter breakdown).
+    'drives': [...], 'bonus_points': [...]}, 'away': {...}} per side —
+    'plays' is every play from all of that side's drives, flattened
+    (including any 4th-down Punt/Field Goal plays), for
+    attribute_plays_to_players(); 'drives' is one {'outcome', 'points',
+    'quarter'} per drive THIS side ran (see DRIVE_POINTS/_approx_quarter());
+    'bonus_points' is {'points', 'quarter'} entries credited to THIS side
+    from the OTHER side's defensive touchdowns (see below) — simulate_
+    matchup() sums both lists together for a side's real final score.
 
     `home_tilt`/`away_tilt` (default 0.0, no conditioning): each side's
     own offense-vs-opposing-defense matchup signal — home's drives use
     `home_tilt` (home offense vs. away defense), away's use `away_tilt`
     (away offense vs. home defense). See simulate_matchup() for where
     these come from (nfl_player_model's offense/defense grades) and
-    TEAM_CONDITIONING_K for the mechanism."""
-    out = {'home': {'plays': [], 'drives': []}, 'away': {'plays': [], 'drives': []}}
+    TEAM_CONDITIONING_K for the mechanism.
+
+    A 'defensive_touchdown' drive (see simulate_drive()) is the one case
+    where a drive's points don't belong to the side that ran it — they go
+    to `out[OPPOSITE_SIDE[side]]['bonus_points']` instead, a separate list
+    simulate_matchup() adds into that side's own score alongside its
+    'drives' points, so a defense's pick-six shows up on the scoreboard of
+    the team whose defense actually scored it."""
+    out = {'home': {'plays': [], 'drives': [], 'bonus_points': []},
+           'away': {'plays': [], 'drives': [], 'bonus_points': []}}
     side_drive_idx = {'home': 0, 'away': 0}
     tilt_by_side = {'home': home_tilt, 'away': away_tilt}
     next_start = _resolve_kickoff_start(pools, rng)  # opening kickoff of the game
@@ -553,11 +581,16 @@ def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
         plays, outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start,
                                                       tilt=tilt_by_side[side])
         out[side]['plays'].extend(plays)
-        out[side]['drives'].append({
-            'outcome': outcome,
-            'points': DRIVE_POINTS.get(outcome, 0),
-            'quarter': _approx_quarter(side_drive_idx[side], drives_per_team),
-        })
+        quarter = _approx_quarter(side_drive_idx[side], drives_per_team)
+        if outcome == 'defensive_touchdown':
+            out[side]['drives'].append({'outcome': outcome, 'points': 0, 'quarter': quarter})
+            out[OPPOSITE_SIDE[side]]['bonus_points'].append({'points': DRIVE_POINTS['touchdown'], 'quarter': quarter})
+        else:
+            out[side]['drives'].append({
+                'outcome': outcome,
+                'points': DRIVE_POINTS.get(outcome, 0),
+                'quarter': quarter,
+            })
         side_drive_idx[side] += 1
     return out
 
@@ -670,7 +703,14 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     caveat, module docstring). player_id only, no name/position
     resolution here (that needs a roster lookup, a separate concern —
     see nfl_roster_api.get_skill_players() for a live mapping, or resolve
-    the ids the way build_player_pool() does).
+    the ids the way build_player_pool() does). Each side's 'players' dict
+    ALSO carries one f'DST_{team_id}' entry (matching nfl_fantasy.
+    build_player_pool()'s own DST pool-entry id convention, so it slots
+    into the lineup builder with zero further plumbing) — that side's own
+    team defense's simulated FanDuel DST points (sacks/INTs/defensive
+    TDs tallied from the opposing side's play list each draw, points
+    allowed from the opposing side's own final score; see the per-draw
+    loop below and nfl_fantasy.compute_dst_fantasy_points()).
 
     Each side's play sampling is conditioned on real team strength — see
     _team_grades()/TEAM_CONDITIONING_K: home's tilt is home's own offense
@@ -692,6 +732,7 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     home_tilt = (home_off - away_def) if (home_off is not None and away_def is not None) else 0.0
     away_tilt = (away_off - home_def) if (away_off is not None and home_def is not None) else 0.0
 
+    team_id_by_side = {'home': home_team_id, 'away': away_team_id}
     draws = {'home': defaultdict(list), 'away': defaultdict(list)}
     home_wins = away_wins = ties = 0
     scores = {'home': [], 'away': []}
@@ -701,10 +742,13 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
                               home_tilt=home_tilt, away_tilt=away_tilt)
         side_score = {}
         for side, shares in (('home', home_shares), ('away', away_shares)):
-            side_score[side] = sum(d['points'] for d in game[side]['drives'])
+            side_score[side] = (sum(d['points'] for d in game[side]['drives'])
+                                 + sum(b['points'] for b in game[side]['bonus_points']))
             scores[side].append(side_score[side])
             for d in game[side]['drives']:
                 quarter_points[side][d['quarter'] - 1] += d['points']
+            for b in game[side]['bonus_points']:
+                quarter_points[side][b['quarter'] - 1] += b['points']
             player_cats = attribute_plays_to_players(game[side]['plays'], shares, rng)
             for player_id, categories in player_cats.items():
                 draws[side][player_id].append(nfl_fantasy.compute_fantasy_points(categories))
@@ -714,6 +758,22 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
             away_wins += 1
         else:
             ties += 1
+
+        # DST fantasy points for this draw: a side's defense only ever shows
+        # up in the OPPONENT's own offensive play list (see OPPOSITE_SIDE's
+        # comment) — sacks/INTs are specific play_types drawn into that
+        # list, a defensive TD is a drive outcome on that same list, and
+        # points allowed is simply the opponent's own final score (already
+        # correct post defensive-touchdown fix above).
+        for side in ('home', 'away'):
+            opp_side = OPPOSITE_SIDE[side]
+            opp_plays = game[opp_side]['plays']
+            sacks = sum(1 for p in opp_plays if p['play_type'] in ('Sack', 'Sack Opp Fumble Recovery'))
+            ints = sum(1 for p in opp_plays if p['play_type'] == 'Pass Interception Return')
+            def_td = sum(1 for d in game[opp_side]['drives'] if d['outcome'] == 'defensive_touchdown')
+            dst_pts = nfl_fantasy.compute_dst_fantasy_points(
+                side_score[opp_side], {'sacks': sacks, 'ints': ints, 'def_td': def_td})
+            draws[side][f'DST_{team_id_by_side[side]}'].append(dst_pts)
 
     players = {}
     for side in ('home', 'away'):
@@ -802,13 +862,22 @@ def simulate_week(season=None, week=None, n=DEFAULT_SIM_DRAWS, before_date=None,
                                 rng=rng, pools=pools)
         for side, team_id, opponent_id in (('home', home_id, away_id), ('away', away_id, home_id)):
             roster = {p['id']: p for p in nfl_stats_db.get_or_fetch_roster_db(team_id)}
+            team_name = g[side].get('name', '')
             results = []
             for player_id, outcome in sim['players'][side].items():
-                info = roster.get(player_id, {})
+                if player_id.startswith('DST_'):
+                    # The team-defense entry simulate_matchup() adds per side
+                    # (see its own docstring) has no roster row to resolve —
+                    # it's not a real player id — so name/position are built
+                    # straight from this side's own team dict instead.
+                    name, position = f"{team_name} D/ST", 'DST'
+                else:
+                    info = roster.get(player_id, {})
+                    name, position = info.get('name'), info.get('position')
                 results.append({
                     'player_id': player_id,
-                    'player_name': info.get('name'),
-                    'position': info.get('position'),
+                    'player_name': name,
+                    'position': position,
                     'n_draws': len(outcome['sim']),
                     **outcome,
                 })

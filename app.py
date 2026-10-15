@@ -6334,7 +6334,8 @@ def nfl_lineup():
                                                                        objective=objective)))
   return _set_last_sport_cookie(resp, 'NFL')
 
-NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE')]
+NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE'),
+                       ('DST', 'DST')]
 
 def _nfl_sim_card_starters(players):
   """players: one side's list of per-player sim-result dicts (same shape
