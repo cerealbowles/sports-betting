@@ -557,12 +557,17 @@ class NflRecapWeek(db.Model):
   best_salary              = db.Column(db.Integer)
   best_actual              = db.Column(db.Float)
   best_players_json        = db.Column(db.Text)
-  # The week's TOP_PLAYERS_LIMIT highest real actual-point scorers across
-  # the WHOLE pool (nfl_recap.compute_week_recap()), not just the 9 in any
-  # one lineup — lets the page show where a picked player actually ranked
-  # against everyone else that week. Added alongside sim_median/sim_
-  # ceiling's own later addition; same self-heal convention.
-  top_players_json         = db.Column(db.Text)
+  # The week's TOP_PLAYERS_LIMIT highest real actual-point scorers PER
+  # POSITION (nfl_recap.compute_week_recap()) — a flat cross-position
+  # ranking is dominated by QBs (highest-scoring position on average, but
+  # a lineup only ever rosters one), so this is grouped: {'QB': [...],
+  # 'RB': [...], ...}. Lets the page show where a picked player actually
+  # ranked against their real positional peers that week. Added alongside
+  # sim_median/sim_ceiling's own later addition; same self-heal
+  # convention. Supersedes an earlier flat-ranking top_players_json
+  # column (no longer written to, left in place — this app has no DROP
+  # COLUMN mechanism, same as every other superseded column here).
+  top_players_by_position_json = db.Column(db.Text)
   created_at               = db.Column(db.DateTime(timezone=True),
                                         default=lambda: datetime.now(timezone.utc))
 
@@ -779,6 +784,7 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'sim_ceiling_actual',       'FLOAT DEFAULT NULL')
     _add('nfl_recap_weeks', 'sim_ceiling_players_json', 'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'top_players_json',          'TEXT DEFAULT NULL')
+    _add('nfl_recap_weeks', 'top_players_by_position_json', 'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,

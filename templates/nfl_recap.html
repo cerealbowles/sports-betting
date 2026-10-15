@@ -32,7 +32,14 @@
 @media (max-width: 600px) { .recap-subtables { grid-template-columns: minmax(0, 1fr); } }
 .recap-hit-check { color: var(--win); font-weight: 700; margin-left: 4px; }
 
-/* ── Top-20 real scorers ── */
+/* ── Top real scorers, per position (QB/RB/WR/TE/DST each own table —
+   a flat cross-position ranking is mostly QBs, who score highest on
+   average but a lineup only ever rosters one) — auto-fit with a real
+   px minimum (not minmax(0, 1fr), which collapses auto-fit to a single
+   column since it has nothing to measure column count against) lets
+   however many of the up-to-5 position tables actually fit per row. ── */
+.recap-top-position-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+.recap-top-position-grid > div { min-width: 0; }
 .recap-top-players tr.recap-top-hit td { color: var(--text); font-weight: 700; }
 .recap-top-players tr:not(.recap-top-hit) td { color: var(--text-muted); }
 .recap-top-players .recap-rank { font-family: var(--font-mono); color: var(--text-muted); }
@@ -153,31 +160,40 @@
                 {{ picks_table(w.sim_ceiling.lineup, hindsight_ids=hindsight_ids) }}
             </div>
         </div>
-        {% if w.top_players %}
+        {% if w.top_players_by_position %}
         <div style="padding: 10px; border-top: 1px solid var(--border);">
-            <h3 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">Top {{ w.top_players|length }} by actual points — where our picks landed</h3>
-            <div class="recap-picks-scroll">
-            <table class="table recap-top-players">
-                <thead><tr><th>Rank</th><th>Player</th><th>Pos</th><th>Team</th><th>Opp</th><th>Actual</th><th>Picked by</th></tr></thead>
-                <tbody>
-                {% for p in w.top_players %}
-                {% set is_hit = (p.id in rec_ids) or (p.id in med_ids) or (p.id in ceil_ids) %}
-                <tr{% if is_hit %} class="recap-top-hit"{% endif %}>
-                    <td class="recap-rank">#{{ loop.index }}</td>
-                    <td>{{ p.name }}</td>
-                    <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
-                    <td>{{ p.team }}</td>
-                    <td>{{ p.opponent }}</td>
-                    <td>{{ p.actual }}</td>
-                    <td>
-                        <span class="recap-picked-badge{% if p.id in rec_ids %} recap-picked-active{% endif %}">Rec</span>
-                        <span class="recap-picked-badge{% if p.id in med_ids %} recap-picked-active{% endif %}">Med</span>
-                        <span class="recap-picked-badge{% if p.id in ceil_ids %} recap-picked-active{% endif %}">Ceil</span>
-                    </td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+            <h3 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">Top by actual points, per position — where our picks landed</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Split by position rather than one combined ranking — QBs score highest on average but a lineup only ever rosters one, so a flat top 20 would be mostly QBs and tell you little about your RB/WR/TE picks.</p>
+            <div class="recap-top-position-grid">
+            {% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+            {% set players = w.top_players_by_position.get(position, []) %}
+            {% if players %}
+            <div>
+                <h4 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px;">{{ position }}</h4>
+                <div class="recap-picks-scroll">
+                <table class="table recap-top-players">
+                    <thead><tr><th>Rank</th><th>Player</th><th>Team</th><th>Actual</th><th>Picked by</th></tr></thead>
+                    <tbody>
+                    {% for p in players %}
+                    {% set is_hit = (p.id in rec_ids) or (p.id in med_ids) or (p.id in ceil_ids) %}
+                    <tr{% if is_hit %} class="recap-top-hit"{% endif %} title="vs. {{ p.opponent }}">
+                        <td class="recap-rank">#{{ loop.index }}</td>
+                        <td>{{ p.name }}</td>
+                        <td>{{ p.team }}</td>
+                        <td>{{ p.actual }}</td>
+                        <td>
+                            <span class="recap-picked-badge{% if p.id in rec_ids %} recap-picked-active{% endif %}">Rec</span>
+                            <span class="recap-picked-badge{% if p.id in med_ids %} recap-picked-active{% endif %}">Med</span>
+                            <span class="recap-picked-badge{% if p.id in ceil_ids %} recap-picked-active{% endif %}">Ceil</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
             </div>
         </div>
         {% endif %}
@@ -198,10 +214,12 @@
     can't appear here even if they actually played that week, and a since-signed player can appear even if they
     weren't on the roster yet. Injury-status tracking only started recently, so older weeks rarely exclude anyone as
     confirmed-out. A ✓ next to a player in Recommended/Sim Median/Sim Ceiling means they also appear in that same
-    week's Best Possible lineup — a real hindsight-correct pick, not just a plausible one. The "Top by actual points"
-    table ranks every player in that week's pool (not just the 9 in any one lineup) by what they actually scored, with
-    badges showing which of our three lineups (if any) picked them — useful for seeing not just whether a player made
-    a lineup, but how far off the real ceiling they were.
+    week's Best Possible lineup — a real hindsight-correct pick, not just a plausible one. The "Top by actual points,
+    per position" tables rank every player in that week's pool (not just the 9 in any one lineup) by what they
+    actually scored, split by position rather than one combined list — QBs score highest on average but a lineup only
+    ever rosters one, so a flat ranking would be mostly QBs and say little about the RB/WR/TE/DST picks. Badges show
+    which of our three lineups (if any) picked each player — useful for seeing not just whether a player made a
+    lineup, but how far off the real positional ceiling they were.
 </p>
 
 {% include "_nfl_methodology.html" %}
