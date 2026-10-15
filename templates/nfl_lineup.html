@@ -26,6 +26,20 @@
     padding: 9px 18px; font-weight: 700; font-family: var(--font-cond); cursor: pointer;
 }
 .dfs-apply-btn:hover { filter: brightness(1.08); }
+
+/* ── Settings/game-picker collapsed behind a toggle (the form itself is
+   already a .card, so this reuses .lineup-details/.lineup-summary's
+   disclosure behavior but drops their own border/box — this isn't a
+   nested box, just a bigger, more prominent toggle than the methodology
+   panel's since it's the page's primary control surface, not a footnote) ── */
+.dfs-settings-details { border: none; }
+.dfs-settings-summary {
+    padding: 0 0 2px; font-size: 0.85rem; text-transform: none; letter-spacing: normal;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; color: var(--text);
+}
+.dfs-settings-summary-line { font-size: 0.78rem; color: var(--text-muted); font-weight: 400; }
+.dfs-settings-body { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 10px; }
+
 .dfs-optimal-card { margin-bottom: 16px; }
 .dfs-optimal-hdr {
     display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px;
@@ -121,6 +135,13 @@
     <input type="hidden" name="week" value="{{ week_ctx.week }}">
     <input type="hidden" name="filtered" value="1">
 
+    <details class="lineup-details dfs-settings-details">
+    <summary class="lineup-summary dfs-settings-summary">
+        Roster, Cap &amp; Games
+        <span class="dfs-settings-summary-line">{{ selected_ids|length }}/{{ all_games|length }} games · {{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap{% if objective != 'projection' %} · {{ 'Sim Median' if objective == 'sim_median' else 'Sim Ceiling' }}{% endif %}</span>
+    </summary>
+    <div class="dfs-settings-body">
+
     <div class="dfs-settings">
         <div class="dfs-settings-hdr">Roster &amp; Cap Settings</div>
         <div class="dfs-settings-row">
@@ -184,6 +205,9 @@
     {% endfor %}
 
     <button type="submit" class="dfs-apply-btn" style="margin-top:14px;">Update Pool</button>
+
+    </div>
+    </details>
 </form>
 
 {% if not selected_ids %}
