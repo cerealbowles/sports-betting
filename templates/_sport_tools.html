@@ -7,10 +7,18 @@
    Sports with only Schedule built get no row at all — with nothing else to
    switch to it'd just repeat the sport-pills row above it with no payoff.
    Add a sport's entry here once it has a second tool (e.g. a Players pool). #}
+{# 'players'/'fantasy' were two separate tabs (nfl_players.html's plain
+   ranking table vs nfl_lineup.html's salary-cap optimizer) pointing at
+   genuinely different pages, but reading as one redundant "player stuff"
+   tab to a user — consolidated into one 'Fantasy' entry (nfl_lineup),
+   which now has the ranking table built in as its own Rankings sub-tab
+   (see nfl_lineup.html's dfs-view-toggle / _nfl_player_rankings.html).
+   nfl_players.html itself still works (linked from there, and from any
+   existing /nfl/players bookmark) — just not its own top-level tab here
+   anymore, same reasoning base.html's main nav now applies too. #}
 {% set _sport_tools = {
     'NFL': [
         ('schedule', '🏈 Schedule', 'nfl_schedule'),
-        ('players', '🧑 Players', 'nfl_players'),
         ('fantasy', '🏆 Fantasy', 'nfl_lineup'),
         ('simulations', '🎲 Simulations', 'nfl_simulations_page'),
     ],

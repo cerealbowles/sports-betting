@@ -1298,6 +1298,30 @@ def _confidence_tiers(sport):
 app.jinja_env.globals['confidence_tiers'] = _confidence_tiers
 
 
+def _confidence_pips(sport, market, pick_prob):
+    """1-6 pip count for a pick's model confidence, same bucketing
+    _market_chips.html's mc_*_conf_pips does inline per-market — shared
+    here so Python-side pick lists (Tonight's Picks / _edge_recommendations)
+    can show the same pips without duplicating the per-sport percentile
+    tiers in two places. `pick_prob` is the probability of the SIDE
+    actually picked (already >= 0.5), matching what each market's chip
+    passes in. Returns None if pick_prob is None."""
+    if pick_prob is None:
+        return None
+    conf = max(pick_prob, 1 - pick_prob) * 100
+    tiers = {'ml': _confidence_tiers, 'spread': _spread_confidence_tiers,
+              'total': _total_confidence_tiers}[market](sport)
+    pips = tiers.get('pips') or []
+    if len(pips) < 5:
+        return None
+    if conf >= pips[4]: return 6
+    if conf >= pips[3]: return 5
+    if conf >= pips[2]: return 4
+    if conf >= pips[1]: return 3
+    if conf >= pips[0]: return 2
+    return 1
+
+
 # ── Spread chip confidence tiers ─────────────────────────────────────────────
 # Same idea as the ML confidence tiers above, applied to the Spread chip's
 # confidence metric — which is predicted-margin magnitude in points, not a
@@ -3997,6 +4021,7 @@ def _hub_sport_data(sport, icon, href, today_str):
               'k_label':       b['k_label'],
               'k_cls':         'edge-pos' if b['adj_edge'] > 0 else 'edge-neutral',
               'game_time_utc': b['game_time_utc'],
+              'pips':          _confidence_pips('MLB', 'ml', b['adj_prob'] / 100.0),
           })
       else:
         if sport == 'NHL':
@@ -4039,6 +4064,7 @@ def _hub_sport_data(sport, icon, href, today_str):
               'k_label':       r['k_label'],
               'k_cls':         r['k_cls'],
               'game_time_utc': g.get('game_time_utc', ''),
+              'pips':          r['pips'],
           })
   except Exception:
     games_today, top_picks = 0, []
@@ -4851,7 +4877,8 @@ def _best_market_pick(game):
       candidates.append({'market': 'ml', 'side': 'home' if favors_home else 'away',
                           'abbr': abbr, 'label': f'{abbr} ML', 'edge': edge, 'kelly': kelly,
                           'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
-                          'pick_rank': (home if favors_home else away).get('rank_display')})
+                          'pick_rank': (home if favors_home else away).get('rank_display'),
+                          'pips': _confidence_pips(sport, 'ml', pick_prob)})
 
   # ── Spread ──
   factors     = model.get('factors')
@@ -4876,7 +4903,18 @@ def _best_market_pick(game):
           candidates.append({'market': 'spread', 'side': 'home' if favors_home else 'away',
                               'abbr': abbr, 'label': label, 'edge': edge, 'kelly': kelly,
                               'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
-                              'pick_rank': (home if favors_home else away).get('rank_display')})
+                              'pick_rank': (home if favors_home else away).get('rank_display'),
+                              # No pips here (unlike ml/total): _market_chips.html's spread
+                              # confidence/pips are keyed on the model's implied MARGIN in
+                              # points (spread_confidence_tiers' cutoffs are point values,
+                              # e.g. [1.5,3,5,7,9]), not a 0-100% probability like ml/total
+                              # share — _confidence_pips's pick_prob input would silently
+                              # compare the wrong scale. Replicating margin derivation here
+                              # (spread_model.predict_margin for VALIDATED_SPORTS vs
+                              # spread_proxy.implied_margin otherwise, same branch
+                              # _market_chips.html's mc_sp_validated takes) is a real
+                              # TODO, not done here to avoid shipping a wrong pip count.
+                              'pips': None})
 
   # ── Total ──
   total_model = game.get('total_model')
@@ -4906,7 +4944,8 @@ def _best_market_pick(game):
           candidates.append({'market': 'total', 'side': 'over' if favors_over else 'under',
                               'abbr': label, 'label': label, 'edge': edge, 'kelly': kelly,
                               'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
-                              'pick_rank': None})
+                              'pick_rank': None,
+                              'pips': _confidence_pips(sport, 'total', pick_prob)})
 
   if not candidates:
     return None
@@ -6359,6 +6398,7 @@ def _edge_recommendations(days, sport, limit=15):
           'ev_pct':       pick['ev_pct'],
           'k_label':      k_label,
           'k_cls':        k_cls,
+          'pips':         pick['pips'],
       })
 
   recommended.sort(key=lambda r: -r['edge'])
@@ -6532,6 +6572,17 @@ def nfl_lineup():
                                           stack_min=stack_min, max_low_tier=max_low_tier) if pool else None
   sim_range = (nfl_fantasy.evaluate_lineup_distribution(optimal['lineup'], week_ctx['season'], week_ctx['week'])
                if optimal else None)
+
+  # position_rank — only nfl_players() set this before; needed here too
+  # now that _nfl_player_rankings.html's ranking table is shared between
+  # that page and this one's Rankings tab (see nfl_lineup.html).
+  by_position = defaultdict(list)
+  for p in pool:
+    by_position[p['position']].append(p)
+  for players in by_position.values():
+    players.sort(key=lambda p: p['projection'], reverse=True)
+    for i, p in enumerate(players, start=1):
+      p['position_rank'] = i
 
   pool.sort(key=lambda p: p['projection'], reverse=True)
 

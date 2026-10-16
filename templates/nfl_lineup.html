@@ -96,14 +96,24 @@
 {% block content %}
 <div class="schedule-body">
 
+{% set objective_labels = {'sim_median': 'Sim Median', 'sim_ceiling': 'Sim Ceiling', 'risk_adjusted': 'Consistent'} %}
 {% set current_sport = 'NFL' %}
 {% include "_sport_pills.html" %}
 {% set active_tool = 'fantasy' %}
 {% include "_sport_tools.html" %}
 <div role="group" aria-label="Fantasy view" class="sport-chip-bar">
-    <a href="{{ url_for('nfl_lineup') }}" class="sport-chip sport-chip-active">Builder</a>
+    <button type="button" class="sport-chip sport-chip-active" id="dfs-view-tab-builder" onclick="dfsShowView('builder')">Builder</button>
+    <button type="button" class="sport-chip" id="dfs-view-tab-rankings" onclick="dfsShowView('rankings')">Rankings</button>
     <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip">Recap</a>
 </div>
+
+<div id="dfs-view-rankings-panel" hidden>
+<h1>Players</h1>
+<p class="dfs-subhead">Projected FanDuel points for every skill player and DST in this week's slate — same ranking table as the old standalone Players page, now folded in here since it was showing the same pool this page already builds. Click a name for their recent game log and any news coverage.</p>
+{% include "_nfl_player_rankings.html" %}
+</div>
+
+<div id="dfs-view-builder-panel">
 <h1>Salary Cap Lineup Builder</h1>
 <p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap.</p>
 
@@ -294,10 +304,28 @@
 {% endif %}
 
 </div>
+
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+/* ── Builder/Rankings in-page toggle (Recap stays a real link/page — only
+   these two share this page's already-fetched `pool`, so only these two
+   are worth avoiding a round-trip for) ── */
+function dfsShowView(view) {
+    var builderPanel  = document.getElementById('dfs-view-builder-panel');
+    var rankingsPanel = document.getElementById('dfs-view-rankings-panel');
+    var builderTab    = document.getElementById('dfs-view-tab-builder');
+    var rankingsTab   = document.getElementById('dfs-view-tab-rankings');
+    if (!builderPanel || !rankingsPanel || !builderTab || !rankingsTab) return;
+    var showRankings = view === 'rankings';
+    builderPanel.hidden  = showRankings;
+    rankingsPanel.hidden = !showRankings;
+    builderTab.classList.toggle('sport-chip-active', !showRankings);
+    rankingsTab.classList.toggle('sport-chip-active', showRankings);
+}
+
 document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     var utc = el.getAttribute('data-utc');
     if (!utc) return;
