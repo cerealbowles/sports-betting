@@ -142,6 +142,45 @@ var container = tab.closest('.factors-collapsible');
 if (container) switchFactorsTab(container, tab.getAttribute('data-mf-tab'));
 });
 
+/* Recap lineup tabs (nfl_recap.html) — Recommended/Best possible/Sim
+   Median/Sim Ceiling used to render as a cramped 2x2 grid of four full
+   tables per week; now only the picked tab's table is visible. */
+function switchRecapTab(container, kind) {
+container.querySelectorAll('.recap-tab').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-recap-tab') === kind);
+});
+container.querySelectorAll('.recap-panel').forEach(function (p) {
+    p.hidden = p.getAttribute('data-recap-panel') !== kind;
+});
+}
+document.addEventListener('click', function (e) {
+var tab = e.target.closest('.recap-tab');
+if (!tab) return;
+var container = tab.closest('.recap-subtables-wrap');
+if (container) switchRecapTab(container, tab.getAttribute('data-recap-tab'));
+});
+
+/* Recap "Top by actual points, per position" tabs — QB/RB/WR/TE/DST used
+   to render as five tables side by side in an auto-fit grid; now tabbed
+   the same way as the lineup tables above (shares the .recap-tab/
+   .recap-panel classes for styling, keyed off data-recap-postab instead
+   of data-recap-tab so the two click handlers don't fight over which
+   panel is "active"). */
+function switchRecapPosTab(container, kind) {
+container.querySelectorAll('.recap-tab').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-recap-postab') === kind);
+});
+container.querySelectorAll('.recap-panel').forEach(function (p) {
+    p.hidden = p.getAttribute('data-recap-pospanel') !== kind;
+});
+}
+document.addEventListener('click', function (e) {
+var tab = e.target.closest('[data-recap-postab]');
+if (!tab) return;
+var container = tab.closest('.recap-postabs-wrap');
+if (container) switchRecapPosTab(container, tab.getAttribute('data-recap-postab'));
+});
+
 /* Market-chips row (ML/Spread/Total, _market_chips.html) — tapping a chip
    used to jump straight into placing that bet (openRecommendedBet above).
    Now it opens the details sheet, opens the shared factors panel

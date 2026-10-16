@@ -103,3 +103,24 @@ def get_skill_players(team_id):
             continue
         out.append({'id': p['id'], 'name': p['name'], 'position': mapped})
     return out
+
+
+def get_defense_roster(team_id):
+    """Returns {player_id: position} for team_id's defensive roster group
+    (DL/LB/DB, ESPN's own abbreviations as given — not re-bucketed into
+    broader groups the way SKILL_POSITIONS folds FB into RB, since a
+    defender-stats leaderboard wants the real DT/EDGE/CB/S distinctions a
+    FanDuel fantasy pool never needed).
+
+    Deliberately does NOT filter `_UNAVAILABLE_GROUPS` like
+    get_skill_players() does — this exists to label whoever's NAME/
+    POSITION already appears on a season's stored box-score defensive
+    stats (nfl_stats_db.get_defender_season_stats_db()), including a
+    player now on IR or since cut from THIS roster view who still
+    legitimately recorded those stats earlier in the season. Same
+    CURRENT-roster-only caveat as every other nfl_roster_api.py call in
+    this app: a player traded away since won't resolve here at all (will
+    come back from the stats query with a real id/team but no position),
+    and that gap is left visible rather than guessed at."""
+    return {p['id']: p['position'] for p in get_roster(team_id)
+            if p['group'] == 'defense' and p['position']}

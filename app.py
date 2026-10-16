@@ -694,6 +694,13 @@ class NflSimResult(db.Model):
   sim_max         = db.Column(db.Float, nullable=False)
   sim_mean        = db.Column(db.Float, nullable=False)
   sim_draws_json  = db.Column(db.Text)
+  # {field: median} across this player's raw simulated box-score categories
+  # (passingYards, rushingTouchdowns, receptions, ...) — see nfl_game_
+  # simulator.simulate_matchup()'s 'sim_stats' output. NULL for a DST_*
+  # entry (no offensive categories) or a player who never touched the ball
+  # in any draw — lets /nfl/simulations compare predicted STAT LINES, not
+  # just fantasy points, against a Final game's real box score.
+  sim_stats_json  = db.Column(db.Text)
   computed_at     = db.Column(db.DateTime(timezone=True),
                                default=lambda: datetime.now(timezone.utc))
 
@@ -869,6 +876,7 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'top_players_json',          'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'top_players_by_position_json', 'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'comparison_lineup_scores_json', 'TEXT DEFAULT NULL')
+    _add('nfl_sim_results', 'sim_stats_json', 'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -6499,11 +6507,15 @@ def nfl_lineup():
   override the salary cap / roster position counts / QB-stack requirement
   for this request only — nothing is persisted, each is just a query param
   on the same form/page-reload. `objective` (optional: 'projection'
-  [default] / 'sim_median' / 'sim_ceiling'): which per-player field
-  optimize_lineup() maximizes — the latter two come from
-  nfl_game_simulator.py's daily Monte Carlo run (see nfl_fantasy.
+  [default] / 'sim_median' / 'sim_ceiling' / 'risk_adjusted'): which
+  per-player field optimize_lineup() maximizes — 'sim_median'/'sim_ceiling'
+  come from nfl_game_simulator.py's daily Monte Carlo run (see nfl_fantasy.
   attach_sim_data()), falling back to 'projection' for any player (e.g.
-  every DST) the simulator doesn't cover. `total_projection` on the
+  every DST) the simulator doesn't cover. 'risk_adjusted' instead penalizes
+  'projection' by that player's OWN week-to-week scoring volatility (see
+  nfl_fantasy.rolling_stddev()/RISK_PENALTY_K) — a consistent performer
+  outranks a boom-bust one with the same raw projection, unlike every
+  other objective here. `total_projection` on the
   result is always summed from 'projection' regardless, so the page can
   show what a sim-optimized lineup is "really" projected at. `sim_range`
   is the chosen lineup's TRUE joint simulated distribution (floor/
@@ -6548,7 +6560,7 @@ def nfl_lineup():
   }
   stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
   objective = request.args.get('objective', 'projection')
-  if objective not in ('projection', 'sim_median', 'sim_ceiling'):
+  if objective not in ('projection', 'sim_median', 'sim_ceiling', 'risk_adjusted'):
     objective = 'projection'
   # Non-DST roster size: the max_low_tier UI field's own "off" value (see
   # optimize_lineup()'s docstring — >= roster size disables the
@@ -6630,6 +6642,95 @@ def _nfl_sim_card_starters(players):
     starters.append({'slot': slot, 'player': pool[idx] if idx < len(pool) else None})
   return starters
 
+# Ordered (field, short label) pairs for the predicted-vs-actual box-score
+# stat line /nfl/simulations shows under each player's name — see
+# nfl_game_simulator.simulate_matchup()'s 'sim_stats' output for where the
+# field names (passingYards, rushingTouchdowns, ...) come from. Order
+# matters here (passing before rushing before receiving, yards before
+# touchdowns) since _nfl_sim_stat_compare() renders them in this sequence.
+NFL_SIM_STAT_LABELS = [
+  ('passingYards', 'py'), ('passingTouchdowns', 'pTD'), ('interceptions', 'INT'),
+  ('rushingYards', 'ry'), ('rushingTouchdowns', 'rTD'),
+  ('receivingYards', 'recy'), ('receptions', 'rec'), ('receivingTouchdowns', 'recTD'),
+]
+
+def _nfl_sim_stat_compare(row):
+  """Sets row['stat_compare'] to an ordered [{'label', 'pred', 'actual'}]
+  list for whichever NFL_SIM_STAT_LABELS fields this player's own
+  'sim_stats' (nfl_game_simulator's predicted per-category median)
+  actually covers — a pure receiver's row never gets a 'ry'/'rTD' entry,
+  since sim_stats itself never has rushing fields for a player the
+  simulator never had rush the ball in any draw. 'actual' is None (not 0)
+  until _attach_actual_to_nfl_sim_game() has filled in row['actual_stats']
+  for a Final game with an ingested box score — same "a real gap beats a
+  wrong guess" convention used everywhere else here. No-op (leaves
+  'stat_compare' unset) for a DST_* row or one with no sim_stats at all."""
+  sim_stats = row.get('sim_stats')
+  if not sim_stats:
+    return
+  actual_stats = row.get('actual_stats') or {}
+  compare = []
+  for field, label in NFL_SIM_STAT_LABELS:
+    if field not in sim_stats:
+      continue
+    actual_value = actual_stats.get(field)
+    compare.append({
+      'label': label,
+      'pred': round(sim_stats[field], 1),
+      'actual': round(actual_value, 1) if actual_value is not None else None,
+    })
+  row['stat_compare'] = compare
+
+def _attach_actual_to_nfl_sim_game(g, home_rows, away_rows):
+  """Mutates `g` (adds 'actual_home_score'/'actual_away_score' when known)
+  and every row in home_rows/away_rows (adds 'actual' fantasy points and
+  'actual_stats' — the real flattened box-score categories, same field
+  names as each row's own 'sim_stats' median — so the template can show
+  predicted vs. real side by side) in place. No-op (every added field left
+  unset) for a game that isn't 'Final' yet, or one whose box score hasn't
+  been ingested into PlayerGameStat yet (the nightly stats self-heal job
+  usually has it by the time a past week's page is viewed, but this is a
+  live request, not a guarantee) — same "a real gap beats a wrong guess"
+  convention as the rest of this app: no row claims a 0 it doesn't
+  actually know. Always sets 'actual_home_score'/'actual_away_score' to at
+  least None (never leaves the key missing) — the template's own `is not
+  none` guard needs a real None there, not Jinja's Undefined, which
+  compares unequal to None and would make the guard pass with nothing to
+  show."""
+  g['actual_home_score'] = g.get('actual_home_score')
+  g['actual_away_score'] = g.get('actual_away_score')
+  if g.get('status') != 'Final':
+    return
+  score = nfl_stats_db.get_actual_game_score_db(g['game_id'])
+  if score:
+    g['actual_home_score'] = score['home_score']
+    g['actual_away_score'] = score['away_score']
+
+  boxscore = nfl_stats_db.get_game_boxscore_db(g['game_id'])
+  home_id, away_id = g['home'].get('id'), g['away'].get('id')
+  sides = ((home_id, away_id, home_rows, score.get('away_score') if score else None),
+           (away_id, home_id, away_rows, score.get('home_score') if score else None))
+  for team_id, opponent_id, rows, points_allowed in sides:
+    box_rows = boxscore.get(team_id, [])
+    if not box_rows:
+      continue  # box score not ingested yet for this team — leave 'actual' unset, not a false 0
+    actual_by_id = {r['id']: (r.get('categories') or {}) for r in box_rows}
+    dst_agg = nfl_fantasy.aggregate_dst_game(box_rows)
+    for row in rows:
+      pid = row['player_id']
+      if pid.startswith('DST_'):
+        if points_allowed is not None:
+          row['actual'] = nfl_fantasy.compute_dst_fantasy_points(points_allowed, dst_agg)
+        continue
+      cats = actual_by_id.get(pid)
+      row['actual'] = nfl_fantasy.compute_fantasy_points(cats) if cats is not None else 0.0
+      if cats:
+        flat = {}
+        for group in cats.values():
+          if isinstance(group, dict):
+            flat.update(group)
+        row['actual_stats'] = flat
+
 @app.route('/nfl/simulations')
 def nfl_simulations_page():
   """Shows this week's stored game-simulation results (NflSimResult/
@@ -6667,12 +6768,26 @@ def nfl_simulations_page():
     away_rows = teams.get(g['away'].get('id'), [])
     if not home_rows and not away_rows:
       continue
+    for row in home_rows + away_rows:
+      row.setdefault('actual', None)
+      row.setdefault('actual_stats', None)
+    _attach_actual_to_nfl_sim_game(g, home_rows, away_rows)
+    for row in home_rows + away_rows:
+      _nfl_sim_stat_compare(row)
+    summary = game_summaries.get(g['game_id'])
+    win_pick_correct = None
+    if (summary and g.get('actual_home_score') is not None
+        and g.get('actual_away_score') is not None):
+      picked_home = summary['home_win_pct'] >= summary['away_win_pct']
+      real_home_won = g['actual_home_score'] > g['actual_away_score']
+      win_pick_correct = picked_home == real_home_won
     games.append({
       **g,
       'home_players': home_rows, 'away_players': away_rows,
       'home_starters': _nfl_sim_card_starters(home_rows),
       'away_starters': _nfl_sim_card_starters(away_rows),
-      'summary': game_summaries.get(g['game_id']),
+      'summary': summary,
+      'win_pick_correct': win_pick_correct,
     })
 
   resp = make_response(render_template('nfl_simulations.html', subnav_sport='NFL',
@@ -6989,6 +7104,41 @@ def nfl_players():
   pool.sort(key=lambda p: p['projection'], reverse=True)
 
   resp = make_response(render_template('nfl_players.html', week_ctx=week_ctx, subnav_sport='NFL', pool=pool))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/defense')
+def nfl_defense_page():
+  """Individual-DEFENDER season leaderboard — sacks, tackles, tackles
+  for loss, passes defended, QB hits, interceptions, and fumbles
+  recovered, summed from real box scores (nfl_stats_db.
+  get_defender_season_stats_db()). Nothing in this app surfaced this at
+  the PLAYER level before — only team-level DST aggregation
+  (nfl_fantasy.aggregate_dst_game(), used for FanDuel DST scoring)
+  existed. Position/team display name come from a CURRENT-roster lookup
+  (nfl_roster_api.get_defense_roster()) per team actually present in this
+  season's stats, same staleness caveat as every other current-roster-
+  dependent page here (nfl_recap.py's docstring states it plainest): a
+  player traded/cut since won't resolve a position, and shows as '?'
+  rather than being dropped.
+
+  `season` (optional query param): defaults to the current season. No
+  week picker — these are SEASON totals, not a single week's slate."""
+  import nfl_roster_api
+
+  season = request.args.get('season', type=int) or nfl_api.get_current_week()[0]
+  rows = nfl_stats_db.get_defender_season_stats_db(season)
+
+  position_by_team = {}
+  team_abbrevs = _nfl_team_abbrev_map()
+  for team_id in {r['team_id'] for r in rows if r['team_id']}:
+    position_by_team[team_id] = nfl_roster_api.get_defense_roster(team_id)
+
+  for r in rows:
+    r['position'] = position_by_team.get(r['team_id'], {}).get(r['player_id'], '?')
+    r['team_abbrev'] = team_abbrevs.get(r['team_id'], r['team_id'] or '?')
+  rows.sort(key=lambda r: (r['sacks'], r['tfl'], r['tackles']), reverse=True)
+
+  resp = make_response(render_template('nfl_defense.html', subnav_sport='NFL', season=season, rows=rows))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/player/<player_id>')

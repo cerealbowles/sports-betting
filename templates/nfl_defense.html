@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}NFL Defense — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.def-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.def-toolbar .filter-input { flex: 1 1 200px; min-width: 160px; }
+.def-sort-th { cursor: pointer; user-select: none; text-align: center; }
+.def-sort-th:hover { color: var(--text); }
+.def-sort-arrow { font-size: 0.7rem; }
+.def-empty { color: var(--text-muted); font-size: 0.85rem; padding: 14px 0; text-align: center; }
+#def-table td { text-align: center; }
+#def-table td:first-child, #def-table td:nth-child(2) { text-align: left; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+{% set active_tool = 'defense' %}
+{% include "_sport_tools.html" %}
+<h1>Defense</h1>
+<p class="dfs-subhead">Season-to-date individual defender stats — sacks, tackles, tackles for loss, passes defended, QB hits, interceptions, and fumbles recovered — summed from real box scores. These never feed FanDuel scoring (that's the team DST unit, on <a href="{{ url_for('nfl_lineup') }}">Fantasy</a>) or the game simulator — this is a straight stats leaderboard. Position/team shown is each player's CURRENT roster — a player traded or cut since shows '?'/their old team rather than being dropped.</p>
+
+{% if not rows %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🛡️</div>
+    <div class="offseason-title">No stored defensive box scores for {{ season }} yet</div>
+    <div class="offseason-sub">Check back once this season's games start finalizing.</div>
+</div>
+{% else %}
+
+<div class="card">
+    <div class="def-toolbar">
+        <input type="search" id="def-search" class="filter-input" placeholder="Search player or team…" oninput="defApplyFilters()">
+        <div class="sport-chip-bar" id="def-pos-filter">
+            <button type="button" class="sport-chip sport-chip-active" data-pos="ALL" onclick="defFilterPos('ALL', this)">All <span class="sport-chip-count">{{ rows|length }}</span></button>
+            {% for pos in ['DE', 'DT', 'NT', 'LB', 'OLB', 'ILB', 'CB', 'S', 'SS', 'FS', '?'] %}
+            {% set cnt = rows | selectattr('position', 'equalto', pos) | list | length %}
+            {% if cnt %}
+            <button type="button" class="sport-chip" data-pos="{{ pos }}" onclick="defFilterPos('{{ pos }}', this)" {% if pos == '?' %}title="Position unresolved — player isn't on this team's CURRENT roster snapshot (traded/cut since, or ESPN roster gap)"{% endif %}>{{ pos }} <span class="sport-chip-count">{{ cnt }}</span></button>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    <div style="overflow-x:auto;">
+    <table class="table" id="def-table">
+        <thead>
+        <tr>
+            <th>Player</th>
+            <th>Team</th>
+            <th>Pos</th>
+            <th class="def-sort-th" data-sort-key="games">GP <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="sacks">Sacks <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="tackles">Tkl <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="solo_tackles">Solo <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="tfl">TFL <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="passes_defended">PD <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="qb_hits">QB Hits <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="interceptions">INT <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="fumbles_recovered">FR <span class="def-sort-arrow"></span></th>
+            <th class="def-sort-th" data-sort-key="def_td">Def TD <span class="def-sort-arrow"></span></th>
+        </tr>
+        </thead>
+        <tbody id="def-tbody">
+        {% for r in rows %}
+        <tr data-position="{{ r.position }}" data-name="{{ r.player_name|lower }}" data-team="{{ r.team_abbrev|lower }}"
+            data-games="{{ r.games }}" data-sacks="{{ r.sacks }}" data-tackles="{{ r.tackles }}"
+            data-solo_tackles="{{ r.solo_tackles }}" data-tfl="{{ r.tfl }}" data-passes_defended="{{ r.passes_defended }}"
+            data-qb_hits="{{ r.qb_hits }}" data-interceptions="{{ r.interceptions }}"
+            data-fumbles_recovered="{{ r.fumbles_recovered }}" data-def_td="{{ r.def_td }}">
+            <td>{{ r.player_name }}</td>
+            <td>{{ r.team_abbrev }}</td>
+            <td><span class="dfs-slot-badge">{{ r.position }}</span></td>
+            <td>{{ r.games }}</td>
+            <td><strong>{{ r.sacks }}</strong></td>
+            <td>{{ r.tackles }}</td>
+            <td>{{ r.solo_tackles }}</td>
+            <td>{{ r.tfl }}</td>
+            <td>{{ r.passes_defended }}</td>
+            <td>{{ r.qb_hits }}</td>
+            <td>{{ r.interceptions }}</td>
+            <td>{{ r.fumbles_recovered }}</td>
+            <td>{{ r.def_td }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p id="def-empty" class="def-empty" hidden>No defenders match your filters.</p>
+</div>
+
+{% endif %}
+
+</div>
+
+<script>
+var defPos = 'ALL';
+function defFilterPos(pos, btn) {
+    defPos = pos;
+    document.querySelectorAll('#def-pos-filter .sport-chip').forEach(function(c) { c.classList.remove('sport-chip-active'); });
+    btn.classList.add('sport-chip-active');
+    defApplyFilters();
+}
+function defApplyFilters() {
+    var searchEl = document.getElementById('def-search');
+    var q = searchEl ? searchEl.value.toLowerCase().trim() : '';
+    var rows = document.querySelectorAll('#def-tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var matchesPos = defPos === 'ALL' || row.getAttribute('data-position') === defPos;
+        var matchesSearch = !q || row.dataset.name.indexOf(q) !== -1 || row.dataset.team.indexOf(q) !== -1;
+        var show = matchesPos && matchesSearch;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    var empty = document.getElementById('def-empty');
+    if (empty) empty.hidden = visible !== 0;
+}
+
+(function() {
+    var table = document.getElementById('def-table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths = table.querySelectorAll('.def-sort-th');
+    if (!tbody || !ths.length) return;
+
+    var sortKey = 'sacks', sortDir = -1;
+
+    function applySort() {
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort(function(a, b) {
+            return ((parseFloat(a.dataset[sortKey]) || 0) - (parseFloat(b.dataset[sortKey]) || 0)) * sortDir;
+        });
+        rows.forEach(function(row) { tbody.appendChild(row); });
+        ths.forEach(function(th) {
+            var arrow = th.querySelector('.def-sort-arrow');
+            if (th.dataset.sortKey === sortKey) {
+                th.style.color = 'var(--text)';
+                if (arrow) arrow.textContent = sortDir > 0 ? ' ▲' : ' ▼';
+            } else {
+                th.style.color = '';
+                if (arrow) arrow.textContent = '';
+            }
+        });
+    }
+
+    ths.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var key = th.dataset.sortKey;
+            if (key === sortKey) {
+                sortDir *= -1;
+            } else {
+                sortKey = key;
+                sortDir = -1;
+            }
+            applySort();
+        });
+    });
+
+    applySort();
+}());
+</script>
+{% endblock %}

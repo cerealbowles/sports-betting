@@ -148,7 +148,7 @@
     <details class="lineup-details dfs-settings-details">
     <summary class="lineup-summary dfs-settings-summary">
         Roster, Cap &amp; Games
-        <span class="dfs-settings-summary-line">{{ selected_ids|length }}/{{ all_games|length }} games · {{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap{% if objective != 'projection' %} · {{ 'Sim Median' if objective == 'sim_median' else 'Sim Ceiling' }}{% endif %}</span>
+        <span class="dfs-settings-summary-line">{{ selected_ids|length }}/{{ all_games|length }} games · {{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap{% if objective != 'projection' %} · {{ objective_labels[objective] }}{% endif %}</span>
     </summary>
     <div class="dfs-settings-body">
 
@@ -174,12 +174,13 @@
             <label class="dfs-settings-field" title="Caps how many players can be priced in the bottom tier of their position (percentile < {{ (methodology.balance_low_percentile * 100) | round | int }}%) — an attempt to force a less stars-and-scrubs build. Backtested across 27 real completed weeks first: it made actual outcomes WORSE at every setting that changed anything (real lineups look balanced in hindsight because some low-projection players happen to overperform that week — forcing MORE of them in blind, pre-game, with no signal for which ones will break out, just trades a good pick for a worse one). Off by default for that reason; max value ({{ skill_roster_size }}) = off, lower values are experimental and backtested to underperform.">
                 ⚖️ Max Low-Tier<input type="number" name="max_low_tier" min="0" max="{{ skill_roster_size }}" value="{{ max_low_tier_input }}">
             </label>
-            <label class="dfs-settings-field" title="What the optimizer maximizes. Projection = this app's fitted point estimate (the default). Sim Median / Sim Ceiling come from the game simulator's validated, correlated Monte Carlo run (150 draws/game) — Sim Ceiling targets each player's own 80th-percentile outcome, favoring upside over the safest point estimate. Any player the simulator doesn't cover (every DST, or a player the daily run hasn't caught yet) falls back to Projection so it stays pickable.">
+            <label class="dfs-settings-field" title="What the optimizer maximizes. Projection = this app's fitted point estimate (the default). Sim Median / Sim Ceiling come from the game simulator's validated, correlated Monte Carlo run (150 draws/game) — Sim Ceiling targets each player's own 80th-percentile outcome, favoring upside over the safest point estimate. Consistent penalizes Projection by each player's OWN week-to-week scoring volatility (recent_stddev) — favors a steady performer over a boom-bust one with the same raw projection. Any player the simulator doesn't cover (every DST, or a player the daily run hasn't caught yet) falls back to Projection so it stays pickable.">
                 🎲 Optimize for
                 <select name="objective">
                     <option value="projection"{% if objective == 'projection' %} selected{% endif %}>Projection</option>
                     <option value="sim_median"{% if objective == 'sim_median' %} selected{% endif %}>Sim Median</option>
                     <option value="sim_ceiling"{% if objective == 'sim_ceiling' %} selected{% endif %}>Sim Ceiling</option>
+                    <option value="risk_adjusted"{% if objective == 'risk_adjusted' %} selected{% endif %}>Consistent</option>
                 </select>
             </label>
         </div>
@@ -229,7 +230,7 @@
 <div class="card dfs-optimal-card">
     <div class="dfs-optimal-hdr">
         <h2>Optimal Lineup</h2>
-        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts{% if objective != 'projection' %} · optimized for {{ 'Sim Median' if objective == 'sim_median' else 'Sim Ceiling' }}{% endif %}{% if stack_min %} · 🔗 stacked with {{ qb_team }}{% endif %}</span>
+        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts{% if objective != 'projection' %} · optimized for {{ objective_labels[objective] }}{% endif %}{% if stack_min %} · 🔗 stacked with {{ qb_team }}{% endif %}</span>
     </div>
     {% if sim_range %}
     <p class="dfs-sim-range" title="This lineup's TRUE combined simulated range from the game simulator's 150-draw Monte Carlo run, honoring real within-game correlation between teammates (e.g. a QB and his stacked WR1's big games happen together) — not just each player's own marginal estimate summed independently. Any DST or player the simulator doesn't cover contributes its flat projection to every draw.">
@@ -237,7 +238,7 @@
     </p>
     {% endif %}
     <table class="table">
-        <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th><th title="80th-percentile simulated outcome (dash = simulator doesn't cover this player, e.g. DST)">Sim Ceiling</th></tr></thead>
+        <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th><th title="Standard deviation of this player's own last few games' fantasy points — lower means steadier real output, higher means boom/bust.">Consistency</th><th title="80th-percentile simulated outcome (dash = simulator doesn't cover this player, e.g. DST)">Sim Ceiling</th></tr></thead>
         <tbody>
         {% for p in optimal.lineup %}
         <tr>
@@ -247,6 +248,7 @@
             <td>{{ p.opponent }}</td>
             <td>${{ '{:,}'.format(p.salary) }}</td>
             <td>{{ p.projection }}</td>
+            <td>{{ '%.1f'|format(p.stddev) if p.stddev is not none else '—' }}</td>
             <td>{{ p.sim_ceiling if p.game_id else '—' }}</td>
         </tr>
         {% endfor %}
@@ -278,18 +280,20 @@
             <th>Opp</th>
             <th class="dfs-sort-th" data-sort-key="salary">Salary <span class="dfs-sort-arrow"></span></th>
             <th class="dfs-sort-th" data-sort-key="proj">Proj <span class="dfs-sort-arrow"></span></th>
+            <th class="dfs-sort-th" data-sort-key="stddev" title="Standard deviation of this player's own last few games' fantasy points — lower means steadier real output, higher means boom/bust. Dash if fewer than 2 games are stored yet.">Consistency <span class="dfs-sort-arrow"></span></th>
             <th class="dfs-sort-th" data-sort-key="simfloor" title="10th/median/90th-percentile simulated outcome from the game simulator's 150-draw run — dash if this player isn't covered (e.g. DST)">Sim Floor/Med/Ceil <span class="dfs-sort-arrow"></span></th>
         </tr>
         </thead>
         <tbody id="dfs-pool-tbody">
         {% for p in pool %}
-        <tr data-position="{{ p.position }}" data-name="{{ p.name|lower }}" data-team="{{ p.team|lower }}" data-salary="{{ p.salary }}" data-proj="{{ p.projection }}" data-simfloor="{{ p.sim_min if p.game_id else '' }}">
+        <tr data-position="{{ p.position }}" data-name="{{ p.name|lower }}" data-team="{{ p.team|lower }}" data-salary="{{ p.salary }}" data-proj="{{ p.projection }}" data-stddev="{{ p.stddev if p.stddev is not none else '' }}" data-simfloor="{{ p.sim_min if p.game_id else '' }}">
             <td>{{ p.name }}</td>
             <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
             <td>{{ p.team }}</td>
             <td>{{ p.opponent }}</td>
             <td>${{ '{:,}'.format(p.salary) }}</td>
             <td>{{ p.projection }}</td>
+            <td>{{ '%.1f'|format(p.stddev) if p.stddev is not none else '—' }}</td>
             <td>{% if p.game_id %}{{ p.sim_min }} / {{ p.sim_median }} / {{ p.sim_ceiling }}{% else %}—{% endif %}</td>
         </tr>
         {% endfor %}

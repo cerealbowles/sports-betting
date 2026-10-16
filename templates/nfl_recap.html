@@ -3,43 +3,68 @@
 
 {% block head %}
 <style>
-.recap-week-card { margin-bottom: 14px; }
-.recap-week-hdr { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.recap-week-card { margin-bottom: 14px; scroll-margin-top: 14px; }
+.recap-week-hdr { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .recap-week-hdr h2 { font-family: var(--font-display); font-size: 1.15rem; }
-.recap-compare { display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.85rem; }
-.recap-compare .recap-label { color: var(--text-muted); margin-right: 6px; }
-.recap-compare .recap-value { color: var(--text); font-weight: 700; }
 .recap-infeasible { color: var(--text-muted); font-size: 0.82rem; padding: 2px 0 4px; }
-/* minmax(0, 1fr), not plain 1fr: a bare 1fr track still won't shrink
-   below its content's min-content width, so a wide 6-7-column picks
-   table forced every column wider than its fair share and blew the
-   whole row out past the card's edge with no way to scroll back to it.
-   minmax(0, ...) lets the track actually shrink to the column's share;
-   .recap-subtables > div's min-width: 0 is required for that to reach
-   the table inside (grid/flex children default to min-width: auto,
-   which otherwise overrides the parent track's own minmax). The table
-   itself still scrolls horizontally within its own column if its
-   content doesn't fit even at the column's full share, instead of
-   overflowing the page. */
-.recap-subtables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 10px; border-top: 1px solid var(--border); }
-.recap-subtables > div { min-width: 0; }
-.recap-subtables .recap-picks-scroll { overflow-x: auto; }
-.recap-subtables .recap-picks-scroll table { white-space: nowrap; }
-.recap-subtables h3 {
+
+/* ── Week-jump nav — anchors to each week card below, so the viewer
+   doesn't have to scroll past every earlier week to reach a later one. ── */
+.recap-week-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.recap-week-nav a {
+    font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-muted); text-decoration: none;
+}
+.recap-week-nav a:hover { color: var(--text); border-color: var(--text-muted); }
+.recap-week-nav a.recap-week-nav-infeasible { opacity: 0.5; }
+
+/* ── KPI cards — the season summary table and each week's compare row
+   used to be dense mono-font text; small stat tiles read at a glance. ── */
+.recap-kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.recap-kpi-row.recap-kpi-row-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 640px) { .recap-kpi-row.recap-kpi-row-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.recap-kpi-card {
+    background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.recap-kpi-card.recap-kpi-best { border-color: var(--orange); background: var(--orange-dim); }
+.recap-kpi-label {
+    color: var(--text-muted); font-family: var(--font-cond); font-size: 0.66rem;
+    font-weight: 600; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.recap-kpi-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.25rem; font-weight: 700; color: var(--text); line-height: 1.15; }
+.recap-kpi-sub { color: var(--text-muted); font-size: 0.74rem; font-family: var(--font-mono); }
+
+/* ── Lineup tabs — Recommended/Best possible/Sim Median/Sim Ceiling used
+   to render as four full tables side by side (a cramped 2x2 grid that
+   forced horizontal scrolling in every cell); now one panel shows at a
+   time, switched via static/main.js:switchRecapTab. ── */
+.recap-tabs { display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin: 10px 10px 0; }
+.recap-tab {
+    flex: 1; padding: 8px 6px; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.3px; text-transform: uppercase;
+    border: none; border-right: 1px solid var(--border); border-radius: 0;
+    background: var(--bg-card-2); color: var(--text-muted); cursor: pointer;
+    box-shadow: none; transform: none;
+}
+.recap-tab:last-child { border-right: none; }
+.recap-tab.active { background: var(--orange-dim); color: var(--orange); }
+.recap-panel[hidden] { display: none; }
+.recap-panel { padding: 10px; }
+.recap-panel h3 {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted); margin-bottom: 6px;
 }
-@media (max-width: 600px) { .recap-subtables { grid-template-columns: minmax(0, 1fr); } }
+.recap-picks-scroll { overflow-x: auto; }
+.recap-picks-scroll table { white-space: nowrap; }
 .recap-hit-check { color: var(--win); font-weight: 700; margin-left: 4px; }
 
-/* ── Top real scorers, per position (QB/RB/WR/TE/DST each own table —
-   a flat cross-position ranking is mostly QBs, who score highest on
-   average but a lineup only ever rosters one) — auto-fit with a real
-   px minimum (not minmax(0, 1fr), which collapses auto-fit to a single
-   column since it has nothing to measure column count against) lets
-   however many of the up-to-5 position tables actually fit per row. ── */
-.recap-top-position-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
-.recap-top-position-grid > div { min-width: 0; }
+/* ── Top real scorers, per position (QB/RB/WR/TE/DST) — used to render
+   all five tables side by side in an auto-fit grid; now tabbed like the
+   lineup tables above, switched via static/main.js:switchRecapPosTab. ── */
+.recap-postabs-wrap .recap-panel { padding: 0; margin-top: 10px; }
 .recap-top-players tr.recap-top-hit td { color: var(--text); font-weight: 700; }
 .recap-top-players tr:not(.recap-top-hit) td { color: var(--text-muted); }
 .recap-top-players .recap-rank { font-family: var(--font-mono); color: var(--text-muted); }
@@ -50,10 +75,6 @@
 }
 .recap-picked-badge.recap-picked-active { color: var(--orange); border-color: var(--orange); }
 
-/* ── Season-aggregate track record ── */
-.recap-summary-table { width: 100%; }
-.recap-summary-table th, .recap-summary-table td { text-align: right; }
-.recap-summary-table th:first-child, .recap-summary-table td:first-child { text-align: left; }
 .recap-summary-note { font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; }
 </style>
 {% endblock %}
@@ -80,21 +101,28 @@
 {% else %}
 
 {% if recap_summary %}
+{% set best_capture = recap_summary.objectives | map(attribute='avg_capture_rate') | select('ne', none) | list %}
+{% set best_capture = (best_capture | max) if best_capture else none %}
 <div class="card">
     <h2 style="font-family: var(--font-display); font-size: 1.1rem; margin-bottom: 10px;">Season track record</h2>
-    <table class="table recap-summary-table">
-        <thead><tr><th>Objective</th><th>Avg. capture rate</th><th>Weeks won</th></tr></thead>
-        <tbody>
+    <div class="recap-kpi-row">
         {% for o in recap_summary.objectives %}
-        <tr>
-            <td>{{ o.label }}</td>
-            <td>{{ (o.avg_capture_rate ~ '%') if o.avg_capture_rate is not none else '—' }}</td>
-            <td>{{ o.weeks_won }} / {{ recap_summary.weeks_scored }}</td>
-        </tr>
+        <div class="recap-kpi-card{% if best_capture is not none and o.avg_capture_rate == best_capture %} recap-kpi-best{% endif %}">
+            <span class="recap-kpi-label">{{ o.label }}</span>
+            <span class="recap-kpi-value">{{ (o.avg_capture_rate ~ '%') if o.avg_capture_rate is not none else '—' }}</span>
+            <span class="recap-kpi-sub">{{ o.weeks_won }} / {{ recap_summary.weeks_scored }} weeks won</span>
+        </div>
         {% endfor %}
-        </tbody>
-    </table>
+    </div>
     <p class="recap-summary-note">Capture rate = that objective's real score ÷ that week's true best-possible score, averaged across {{ recap_summary.weeks_scored }} scored week{{ 's' if recap_summary.weeks_scored != 1 }}. Weeks won = how many weeks that objective beat the other two on real results (ties count for every tied objective). Sim Median/Sim Ceiling come from the game simulator — see "How is this calculated?" below for a fidelity caveat on how closely those match a true same-cutoff prediction.</p>
+</div>
+{% endif %}
+
+{% if weeks | length > 1 %}
+<div class="recap-week-nav" role="navigation" aria-label="Jump to week">
+    {% for w in weeks %}
+    <a href="#week-{{ w.week }}"{% if not w.is_feasible %} class="recap-week-nav-infeasible"{% endif %}>Week {{ w.week }}</a>
+    {% endfor %}
 </div>
 {% endif %}
 
@@ -120,18 +148,26 @@
 {% endmacro %}
 
 {% for w in weeks %}
-<div class="card recap-week-card">
+<div class="card recap-week-card" id="week-{{ w.week }}">
     <div class="recap-week-hdr">
         <h2>Week {{ w.week }}</h2>
-        {% if w.is_feasible %}
-        <div class="recap-compare">
-            {% for key, label in [('recommended', 'Projection'), ('sim_median', 'Sim Median'), ('sim_ceiling', 'Sim Ceiling')] %}
-            <span><span class="recap-label">{{ label }}</span><span class="recap-value">{{ w[key].total_actual }}{% if w.best_possible.total_actual %} ({{ (100 * w[key].total_actual / w.best_possible.total_actual) | round(1) }}%){% endif %}</span></span>
-            {% endfor %}
-            <span><span class="recap-label">Best possible</span><span class="recap-value">{{ w.best_possible.total_actual }}</span></span>
-        </div>
-        {% endif %}
     </div>
+    {% if w.is_feasible %}
+    <div class="recap-kpi-row recap-kpi-row-4">
+        {% for key, label in [('recommended', 'Projection'), ('sim_median', 'Sim Median'), ('sim_ceiling', 'Sim Ceiling')] %}
+        <div class="recap-kpi-card">
+            <span class="recap-kpi-label">{{ label }}</span>
+            <span class="recap-kpi-value">{{ w[key].total_actual }}</span>
+            <span class="recap-kpi-sub">{% if w.best_possible.total_actual %}{{ (100 * w[key].total_actual / w.best_possible.total_actual) | round(1) }}% of best{% else %}—{% endif %}</span>
+        </div>
+        {% endfor %}
+        <div class="recap-kpi-card recap-kpi-best">
+            <span class="recap-kpi-label">Best possible</span>
+            <span class="recap-kpi-value">{{ w.best_possible.total_actual }}</span>
+            <span class="recap-kpi-sub">hindsight ceiling</span>
+        </div>
+    </div>
+    {% endif %}
 
     {% if not w.is_feasible %}
     <div class="recap-infeasible">Not enough stored game history yet to build a full lineup for this week.</div>
@@ -142,20 +178,26 @@
     {% set ceil_ids = w.sim_ceiling.lineup | map(attribute='id') | list %}
     <details class="lineup-details">
         <summary class="lineup-summary">Show picks</summary>
-        <div class="recap-subtables">
-            <div>
+        <div class="recap-subtables-wrap">
+            <div class="recap-tabs" role="tablist" aria-label="Lineup">
+                <button type="button" class="recap-tab active" data-recap-tab="rec">Recommended</button>
+                <button type="button" class="recap-tab" data-recap-tab="best">Best possible</button>
+                <button type="button" class="recap-tab" data-recap-tab="med">Sim Median</button>
+                <button type="button" class="recap-tab" data-recap-tab="ceil">Sim Ceiling</button>
+            </div>
+            <div class="recap-panel" data-recap-panel="rec">
                 <h3>Recommended (pre-game)</h3>
                 {{ picks_table(w.recommended.lineup, show_proj=True, hindsight_ids=hindsight_ids) }}
             </div>
-            <div>
+            <div class="recap-panel" data-recap-panel="best" hidden>
                 <h3>Best possible (hindsight)</h3>
                 {{ picks_table(w.best_possible.lineup) }}
             </div>
-            <div>
+            <div class="recap-panel" data-recap-panel="med" hidden>
                 <h3>Sim Median (pre-game)</h3>
                 {{ picks_table(w.sim_median.lineup, hindsight_ids=hindsight_ids) }}
             </div>
-            <div>
+            <div class="recap-panel" data-recap-panel="ceil" hidden>
                 <h3>Sim Ceiling (pre-game)</h3>
                 {{ picks_table(w.sim_ceiling.lineup, hindsight_ids=hindsight_ids) }}
             </div>
@@ -164,12 +206,21 @@
         <div style="padding: 10px; border-top: 1px solid var(--border);">
             <h3 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;">Top by actual points, per position — where our picks landed</h3>
             <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Split by position rather than one combined ranking — QBs score highest on average but a lineup only ever rosters one, so a flat top 20 would be mostly QBs and tell you little about your RB/WR/TE picks.</p>
-            <div class="recap-top-position-grid">
-            {% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
-            {% set players = w.top_players_by_position.get(position, []) %}
-            {% if players %}
-            <div>
-                <h4 style="font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px;">{{ position }}</h4>
+            <div class="recap-postabs-wrap">
+                <div class="recap-tabs" role="tablist" aria-label="Position">
+                {% set ns = namespace(first=true) %}
+                {% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+                {% if w.top_players_by_position.get(position, []) %}
+                <button type="button" class="recap-tab{% if ns.first %} active{% endif %}" data-recap-postab="{{ position }}">{{ position }}</button>
+                {% set ns.first = false %}
+                {% endif %}
+                {% endfor %}
+                </div>
+                {% set ns = namespace(first=true) %}
+                {% for position in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
+                {% set players = w.top_players_by_position.get(position, []) %}
+                {% if players %}
+                <div class="recap-panel" data-recap-pospanel="{{ position }}"{% if not ns.first %} hidden{% endif %}>
                 <div class="recap-picks-scroll">
                 <table class="table recap-top-players">
                     <thead><tr><th>Rank</th><th>Player</th><th>Team</th><th>Actual</th><th>Picked by</th></tr></thead>
@@ -191,9 +242,10 @@
                     </tbody>
                 </table>
                 </div>
-            </div>
-            {% endif %}
-            {% endfor %}
+                </div>
+                {% set ns.first = false %}
+                {% endif %}
+                {% endfor %}
             </div>
         </div>
         {% endif %}

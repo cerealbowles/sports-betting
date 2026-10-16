@@ -504,6 +504,95 @@ def get_team_explosiveness_db(team_id, before_date=None, limit=8):
         } for r in rows]
 
 
+def _num(val, default=0.0):
+    """Same string/None-tolerant coercion nfl_player_model.py's own
+    private _num() uses — ESPN's box score reports every stat as a
+    string ('sacks': '1.5' is real: half-sacks are credited to two
+    players), so a blind int()/float() on a raw value crashes."""
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_defender_season_stats_db(season, game_type='regular'):
+    """Aggregates individual DEFENDER box-score lines across one NFL
+    season into per-player season totals — sacks, tackles (total/solo),
+    tackles for loss, passes defended, QB hits, defensive TDs,
+    interceptions (+ return yards/TDs), and fumbles recovered.
+
+    The raw material (PlayerGameStat.stats_json's 'defensive'/
+    'interceptions' categories) is ingested for every athlete ESPN's box
+    score lists — defenders included, same as offensive skill players —
+    by nfl_boxscore_api.parse_player_boxscore()/ingest_player_stats()
+    (see that module's own docstring). Nothing in this app read it out at
+    the INDIVIDUAL level before this function; nfl_fantasy.
+    aggregate_dst_game() already existed but only rolls it up to a team's
+    DST unit for FanDuel scoring, which is a different (coarser) use.
+
+    A player with neither category in any game this season simply never
+    appears in the returned list — this only covers players who recorded
+    at least one defensive/interception box-score line, not a full
+    roster walk (no "0 for everyone else" padding). 'fumbles_recovered'
+    is only counted on a row that ALSO has a 'defensive' or
+    'interceptions' category present — a pure offensive player who
+    recovers their OWN team's fumble has neither, so doesn't get
+    miscounted here as a takeaway.
+
+    Returns [{'player_id', 'player_name', 'team_id', 'games', 'sacks',
+    'tackles', 'solo_tackles', 'tfl', 'passes_defended', 'qb_hits',
+    'def_td', 'interceptions', 'int_yards', 'int_td',
+    'fumbles_recovered'}], unsorted — the caller sorts for whatever
+    leaderboard column it wants. `player_name`/`team_id` are each row's
+    MOST RECENT non-null value across the season (a mid-season trade
+    shows the player under their latest team, matching this app's
+    current-roster-first convention elsewhere) — rows are read oldest-
+    to-newest off game_date so the last write wins."""
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        rows = (PlayerGameStat.query
+                .filter_by(sport='NFL', season=season, game_type=game_type)
+                .order_by(PlayerGameStat.game_date.asc()).all())
+
+    totals = {}
+    for r in rows:
+        try:
+            cats = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            cats = {}
+        dcat, icat = cats.get('defensive'), cats.get('interceptions')
+        if not dcat and not icat:
+            continue
+
+        t = totals.setdefault(r.player_id, {
+            'player_id': r.player_id, 'player_name': r.player_name, 'team_id': r.team_id,
+            'games': 0, 'sacks': 0.0, 'tackles': 0, 'solo_tackles': 0, 'tfl': 0,
+            'passes_defended': 0, 'qb_hits': 0, 'def_td': 0,
+            'interceptions': 0, 'int_yards': 0, 'int_td': 0, 'fumbles_recovered': 0,
+        })
+        t['player_name'] = r.player_name or t['player_name']
+        t['team_id'] = r.team_id or t['team_id']
+        t['games'] += 1
+        if dcat:
+            t['sacks'] += _num(dcat.get('sacks'))
+            t['tackles'] += int(_num(dcat.get('totalTackles')))
+            t['solo_tackles'] += int(_num(dcat.get('soloTackles')))
+            t['tfl'] += int(_num(dcat.get('tacklesForLoss')))
+            t['passes_defended'] += int(_num(dcat.get('passesDefended')))
+            t['qb_hits'] += int(_num(dcat.get('QBHits')))
+            t['def_td'] += int(_num(dcat.get('defensiveTouchdowns')))
+        if icat:
+            t['interceptions'] += int(_num(icat.get('interceptions')))
+            t['int_yards'] += int(_num(icat.get('interceptionYards')))
+            t['int_td'] += int(_num(icat.get('interceptionTouchdowns')))
+        fcat = cats.get('fumbles')
+        if fcat:
+            t['fumbles_recovered'] += int(_num(fcat.get('fumblesRecovered')))
+
+    return list(totals.values())
+
+
 def get_dst_card_data_db(team_id, season, before_date=None, recent_window=5):
     """Single-pass batched read for a D/ST player-detail card: this team's
     own game results (points allowed), explosiveness (long plays/red-zone
@@ -1533,7 +1622,7 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
 def persist_sim_results_db(season, week, game_id, team_id, opponent_id, results):
     """Upserts one NflSimResult row per player in `results` (each:
     {player_id, player_name, position, n_draws, sim_min, sim_median,
-    sim_max, sim_mean, sim}), on the (season, week, player_id) unique
+    sim_max, sim_mean, sim, sim_stats}), on the (season, week, player_id) unique
     constraint — overwrites yesterday's run for the same week rather than
     accumulating a history, since what matters is today's best estimate
     (see NflSimResult's class docstring, app.py). Called by
@@ -1576,6 +1665,7 @@ def persist_sim_results_db(season, week, game_id, team_id, opponent_id, results)
             row.sim_max = r['sim_max']
             row.sim_mean = r['sim_mean']
             row.sim_draws_json = _json.dumps(r['sim'])
+            row.sim_stats_json = _json.dumps(r['sim_stats']) if r.get('sim_stats') else None
         db.session.commit()
 
 
@@ -1602,6 +1692,7 @@ def get_sim_results_db(season, week):
                 'n_draws': r.n_draws, 'sim_min': r.sim_min, 'sim_median': r.sim_median,
                 'sim_max': r.sim_max, 'sim_mean': r.sim_mean,
                 'sim': _json.loads(r.sim_draws_json) if r.sim_draws_json else [],
+                'sim_stats': _json.loads(r.sim_stats_json) if r.sim_stats_json else None,
             })
         return {gid: dict(teams) for gid, teams in out.items()}
 
@@ -1706,6 +1797,25 @@ def get_or_fetch_roster_db(team_id, max_age_hours=24):
                                               player_name=p['name'], position=p.get('position')))
         db.session.commit()
         return live
+
+
+def get_actual_game_score_db(game_id):
+    """{'home_score', 'away_score'} for one already-Final NFL game, from
+    TeamGameStat's two rows (is_home True/False) for this game_id. None if
+    neither row is stored yet (game not Final, or not yet ingested) — lets
+    a caller (e.g. /nfl/simulations) show the real score next to the
+    simulator's predicted one only once it actually exists, same "a real
+    gap beats a wrong guess" convention as the rest of this app."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = TeamGameStat.query.filter_by(sport='NFL', game_id=game_id).all()
+
+    by_home = {r.is_home: r for r in rows}
+    home_row, away_row = by_home.get(True), by_home.get(False)
+    if home_row is None or away_row is None or home_row.points is None or away_row.points is None:
+        return None
+    return {'home_score': home_row.points, 'away_score': away_row.points}
 
 
 def get_sim_week_accuracy_db(season, week):

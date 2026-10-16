@@ -192,6 +192,15 @@ TEAM_CONDITIONING_K = 0.5
 SCORING_PLAY_TYPES = {'Rushing Touchdown', 'Passing Touchdown'}
 RUSH_PLAY_TYPES = {'Rush', 'Rushing Touchdown'}
 RECEPTION_PLAY_TYPES = {'Pass Reception', 'Passing Touchdown'}
+INTERCEPTION_PLAY_TYPES = {'Pass Interception Return'}
+# 'Fumble Recovery (Own)' (the offense recovers its own fumble — no
+# turnover, no FanDuel-scored stat for it) is deliberately NOT here; only
+# the actual-turnover play type counts as a lost fumble. See
+# attribute_plays_to_players()'s own docstring for why the real play-type
+# name matters here (confirmed live via nfl_sim_boxscore_backtest.py —
+# this app's own warehouse, NflPlay, has both as distinct resampled play
+# types already, just never attributed to a player before now).
+FUMBLE_LOST_PLAY_TYPES = {'Fumble Recovery (Opponent)'}
 
 # Points credited per drive outcome — see this module's docstring for the
 # "extra point assumed automatic, no 2-point data" caveat. A
@@ -663,20 +672,43 @@ def attribute_plays_to_players(plays, usage_shares, rng):
     rushers/receivers — e.g. a brand-new team context) silently drops that
     play's attribution rather than guessing a player — same "real gap
     beats a wrong guess" convention as the rest of this app. Sacks,
-    incomplete passes, and any special-teams play (Punt/Kickoff/Field
+    incomplete passes, a KEPT fumble ('Fumble Recovery (Own)' — no
+    turnover happened), and any special-teams play (Punt/Kickoff/Field
     Goal) aren't attributed to anyone: FanDuel's scoring doesn't dock a
-    QB for a sack/incompletion, and this app doesn't roster punters/
-    kickers for fantasy at all, so there's nothing for them to contribute
-    to a fantasy total."""
+    QB for a sack/incompletion or a fumble the offense itself recovered,
+    and this app doesn't roster punters/kickers for fantasy at all, so
+    there's nothing for them to contribute to a fantasy total.
+
+    An interception (INTERCEPTION_PLAY_TYPES) counts against the passer
+    (qb_id) same as a real box score would — NOT against passingYards
+    (an INT return play's own yards_gained is the DEFENSE's return
+    distance, not something to add to the passer's own passing line).
+    A lost fumble (FUMBLE_LOST_PLAY_TYPES) is charged to a player drawn
+    from `touch_shares` — rushers and receivers combined, since either
+    could plausibly have been the one holding the ball — rather than
+    guessing rusher vs receiver from a resampled play that carries no
+    fumbling-player id of its own (NflPlay has none — see this
+    function's own module's docstring for what IS/isn't captured).
+    These two were a confirmed real gap until now (see
+    nfl_sim_boxscore_backtest.py's INT/fumble findings) — the DST-level
+    team sack/INT/defensive-TD counts simulate_matchup() computes
+    separately (straight off play_type, not through this function) were
+    never affected by this gap, only the per-PASSER/per-RUSHER stat line
+    was."""
     cats = defaultdict(lambda: {
         'passing': {'passingYards': 0.0, 'passingTouchdowns': 0, 'interceptions': 0},
         'rushing': {'rushingYards': 0.0, 'rushingTouchdowns': 0},
         'receiving': {'receivingYards': 0.0, 'receivingTouchdowns': 0, 'receptions': 0},
+        'fumbles': {'fumblesLost': 0},
     })
 
     qb_id = usage_shares.get('qb_id')
     rush_shares = usage_shares.get('rush_shares') or {}
     rec_shares = usage_shares.get('rec_shares') or {}
+    touch_shares = defaultdict(float)
+    for shares in (rush_shares, rec_shares):
+        for player_id, weight in shares.items():
+            touch_shares[player_id] += weight
 
     def _weighted_pick(shares):
         if not shares:
@@ -704,8 +736,15 @@ def attribute_plays_to_players(plays, usage_shares, rng):
             if pt == 'Passing Touchdown':
                 cats[qb_id]['passing']['passingTouchdowns'] += 1
                 cats[receiver]['receiving']['receivingTouchdowns'] += 1
-        # Pass Incompletion / Sack / Punt / Kickoff / Field Goal *: no FanDuel-scored
-        # stat to attribute to a rostered fantasy player — see docstring.
+        elif pt in INTERCEPTION_PLAY_TYPES:
+            if qb_id is not None:
+                cats[qb_id]['passing']['interceptions'] += 1
+        elif pt in FUMBLE_LOST_PLAY_TYPES:
+            fumbler = _weighted_pick(touch_shares)
+            if fumbler is not None:
+                cats[fumbler]['fumbles']['fumblesLost'] += 1
+        # Pass Incompletion / Sack / Fumble Recovery (Own) / Punt / Kickoff /
+        # Field Goal *: no FanDuel-scored stat to attribute — see docstring.
 
     return dict(cats)
 
@@ -719,6 +758,12 @@ def attribute_plays_to_players(plays, usage_shares, rng):
 # (see simulate_week()/app.py's cron registration) should absorb instead
 # of a visitor's page load.
 DEFAULT_SIM_DRAWS = 150
+
+# sim_stats fields (simulate_matchup()) that are rare, skewed COUNTS rather
+# than continuous yardage — summarized by MEAN, not median (see the
+# comment where this is read, inside simulate_matchup()'s player-output
+# loop, for why median fails specifically for these).
+COUNT_STAT_FIELDS = {'passingTouchdowns', 'rushingTouchdowns', 'receivingTouchdowns', 'interceptions', 'fumblesLost'}
 
 
 GRADE_WINDOW = 5  # matches nfl_player_model.QB_WINDOW/DEF_WINDOW — the window those grades were designed around
@@ -752,7 +797,14 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     here, for simulating a single matchup standalone.
 
     Returns {'players': {'home': {player_id: {'sim': [n values],
-    'sim_min', 'sim_median', 'sim_max', 'sim_mean'}}, 'away': {...}},
+    'sim_min', 'sim_median', 'sim_max', 'sim_mean', 'sim_stats'}},
+    'away': {...}}, 'sim_stats' is {field: value} across the raw box-score
+    categories attribute_plays_to_players() produced (passingYards,
+    rushingTouchdowns, receptions, ...) — MEDIAN for a yardage/reception
+    field, MEAN for a rare count field (COUNT_STAT_FIELDS: TDs/INTs — see
+    the comment where that's used). None for a player who never touched
+    the ball in any draw, or for a DST_* entry (no offensive categories to
+    summarize),
     'game': {'n', 'home_wins', 'away_wins', 'ties', 'home_win_pct',
     'away_win_pct', 'home_avg_score', 'away_avg_score',
     'home_quarter_avg', 'away_quarter_avg'}} — 'game' is the team-score-
@@ -791,6 +843,13 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
 
     team_id_by_side = {'home': home_team_id, 'away': away_team_id}
     draws = {'home': defaultdict(list), 'away': defaultdict(list)}
+    # Raw per-category draws (passingYards/rushingTouchdowns/receptions/...),
+    # kept alongside the fantasy-point `draws` above so a caller can compare
+    # the simulator's own predicted BOX-SCORE lines (not just its fantasy-
+    # point total) against a real game's actual box score — same "only
+    # counted on draws the player actually touched the ball in" convention
+    # as `draws` itself (see the median-computation loop below).
+    stat_draws = {'home': defaultdict(lambda: defaultdict(list)), 'away': defaultdict(lambda: defaultdict(list))}
     home_wins = away_wins = ties = 0
     scores = {'home': [], 'away': []}
     quarter_points = {'home': [0, 0, 0, 0], 'away': [0, 0, 0, 0]}
@@ -809,6 +868,9 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
             player_cats = attribute_plays_to_players(game[side]['plays'], shares, rng)
             for player_id, categories in player_cats.items():
                 draws[side][player_id].append(nfl_fantasy.compute_fantasy_points(categories))
+                for group in categories.values():
+                    for field, value in group.items():
+                        stat_draws[side][player_id][field].append(value)
         if side_score['home'] > side_score['away']:
             home_wins += 1
         elif side_score['away'] > side_score['home']:
@@ -837,12 +899,31 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
         side_out = {}
         for player_id, pts in draws[side].items():
             ranked = sorted(pts)
+            sim_stats = None
+            fields = stat_draws[side].get(player_id)
+            if fields:
+                sim_stats = {}
+                for field, values in fields.items():
+                    if field in COUNT_STAT_FIELDS:
+                        # A TD/INT field is a rare, skewed count (usually 0 even
+                        # across n draws) — the MEDIAN of n draws stays 0 right up
+                        # until the per-draw rate crosses 0.5, which understates a
+                        # real ~20-40% TD/INT rate entirely (confirmed via
+                        # nfl_sim_boxscore_backtest.py: median-based INT/TD fields
+                        # showed a near-uniform +0.9-1.4 bias across every
+                        # position, the signature of "almost always predicts 0").
+                        # The MEAN doesn't have that failure mode for a count stat.
+                        sim_stats[field] = round(sum(values) / len(values), 3)
+                    else:
+                        field_ranked = sorted(values)
+                        sim_stats[field] = field_ranked[len(field_ranked) // 2]
             side_out[player_id] = {
                 'sim_mean': round(sum(pts) / len(pts), 2),
                 'sim': pts,
                 'sim_min': ranked[0],
                 'sim_median': ranked[len(ranked) // 2],
                 'sim_max': ranked[-1],
+                'sim_stats': sim_stats,
             }
         players[side] = side_out
 

@@ -383,6 +383,62 @@ def rolling_average(points_history, window=ROLLING_WINDOW):
     return sum(sample) / len(sample)
 
 
+def rolling_stddev(points_history, window=ROLLING_WINDOW):
+    """Sample standard deviation (ddof=1 — the honest small-sample
+    estimate, not the population formula) of this player/DST's own last
+    `window` fantasy-point totals, same window project_points() averages
+    over so "consistent" and "the average it's consistent around" are
+    talking about the same games. None if fewer than 2 games are stored —
+    a single game has no spread to measure, which is a real gap (same
+    "no sample" convention as rolling_average()), not zero volatility.
+
+    This is a WEEK-TO-WEEK consistency measure from the player's own
+    history — a low number means their recent fantasy output clusters
+    tightly, a high number means boom/bust. It's a different thing from
+    the per-game simulated spread attach_sim_data() exposes (sim_min/
+    sim_median/sim_ceiling): that's "how uncertain is THIS week's single
+    outcome, given this matchup," shared across every player in a
+    position bucket via that bucket's backtested MAE; this is "has this
+    SPECIFIC player's real output actually been steady or spiky," which
+    the simulator has no equivalent of."""
+    sample = points_history[:window]
+    if len(sample) < 2:
+        return None
+    mean = sum(sample) / len(sample)
+    variance = sum((x - mean) ** 2 for x in sample) / (len(sample) - 1)
+    return variance ** 0.5
+
+
+# Subtracted from a player's projection, scaled by their own rolling_stddev,
+# to produce 'risk_adjusted' — a consistency-favoring alternative to raw
+# projection for optimize_lineup(objective='risk_adjusted'). Originally
+# shipped as a single flat 0.35 guess; backtested 2026-10-15 the same way
+# PROJECTION_FIT/SIM_MEDIAN_PERCENTILE_OVERRIDE were (grid-search k on
+# TRAIN = 2024-2025 player-game rows, confirm the gain holds on the 2026
+# HOLDOUT the fit never saw — nfl_model_challengers.py's own methodology).
+# Result: a flat 0.35 was wrong for 2 of 3 buckets.
+#   QB:  corr(stddev, |error|) ~= 0.006 (no signal). Train best-fit k=0.00.
+#        Holdout MAE: k=0 -> 6.335, k=0.35 -> 6.761 (the old flat value
+#        made QB picks WORSE, not safer). -> 0.0, no penalty.
+#   RB:  same story, worse. Train best-fit k=0.00. Holdout MAE: k=0 ->
+#        6.050, k=0.35 -> 7.240. -> 0.0, no penalty.
+#   REC (WR/TE): the one bucket with a real, holdout-confirmed effect.
+#        Train best-fit k=0.25. Holdout MAE: k=0 -> 4.336, k=0.25 -> 4.213
+#        (gain holds), k=0.35 -> 4.223 (close behind, slightly over-tuned).
+#        -> 0.25.
+#   DST: NOT covered by this backtest (nfl_playergame_dataset.py's dataset
+#        is player-game grain only, DST is a team-level projection with no
+#        parallel dataset — see that module's own docstring). Given the
+#        guessed 0.35 turned out wrong for 2 of the 3 buckets that WERE
+#        tested, defaulting an untested bucket to the same guess would be
+#        repeating the mistake rather than learning from it — 0.0 (no
+#        penalty) is the honest default until DST gets its own backtest.
+# Revisit any of these the same way (train/holdout) if future data suggests
+# a different split is worth re-checking — these aren't final, just the
+# best-supported numbers as of the one backtest run so far.
+RISK_PENALTY_K = {'QB': 0.0, 'RB': 0.0, 'REC': 0.25, 'DST': 0.0}
+
+
 RECENT_VOLUME_WINDOW = 3  # matches nfl_model_challengers.py / nfl_playergame_dataset.py's
                           # own "recent" window — the fit above was validated at this window,
                           # not ROLLING_WINDOW, so changing this would silently invalidate it.
@@ -764,6 +820,7 @@ def methodology_context(salary_cap=None, roster_requirements=None, stack_min=0, 
         'balance_low_percentile': BALANCE_LOW_PERCENTILE,
         'sim_enabled': sim_enabled,
         'sim_ceiling_percentile': SIM_CEILING_PERCENTILE,
+        'risk_penalty_k': RISK_PENALTY_K,
         'objective': objective,
     }
 
@@ -898,8 +955,14 @@ def build_player_pool(games, before_date=None):
     the dict shape nfl_api._build_game() returns — needs 'home'/'away',
     each with 'id'/'name'/'abbrev'. Returns one row per eligible
     player/DST: [{'id', 'name', 'team', 'opponent', 'position',
-    'projection'}, ...] — 'salary' isn't set yet, see assign_salaries()
-    (needs the whole pool built first to rank within each position).
+    'projection', 'stddev', 'risk_adjusted'}, ...] — 'salary' isn't set
+    yet, see assign_salaries() (needs the whole pool built first to rank
+    within each position). 'stddev' is rolling_stddev() over the same
+    history project_points() averaged (None if fewer than 2 games stored);
+    'risk_adjusted' is 'projection' minus RISK_PENALTY_K[bucket]*'stddev'
+    (or a plain copy of 'projection' when 'stddev' is None) — a
+    consistency-favoring alternative objective, see optimize_lineup(objective=
+    'risk_adjusted').
 
     `before_date` (optional, YYYY-MM-DD): restricts both the injury-status
     snapshot and every player/team's game history to strictly before this
@@ -994,19 +1057,23 @@ def build_player_pool(games, before_date=None):
             proj = project_points(bucket, points_hist, opp_def_grade, recent_volume_pg)
             if proj is None:
                 continue
+            stddev = rolling_stddev(points_hist)
             pool.append({
                 'id': p['id'], 'name': p['name'], 'team': team_abbrev, 'opponent': opp_abbrev,
-                'position': p['position'], 'projection': proj,
+                'position': p['position'], 'projection': proj, 'stddev': stddev,
+                'risk_adjusted': max(0.0, round(proj - RISK_PENALTY_K[bucket] * stddev, 2)) if stddev is not None else proj,
             })
 
         dst_points_hist = [compute_dst_fantasy_points(g['points_allowed'], aggregate_dst_game(g['player_rows']))
                             for g in team_games.get(team_id, [])]
         dst_proj = project_points('DST', dst_points_hist, opp_off_grade)
         if dst_proj is not None:
+            dst_stddev = rolling_stddev(dst_points_hist)
             pool.append({
                 'id': f"DST_{team_id}", 'name': f"{team.get('name', '')} D/ST",
                 'team': team_abbrev, 'opponent': opp_abbrev,
-                'position': 'DST', 'projection': dst_proj,
+                'position': 'DST', 'projection': dst_proj, 'stddev': dst_stddev,
+                'risk_adjusted': max(0.0, round(dst_proj - RISK_PENALTY_K['DST'] * dst_stddev, 2)) if dst_stddev is not None else dst_proj,
             })
     return pool
 
