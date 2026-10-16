@@ -65,6 +65,15 @@ _DB_PATH = os.environ.get('DB_PATH', os.path.join(app.instance_path, 'bets.db'))
 os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# sqlite3's own default busy timeout (5s) is too short once more than one
+# process/thread writes this file around the same moment — the live app's
+# own cron writes (odds polling, bet settlement) plus any offline backfill
+# script (nba_boxscore_pace_backfill.py's per-game play-by-play commits,
+# in particular — confirmed live: a 1200+ game backfill run hit "database
+# is locked" repeatedly against this same file). 30s gives a contending
+# writer time to finish its own (normally sub-second) transaction instead
+# of failing outright.
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'timeout': 30}}
 db = SQLAlchemy(app)
 
 _STYLES_MTIME = str(int(os.path.getmtime(os.path.join(app.static_folder, 'styles.css'))))
@@ -336,6 +345,19 @@ class TeamGameStat(db.Model):
   weather_temp       = db.Column(db.Float)
   weather_wind_mph    = db.Column(db.Float)
   weather_precip_pct  = db.Column(db.Float)
+  # NBA/WNBA-only pace components (bball_total_model.py's possession
+  # estimator: FGA - OREB + TOV + 0.44*FTA) for THIS team in THIS one game —
+  # written by nba_api.py/wnba_api.py's Final-game ingest from the same
+  # boxscore summary fetch already made for player lines, zero extra calls.
+  # Lets a team's point-in-time pace entering any future game be computed
+  # from real per-game history instead of only ESPN's live, current-only
+  # team-statistics aggregate (which has no "as of this past date" mode —
+  # see nba_total_backfill.py, which reconstructs 2025's missing total_proj
+  # from these once backfilled).
+  fga  = db.Column(db.Float)
+  oreb = db.Column(db.Float)
+  tov  = db.Column(db.Float)
+  fta  = db.Column(db.Float)
   created_at    = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -428,6 +450,52 @@ class NflPlay(db.Model):
                                 default=lambda: datetime.now(timezone.utc))
 
   __table_args__ = (db.UniqueConstraint('game_id', 'play_id', name='uq_nfl_play'),)
+
+
+class NbaPlay(db.Model):
+  """One individual play from one NBA game's play-by-play (ESPN's
+  `summary?event=` `plays[]`), parsed by nba_playbyplay_api.parse_plays()
+  and written by nba_stats_db.ingest_play_by_play(). Same "store raw
+  events, not just aggregates" departure NflPlay's docstring explains —
+  ESPN's play-by-play isn't guaranteed to stay available forever the way
+  its box score totals are.
+
+  participant_ids (JSON list of athlete id strings) is NBA's real
+  advantage over NflPlay's passer_id/rusher_id/receiver_id columns: ESPN's
+  NBA play-by-play carries structured athlete ids on every play, with no
+  prose-regex resolution needed the way NFL's free text requires — see
+  nba_playbyplay_api.py's module docstring for why this is stored as one
+  ordered list rather than split into named slots (ESPN doesn't label
+  which participant is the shooter vs. the assister vs. the rebounder,
+  so inventing that structure would be guessing)."""
+  __tablename__ = 'nba_plays'
+  id               = db.Column(db.Integer, primary_key=True)
+  game_id          = db.Column(db.String(20), nullable=False, index=True)
+  play_id          = db.Column(db.String(30), nullable=False)
+  sequence_number  = db.Column(db.String(10))
+  season           = db.Column(db.Integer)
+  game_date        = db.Column(db.String(10), index=True)
+  game_type        = db.Column(db.String(12))
+  team_id          = db.Column(db.String(20), index=True)
+  play_type_id     = db.Column(db.String(10))
+  play_type        = db.Column(db.String(60))   # ESPN's type.text: 'Jump Shot', 'Layup Shot', 'Turnover', ...
+  text             = db.Column(db.Text)          # raw play description, verbatim
+  short_description = db.Column(db.String(40))
+  period           = db.Column(db.Integer)
+  clock            = db.Column(db.String(10))
+  home_score       = db.Column(db.Integer)       # running score AFTER this play
+  away_score       = db.Column(db.Integer)
+  score_value      = db.Column(db.Integer)       # points this play was worth (0 for non-scoring)
+  is_scoring_play  = db.Column(db.Boolean)
+  is_shooting_play = db.Column(db.Boolean)
+  points_attempted = db.Column(db.Integer)       # 2 or 3 for a shot attempt, NULL otherwise
+  shot_x           = db.Column(db.Integer)        # ESPN's court-coordinate shot chart location
+  shot_y           = db.Column(db.Integer)
+  participant_ids  = db.Column(db.Text)          # JSON list of athlete id strings, see class docstring
+  created_at       = db.Column(db.DateTime(timezone=True),
+                                default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('game_id', 'play_id', name='uq_nba_play'),)
 
 
 class InjuryStatus(db.Model):
@@ -775,6 +843,10 @@ def ensure_column_exists():
     _add('team_game_stats',  'weather_temp',        'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'weather_wind_mph',    'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'weather_precip_pct',  'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'fga',                 'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'oreb',                'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'tov',                 'FLOAT DEFAULT NULL')
+    _add('team_game_stats',  'fta',                 'FLOAT DEFAULT NULL')
     _add('player_game_stats', 'position',          'TEXT DEFAULT NULL')
     _add('player_game_stats', 'stats_json',        'TEXT DEFAULT NULL')
     _add('game_predictions', 'blended_spread_cover_prob', 'FLOAT DEFAULT NULL')
@@ -1378,6 +1450,104 @@ app.jinja_env.globals['total_confidence_tiers'] = _total_confidence_tiers
 # without needing anything not already stored per game.
 _TOTAL_MODEL_REFIT = {}   # {sport: {'a': float, 'b': float, 'sigma': float, 'n': int, 'computed_at': str}}
 _TOTAL_MODEL_REFIT_LOCK = threading.Lock()
+
+# Confidence shrink for TOTAL picks, mirroring _recompute_market_edge_shrink's
+# philosophy but measured against REALIZED outcomes instead of the market's
+# own price — this app only has a real historical over/under PRICE going
+# forward (the 2025 odds backfill's total_close rows all carry an assumed
+# -110/-110 placeholder, which would make a market-disagreement comparison
+# degenerate at exactly 50/50 for every backfilled game). Realized outcome
+# is the more direct ground truth anyway: does a game actually go over at
+# the rate the model's over_prob claims?
+#
+# Built 2026-10-16 after NBA's first-ever backtested sample (1,577 games,
+# via nba_total_backfill.py/nba_blended_total_backfill.py) showed something
+# worse than "optimistic" — stated confidence is INVERTED above ~55%:
+#   50-55% stated -> 52.3% actual (fine)
+#   55-60% -> 47.3%   60-65% -> 44.5%   65-70% -> 48.4%
+#   70-75% -> 45.2%   75%+   -> 40.0% (worse than a coin flip)
+# i.e. once this model diverges far from 50%, it's reacting to its own
+# noise (R²=0.095, see nba_ensemble_model.TOTAL_FIT's comment), not real
+# signal — the picks the UI was labeling "STRONG" on huge EV% were coming
+# directly from this broken high-confidence region.
+_TOTAL_EDGE_RATE = {}     # {sport: float} — fraction of excess-over-CAP confidence to pull back toward 50%
+_TOTAL_EDGE_CAP = 0.05    # pp threshold, mirrors market-edge's 10pp style but centered on the 50% baseline
+_TOTAL_EDGE_PRIOR = 0.5   # conservative prior for any sport without enough graded picks yet — pull back
+                          # HALF of any confidence beyond 55% until proven otherwise, not the ML side's 25%
+                          # (totals have no equivalent of ML's 50-game MLB study to start from)
+_TOTAL_EDGE_LOCK = threading.Lock()
+
+
+def _recompute_total_edge_shrink(sport):
+    """Refits _TOTAL_EDGE_RATE[sport] from resolved TOTAL picks whose
+    blended (or team-only, if no blend) over_prob put them more than
+    _TOTAL_EDGE_CAP past 50% confidence — solves for the rate that would
+    have made that bucket's average stated confidence match its actual hit
+    rate, blended with _TOTAL_EDGE_PRIOR via the same alpha=min(n/80,1.0)
+    credibility weight _recompute_market_edge_shrink uses. No-ops below
+    MIN_N, same pattern as every other calibration pass here."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.total_went_over.isnot(None),
+        ).all()
+
+    records = []
+    for p in resolved:
+        prob = p.blended_total_over_prob if p.blended_total_over_prob is not None else p.total_over_prob
+        if prob is None:
+            continue
+        picked_over = prob >= 0.5
+        pick_conf = prob if picked_over else 1 - prob
+        hit = (picked_over and p.total_went_over) or (not picked_over and not p.total_went_over)
+        records.append((pick_conf, hit))
+
+    bucket = [(pc, h) for pc, h in records if pc - 0.5 > _TOTAL_EDGE_CAP]
+    n = len(bucket)
+
+    MIN_N = 40
+    if n < MIN_N:
+        print(f'[total-edge] {sport}: only {n} high-confidence total picks (<{MIN_N}), '
+              f'keeping rate={_TOTAL_EDGE_RATE.get(sport, _TOTAL_EDGE_PRIOR):.2f}', flush=True)
+        return
+
+    avg_conf   = sum(pc for pc, _ in bucket) / n
+    actual_wr  = sum(1 for _, h in bucket if h) / n
+    avg_excess = sum(pc - 0.5 - _TOTAL_EDGE_CAP for pc, _ in bucket) / n
+    if avg_excess <= 0:
+        return
+
+    raw_rate = max(0.0, min(1.0, (avg_conf - actual_wr) / avg_excess))
+    alpha    = min(n / 80.0, 1.0)
+    new_rate = round(_TOTAL_EDGE_PRIOR * (1 - alpha) + raw_rate * alpha, 4)
+
+    with _TOTAL_EDGE_LOCK:
+        _TOTAL_EDGE_RATE[sport] = new_rate
+
+    print(f'[total-edge] {sport} recomputed from {n} high-confidence picks: '
+          f'avg_stated_conf={avg_conf:.1%} actual_hit_rate={actual_wr:.1%} '
+          f'raw_rate={raw_rate:.2f} -> applied_rate={new_rate:.2f} (alpha={alpha:.2f})', flush=True)
+
+
+def _total_edge_shrink(sport, over_prob):
+    """Pulls a TOTAL pick's over_prob back toward 50% by _TOTAL_EDGE_RATE
+    (or _TOTAL_EDGE_PRIOR if this sport hasn't been refit yet) for whatever
+    confidence sits beyond _TOTAL_EDGE_CAP past 50% — see
+    _recompute_total_edge_shrink's docstring for why. Applied only at the
+    pick/display layer (_best_market_pick), never written back to the
+    stored total_over_prob/blended_total_over_prob columns, so future
+    refits keep training on the model's true raw output, not an
+    already-shrunk one."""
+    if over_prob is None:
+        return over_prob
+    with _TOTAL_EDGE_LOCK:
+        rate = _TOTAL_EDGE_RATE.get(sport, _TOTAL_EDGE_PRIOR)
+    picked_over = over_prob >= 0.5
+    conf = over_prob if picked_over else 1 - over_prob
+    excess = conf - 0.5 - _TOTAL_EDGE_CAP
+    if excess > 0:
+        conf -= rate * excess
+    return conf if picked_over else 1 - conf
 
 
 def _recompute_total_model_refit(sport):
@@ -4721,6 +4891,12 @@ def _best_market_pick(game):
         favors_over = over_prob >= 0.5
         pick_prob   = over_prob if favors_over else (1 - over_prob)
         pick_prob   = _total_movement_adjusted_prob(pick_prob, game.get('total_movement_profile'), sport)
+        # Pull high-confidence total picks back toward 50% by how much this
+        # sport's past high-confidence picks have actually missed — see
+        # _total_edge_shrink's docstring. Applied last, after the movement
+        # adjustment, so it's shrinking the final pick_prob the edge/Kelly
+        # math below actually sees.
+        pick_prob   = _total_edge_shrink(sport, pick_prob)
         mkt_implied = vf_o if favors_over else vf_u
         amer_odds   = over_price if favors_over else under_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
@@ -8051,6 +8227,7 @@ def _recompute_all_calibration(sport):
     _recompute_confidence_tiers(sport)
     _recompute_spread_confidence_tiers(sport)
     _recompute_total_model_refit(sport)
+    _recompute_total_edge_shrink(sport)
     # After _recompute_total_model_refit — total_confidence_tiers reads
     # stored historical total_over_prob values (computed at pick time, so
     # order doesn't change its own output), but conceptually the refit

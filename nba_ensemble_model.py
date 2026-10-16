@@ -42,20 +42,26 @@ PROB_FIT = {'intercept': -0.0607, 'team_weight': 0.5176, 'player_weight': 0.2481
 # each model's own implied point margin directly (OLS, not logit space).
 MARGIN_FIT = {'intercept': -0.1934, 'team_weight': 0.7676, 'player_weight': 0.2244}
 
-# {blended_total: (intercept, team_weight, player_weight)} — applied to each
-# side's own combined-score projection directly (OLS, not logit space).
-# team_total here is a PPG-sum proxy (not the real pace-adjusted
-# bball_total_model.py projection) — see nba_ensemble_bootstrap.py's
-# row-collection comment for why; this blend's RMSE isn't directly
-# comparable to the real total model's own accuracy for that reason.
+# {blended_total: (intercept, team_weight, player_weight)} — applied to
+# team_total/player_total directly (OLS, not logit space).
 #
-# Fit provenance (nba_ensemble_bootstrap.py, same 2024+2025 games as the
-# prob/margin fits above, n=2,461): team-only (PPG-sum) RMSE 19.70,
-# player-only RMSE 21.11, blended RMSE 18.84 — a real improvement over the
-# PPG-sum proxy, tracked in parallel against the real total model (see
-# app.py's blended_total_* GamePrediction columns) rather than assumed to
-# transfer to it.
-TOTAL_FIT = {'intercept': 31.454, 'team_weight': 0.507, 'player_weight': 0.362}
+# team_total is now the REAL pace-adjusted bball_total_model.py projection
+# (total_model.total_projection), not the earlier PPG-sum proxy — refit
+# 2026-10-16 against nba_total_backfill.py's point-in-time reconstruction
+# (n=1582, 2024-25/2025-26 seasons) once real pace data existed to make
+# that projection available historically at all (see
+# nba_boxscore_pace_backfill.py). The PPG-sum proxy's own blend (old
+# TOTAL_FIT below, kept in this comment for provenance) scored R²=0.081;
+# swapping in the real pace-adjusted total as the team-side input instead
+# raised that to R²=0.095 — team-only pace-adjusted alone was R²=0.068,
+# player-only alone R²=0.075, so each side's error is genuinely adding
+# information the other doesn't have, not just duplicating it.
+#   old (PPG-sum proxy) fit: intercept=31.454, team_weight=0.507, player_weight=0.362
+#   new (pace-adjusted) fit: intercept=22.250, team_weight=0.663, player_weight=0.245
+# Still well short of the market's own closing-line R² (~0.17) — see
+# nba_total_backfill.py's docstring for the full comparison and the
+# all-models-are-weak-here caveat that didn't go away with this fix.
+TOTAL_FIT = {'intercept': 22.250, 'team_weight': 0.663, 'player_weight': 0.245}
 
 
 def _logit(p, eps=1e-6):
@@ -90,11 +96,11 @@ def blend_margin(team_margin, player_margin):
 
 
 def blend_total(team_total, player_total):
-    """Combined projected combined score (home+away) from a team-only
-    PPG-sum proxy and nba_player_model.py's own 'total' projection. Returns
-    None if either input is None. See TOTAL_FIT's comment for the
-    team_total-is-a-proxy caveat — this is a rougher signal than the real
-    pace-adjusted total model, tracked in parallel to see if it helps."""
+    """Combined projected combined score (home+away) from
+    bball_total_model.py's pace-adjusted team projection (total_model.
+    total_projection — NOT a PPG-sum proxy, see TOTAL_FIT's comment for
+    the history there) and nba_player_model.py's own 'total' projection.
+    Returns None if either input is None."""
     if team_total is None or player_total is None:
         return None
     f = TOTAL_FIT

@@ -113,12 +113,20 @@ def _record_to_wl(summary):
         return 0, 0
 
 
-def _get_nba_season():
+def _get_nba_season(date_str=None):
     """NBA season year (ESPN convention: `season=2024` means the 2024-25
-    season) currently in progress or most recently completed. New season
-    tips off in October."""
-    today = datetime.now(_ET).date()
-    return today.year if today.month >= 10 else today.year - 1
+    season) in progress or most recently completed as of date_str (YYYY-MM-DD,
+    defaults to today). New season tips off in October.
+
+    Takes an explicit date rather than always reading today's date — a
+    schedule built for a past target_date (the day-nav offset, a recap page,
+    any future backfill) needs the SEASON THAT DATE FELL IN, not whichever
+    season happens to be running when the code executes. Using today's date
+    unconditionally here used to make every such call fetch the wrong
+    season's game log, silently emptying out team_stats (ppg/ppg_allowed
+    None for every team) for any non-today view."""
+    d = datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else datetime.now(_ET).date()
+    return d.year if d.month >= 10 else d.year - 1
 
 
 # Below this many current-season games played, a team's win%/split/ppg
@@ -225,6 +233,7 @@ def _compute_team_season_stats(games):
         t: {
             'ppg':         round(v['for']     / v['g'], 1),
             'ppg_allowed': round(v['against'] / v['g'], 1),
+            'games_played': v['g'],
         }
         for t, v in pts.items() if v['g'] > 0
     }
@@ -271,35 +280,54 @@ def _apply_prior_season_blend(team, prior_stats):
     it accumulates. Sets 'blend_*' keys consumed by nba_model.predict();
     leaves the raw wins/losses/ppg fields untouched so the game card still
     displays the team's actual current-season record. Mirrors
-    nfl_api._apply_prior_season_blend."""
-    cur_games = team.get('wins', 0) + team.get('losses', 0)
-    if cur_games >= EARLY_SEASON_GAMES:
-        return
+    nfl_api._apply_prior_season_blend.
+
+    win%/split% and ppg/ppg_allowed are gated on TWO DIFFERENT game counts,
+    deliberately: win%/split% use ESPN's own record field (team['wins']/
+    ['losses']), but ppg/ppg_allowed use team['games_played'] (real
+    regular-season games from _compute_team_season_stats's own game log).
+    During the preseason-to-regular-season transition these diverge —
+    ESPN's 'overall' record still reflects PRESEASON games (reaching
+    EARLY_SEASON_GAMES within the first week), while the real season's
+    game log is correctly still empty. Gating ppg on the record field
+    made this function bail out before ever setting blend_ppg, leaving
+    ppg/ppg_allowed (and therefore bball_total_model's total projection,
+    which needs both) permanently None for any team a few preseason games
+    in — confirmed live, 2026-10 preseason: Total showed "no model yet"
+    on the site for exactly the teams already past that preseason count.
+    Outside this transition window the two counts track each other again
+    (both counting only real games), so this is a no-op the rest of the
+    season."""
     prior = prior_stats.get(team.get('name', ''))
     if not prior:
         return
 
-    w = cur_games / EARLY_SEASON_GAMES  # weight given to current-season data
+    cur_games = team.get('wins', 0) + team.get('losses', 0)
+    if cur_games < EARLY_SEASON_GAMES:
+        w = cur_games / EARLY_SEASON_GAMES  # weight given to current-season data
 
-    cur_win_pct = team['wins'] / cur_games if cur_games else 0.5
-    prior_total = prior['wins'] + prior['losses']
-    prior_win_pct = prior['wins'] / prior_total if prior_total else 0.5
-    team['blend_win_pct'] = w * cur_win_pct + (1 - w) * prior_win_pct
+        cur_win_pct = team['wins'] / cur_games if cur_games else 0.5
+        prior_total = prior['wins'] + prior['losses']
+        prior_win_pct = prior['wins'] / prior_total if prior_total else 0.5
+        team['blend_win_pct'] = w * cur_win_pct + (1 - w) * prior_win_pct
 
-    cur_split_total = team.get('split_w', 0) + team.get('split_l', 0)
-    cur_split_pct = team['split_w'] / cur_split_total if cur_split_total else 0.5
-    prior_split_total = prior['split_w'] + prior['split_l']
-    prior_split_pct = prior['split_w'] / prior_split_total if prior_split_total else 0.5
-    team['blend_split_pct'] = w * cur_split_pct + (1 - w) * prior_split_pct
+        cur_split_total = team.get('split_w', 0) + team.get('split_l', 0)
+        cur_split_pct = team['split_w'] / cur_split_total if cur_split_total else 0.5
+        prior_split_total = prior['split_w'] + prior['split_l']
+        prior_split_pct = prior['split_w'] / prior_split_total if prior_split_total else 0.5
+        team['blend_split_pct'] = w * cur_split_pct + (1 - w) * prior_split_pct
 
-    cur_ppg = team.get('ppg')
-    if prior.get('ppg') is not None:
-        team['blend_ppg'] = w * cur_ppg + (1 - w) * prior['ppg'] if cur_ppg is not None else prior['ppg']
-    cur_ppga = team.get('ppg_allowed')
-    if prior.get('ppg_allowed') is not None:
-        team['blend_ppg_allowed'] = (
-            w * cur_ppga + (1 - w) * prior['ppg_allowed'] if cur_ppga is not None else prior['ppg_allowed']
-        )
+    games_played = team.get('games_played', 0)
+    if games_played < EARLY_SEASON_GAMES:
+        w2 = games_played / EARLY_SEASON_GAMES
+        cur_ppg = team.get('ppg')
+        if prior.get('ppg') is not None:
+            team['blend_ppg'] = w2 * cur_ppg + (1 - w2) * prior['ppg'] if cur_ppg is not None else prior['ppg']
+        cur_ppga = team.get('ppg_allowed')
+        if prior.get('ppg_allowed') is not None:
+            team['blend_ppg_allowed'] = (
+                w2 * cur_ppga + (1 - w2) * prior['ppg_allowed'] if cur_ppga is not None else prior['ppg_allowed']
+            )
 
 
 def _team_recent_form(games, team_name, n=5):
@@ -509,8 +537,9 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
     for team in (home, away):
         name = team.get('name', '')
         ts   = team_stats.get(name, {})
-        team['ppg']         = ts.get('ppg')
-        team['ppg_allowed'] = ts.get('ppg_allowed')
+        team['ppg']           = ts.get('ppg')
+        team['ppg_allowed']   = ts.get('ppg_allowed')
+        team['games_played']  = ts.get('games_played', 0)
         team['form']        = _team_recent_form(game_log, name)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
         if prior_stats:
@@ -527,6 +556,40 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
         model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
     except Exception:
         model = None
+
+    # Pace-adjusted total (O/U) projection — separate from the win-prob
+    # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see
+    # bball_total_model.py for why this can't reuse the win-prob factors).
+    # Uses blend_ppg/blend_ppg_allowed the same way nba_model.predict() does
+    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
+    # without it, early-season totals were built off a handful of raw
+    # games per team, which swings PPG/PPG-allowed and the resulting total
+    # projection more than the market's own line does. Same fix as
+    # nfl_api.py/cfb_api.py's total_inputs blocks.
+    # total_inputs is stashed alongside the projection so a future
+    # total-model recalibration can replay this exact game.
+    # Computed BEFORE the ensemble block below (moved 2026-10-16) so its
+    # total_projection is available to feed nba_ensemble_model.predict()'s
+    # total blend as the team-side input — see that call's comment for why
+    # this replaced the old PPG-sum proxy there.
+    home_ppg         = home.get('blend_ppg', home.get('ppg'))
+    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+    away_ppg         = away.get('blend_ppg', away.get('ppg'))
+    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
+    total_inputs = {
+        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
+        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
+    }
+    try:
+        total_model = bball_total_model.predict_total(
+            'NBA', home.get('id'), home_ppg, home_ppg_allowed,
+            away.get('id'), away_ppg, away_ppg_allowed)
+    except Exception:
+        total_model = None
+    try:
+        total_model_breakdown = bball_total_model.factor_breakdown('NBA', total_model)
+    except Exception:
+        total_model_breakdown = None
 
     # Blend in the player-level signal (nba_player_model.py) via the fitted
     # weights in nba_ensemble_model.py — see nba_ensemble_bootstrap.py for
@@ -580,13 +643,13 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                                away_opp_factor=away_opp_factor)
                            if home_active and away_active else None)
 
-            # PPG-sum proxy for the team-only total (not the real pace-
-            # adjusted bball_total_model.py projection, computed separately
-            # below) — tracking-only input for the total blend, same
-            # team_total-is-a-proxy caveat as nba_ensemble_bootstrap.py's.
-            home_ppg = home.get('blend_ppg', home.get('ppg'))
-            away_ppg = away.get('blend_ppg', away.get('ppg'))
-            team_total = (home_ppg + away_ppg) if home_ppg is not None and away_ppg is not None else None
+            # The real pace-adjusted projection (computed above, before this
+            # block) as the team-side total input — see nba_ensemble_model.
+            # TOTAL_FIT's comment: refit 2026-10-16 once this was swapped in
+            # for the earlier PPG-sum proxy, a genuine accuracy improvement
+            # (R² 0.081 -> 0.095 on the point-in-time backtest), not just a
+            # relabeling.
+            team_total = total_model.get('total_projection') if total_model else None
 
             ensemble = (nba_ensemble_model.predict(
                             team_prob, player_pred['home_prob'],
@@ -637,42 +700,18 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                 away_score = float(away['score']) if away.get('score') is not None else None
                 game_type = nba_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
                     event.get('season', {}).get('type'), 'regular')
+                pace_stats = nba_boxscore_api.get_team_pace_stats(event_id)
+                season = _get_nba_season(game_date_et)
                 nba_stats_db.ingest_game(
-                    event_id, game_date_et, _get_nba_season(), game_type,
+                    event_id, game_date_et, season, game_type,
                     home.get('id'), away.get('id'), home_score, away_score, boxscore,
-                    home_name=home.get('name'), away_name=away.get('name'))
+                    home_name=home.get('name'), away_name=away.get('name'),
+                    pace_stats=pace_stats)
+                summary = nba_boxscore_api.get_live_summary(event_id)
+                nba_stats_db.ingest_play_by_play(event_id, game_date_et, season, game_type, summary)
         except Exception:
             pass
 
-    # Pace-adjusted total (O/U) projection — separate from the win-prob
-    # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see
-    # bball_total_model.py for why this can't reuse the win-prob factors).
-    # Uses blend_ppg/blend_ppg_allowed the same way nba_model.predict() does
-    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
-    # without it, early-season totals were built off a handful of raw
-    # games per team, which swings PPG/PPG-allowed and the resulting total
-    # projection more than the market's own line does. Same fix as
-    # nfl_api.py/cfb_api.py's total_inputs blocks.
-    # total_inputs is stashed alongside the projection so a future
-    # total-model recalibration can replay this exact game.
-    home_ppg         = home.get('blend_ppg', home.get('ppg'))
-    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
-    away_ppg         = away.get('blend_ppg', away.get('ppg'))
-    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
-    total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
-        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
-    }
-    try:
-        total_model = bball_total_model.predict_total(
-            'NBA', home.get('id'), home_ppg, home_ppg_allowed,
-            away.get('id'), away_ppg, away_ppg_allowed)
-    except Exception:
-        total_model = None
-    try:
-        total_model_breakdown = bball_total_model.factor_breakdown('NBA', total_model)
-    except Exception:
-        total_model_breakdown = None
 
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
@@ -737,7 +776,7 @@ def build_schedule_context(target_date=None):
     if not today_events:
         return []
 
-    season       = _get_nba_season()
+    season       = _get_nba_season(today_str)
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
     prior_stats  = _get_prior_season_team_stats(season - 1)

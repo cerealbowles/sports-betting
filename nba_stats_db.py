@@ -30,7 +30,8 @@ GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
 
 
 def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
-                 home_score, away_score, boxscore, home_name=None, away_name=None):
+                 home_score, away_score, boxscore, home_name=None, away_name=None,
+                 pace_stats=None):
     """Upserts PlayerGameStat rows for every athlete ESPN's boxscore lists
     for this game (did-not-play entries included — useful for seeing who
     was active/inactive, and harmless since get_player_gamelog_db() below
@@ -39,6 +40,13 @@ def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
     boxscore: {team_id: [row, ...]} as returned by
     nba_boxscore_api.get_live_boxscore(event_id) — must be the Live/Final
     shape (has 'starter'/'did_not_play'/stat keys), not empty/pre-game.
+
+    pace_stats: optional {team_id: {fga, oreb, tov, fta}} from
+    nba_boxscore_api.get_team_pace_stats(event_id) — stored on TeamGameStat
+    so a team's point-in-time pace can be reconstructed later purely from
+    its own prior Final games (see bball_total_model.py / nba_total_
+    backfill.py). Omitted/None leaves those columns NULL, same as before
+    this parameter existed.
 
     Safe to call repeatedly for the same game (e.g. once per 20-min cron
     tick while recently Final, or re-run from the backfill script) — each
@@ -103,8 +111,68 @@ def ingest_game(event_id, game_date_et, season, game_type, home_id, away_id,
                 tt.points         = team_score
                 tt.points_allowed = opp_score
                 tt.won            = team_score > opp_score
+                pace = (pace_stats or {}).get(team_id) or {}
+                tt.fga  = pace.get('fga')
+                tt.oreb = pace.get('oreb')
+                tt.tov  = pace.get('tov')
+                tt.fta  = pace.get('fta')
                 if not existing_team:
                     db.session.add(tt)
+
+        db.session.commit()
+
+
+def ingest_play_by_play(event_id, game_date_et, season, game_type, summary):
+    """Parses `summary` via nba_playbyplay_api.parse_plays() and upserts
+    every play as an NbaPlay row (matched on the (game_id, play_id) unique
+    constraint, so a re-run just updates existing rows in place).
+
+    Call this with the SAME `summary` get_live_boxscore()/get_team_pace_
+    stats() already fetched for this event_id — nba_boxscore_api.get_live_
+    summary() shares their cache, so this costs zero extra API calls.
+
+    No-op if the game has no plays yet (pre-game) or parsing finds nothing.
+    """
+    import json
+    import nba_playbyplay_api
+    from app import app as flask_app, db, NbaPlay
+
+    plays = nba_playbyplay_api.parse_plays(summary, event_id)
+    if not plays:
+        return
+
+    with flask_app.app_context():
+        existing_ids = {
+            r.play_id for r in NbaPlay.query.filter_by(game_id=event_id)
+            .with_entities(NbaPlay.play_id).all()
+        }
+        for p in plays:
+            fields = {
+                'sequence_number':   p['sequence_number'],
+                'season':            season,
+                'game_date':         game_date_et,
+                'game_type':         game_type,
+                'team_id':           p['team_id'],
+                'play_type_id':      p['play_type_id'],
+                'play_type':         p['play_type'],
+                'text':              p['text'],
+                'short_description': p['short_description'],
+                'period':            p['period'],
+                'clock':             p['clock'],
+                'home_score':        p['home_score'],
+                'away_score':        p['away_score'],
+                'score_value':       p['score_value'],
+                'is_scoring_play':   p['is_scoring_play'],
+                'is_shooting_play':  p['is_shooting_play'],
+                'points_attempted':  p['points_attempted'],
+                'shot_x':            p['shot_x'],
+                'shot_y':            p['shot_y'],
+                'participant_ids':   json.dumps(p['participant_ids']),
+            }
+            if p['play_id'] in existing_ids:
+                NbaPlay.query.filter_by(game_id=event_id, play_id=p['play_id']).update(fields)
+            else:
+                db.session.add(NbaPlay(game_id=event_id, play_id=p['play_id'], **fields))
 
         db.session.commit()
 

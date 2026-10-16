@@ -167,3 +167,69 @@ def get_live_boxscore(event_id):
             })
         out[team_id] = rows
     return out
+
+
+def get_live_summary(event_id):
+    """The raw summary?event= response, for callers that need more than
+    the boxscore out of it — e.g. nba_playbyplay_api.py's plays-based
+    parsing. Shares this module's own cache/backoff with get_live_
+    boxscore()/get_team_pace_stats(), so a caller using more than one of
+    these on the same event_id costs one HTTP fetch, not several."""
+    return _get(event_id)
+
+
+def get_team_pace_stats(event_id):
+    """Returns {team_id: {fga, oreb, tov, fta}} — this ONE game's team-level
+    box score totals, the exact inputs bball_total_model.py's possession
+    estimator needs (FGA - OREB + TOV + 0.44*FTA). Final games only; {} for
+    anything pre-game/live or on fetch failure.
+
+    Reuses the same cached summary?event= fetch as get_live_boxscore()/
+    get_injury_statuses() (no extra API call) but reads boxscore['teams']
+    (team-level totals) instead of boxscore['players'] — a separate block
+    in ESPN's response, not derivable from summing the per-player rows
+    above (those have no offensive/defensive rebound split).
+
+    This is what makes nba_total_backfill.py's point-in-time reconstruction
+    possible at all: ESPN's live team-statistics endpoint only ever serves
+    the CURRENT season's cumulative average, with no "as of this past date"
+    mode — but this per-game summary endpoint works for any past event_id,
+    so walking a team's own prior Final games and averaging THIS field
+    across them reconstructs an honest, leak-free point-in-time pace input.
+    """
+    data = _get(event_id)
+    if not data:
+        return {}
+    teams = (data.get('boxscore') or {}).get('teams') or []
+    if not teams:
+        return {}
+
+    out = {}
+    for team_block in teams:
+        team_id = (team_block.get('team') or {}).get('id')
+        if not team_id:
+            continue
+        flat = {s.get('name'): s.get('displayValue') for s in team_block.get('statistics', [])}
+
+        def _made_attempt_str(name):
+            raw = flat.get(name, '')
+            if '-' not in str(raw):
+                return None
+            try:
+                return float(str(raw).split('-')[1])
+            except (ValueError, IndexError):
+                return None
+
+        def _num(name):
+            try:
+                return float(flat[name])
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        out[team_id] = {
+            'fga':  _made_attempt_str('fieldGoalsMade-fieldGoalsAttempted'),
+            'oreb': _num('offensiveRebounds'),
+            'tov':  _num('totalTurnovers'),
+            'fta':  _made_attempt_str('freeThrowsMade-freeThrowsAttempted'),
+        }
+    return out

@@ -15,16 +15,38 @@ points depends on combined scoring environment (pace × efficiency for BOTH
 teams together), not on which team is better, so it needs the FGA/OREB/
 TOV/FTA components nothing else in this app currently fetches.
 
-Validated against a full completed season of actual totals before shipping
-(see conversation — NBA: R²=0.09, corr=0.30, n=1235; WNBA: R²=0.16,
-corr=0.40, n=287 — both clear the "does this beat naive PPG-sum" bar
-mentioned in the same season-aggregate-leakage sense every other bootstrap
-script in this repo already fits with). CALIBRATION corrects the raw
-formula's systematic compression (fit once per sport via linear regression
-of actual total against raw formula output); SIGMA is the calibrated
-residual std, used for the over-probability normal approximation.
+CALIBRATION corrects the raw formula's systematic compression (fit once
+per sport via linear regression of actual total against raw formula
+output); SIGMA is the calibrated residual std, used for the over-
+probability normal approximation.
 
-Refit periodically — these are one-time fits from the 2025-26 season.
+NBA's original fit (R²=0.09, corr=0.30, n=1235 — see git history) turned
+out to have exactly the season-aggregate hindsight leak this module's own
+docstring already warned other bootstrap scripts about: it used ESPN's
+live, full-season-to-date team-statistics endpoint as the "point-in-time"
+pace input for games from EARLIER in that same season — i.e. a game in
+November was implicitly "predicted" using pace numbers that included
+December/January games that hadn't happened yet. Refit 2026-10-16 against
+nba_total_backfill.py's genuinely point-in-time reconstruction (each
+team's pace/PPG averaged ONLY over its own strictly-prior games, see that
+script's docstring) once nba_boxscore_pace_backfill.py made 2024-25/
+2025-26 box score pace data available at all: R²=0.05, corr=0.22, n=1593
+— a real, honest, much weaker number. Recalibrating fixed the leak but
+NOT the underlying weak signal: even this refit's own in-sample MAE
+(15.78) barely beats a naive "always guess the league-average total"
+baseline (16.41), and loses to the market's own closing line (14.68).
+Team-only PPG+pace just doesn't carry much signal for NBA — see
+nba_total_backfill.py's docstring for the full numbers before reaching
+for this model's total_proj as a reliable edge.
+
+WNBA's calibration below is UNCHANGED and UNVERIFIED — it was fit the
+same way NBA's originally was (no pace backfill/point-in-time check has
+been done for WNBA yet), so it likely has the identical leak and is
+likely similarly overstated until someone runs the equivalent backfill.
+
+Refit periodically — these are one-time fits, NBA's from the 2024-25/
+2025-26 seasons (point-in-time), WNBA's from the 2025-26 season (NOT
+point-in-time, see above).
 """
 import time
 import requests
@@ -36,7 +58,7 @@ SPORT_SLUGS = {
 
 # {sport: (intercept, coef, sigma)} — actual_total ≈ intercept + coef * raw_proj
 CALIBRATION = {
-    'NBA':  (-246.0909, 2.067703, 22.714),
+    'NBA':  (-5.8034, 1.027185, 22.377),
     'WNBA': (-194.4991, 2.190909, 15.646),
 }
 
@@ -106,18 +128,30 @@ def _possessions(components):
     return components['fga'] - components['oreb'] + components['tov'] + 0.44 * components['fta']
 
 
-def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed):
+def predict_total(sport, home_id, home_ppg, home_ppg_allowed, away_id, away_ppg, away_ppg_allowed,
+                   home_pace_components=None, away_pace_components=None):
     """Returns {total_projection, pace} or None if pace data / PPG inputs
     aren't available for this matchup (e.g. no games played yet this
-    season, or ESPN doesn't carry stats for this team)."""
+    season, or ESPN doesn't carry stats for this team).
+
+    home_pace_components/away_pace_components: optional {fga, oreb, tov,
+    fta} to use INSTEAD of fetching each team's live, current-season
+    aggregate from ESPN — lets a caller supply its own point-in-time pace
+    reconstruction (see nba_total_backfill.py) for a past matchup, since
+    the live fetch has no "as of this past date" mode and would otherwise
+    silently use today's stats to "predict" a game from last season."""
     if sport not in CALIBRATION:
         return None
     if None in (home_ppg, home_ppg_allowed, away_ppg, away_ppg_allowed):
         return None
 
-    home_pace_c = _fetch_pace_components(sport, home_id)
-    away_pace_c = _fetch_pace_components(sport, away_id)
+    home_pace_c = home_pace_components if home_pace_components is not None else _fetch_pace_components(sport, home_id)
+    away_pace_c = away_pace_components if away_pace_components is not None else _fetch_pace_components(sport, away_id)
     if not home_pace_c or not away_pace_c:
+        return None
+    if None in (home_pace_c.get('fga'), home_pace_c.get('oreb'), home_pace_c.get('tov'), home_pace_c.get('fta')):
+        return None
+    if None in (away_pace_c.get('fga'), away_pace_c.get('oreb'), away_pace_c.get('tov'), away_pace_c.get('fta')):
         return None
 
     home_pace = _possessions(home_pace_c)
