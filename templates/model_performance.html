@@ -185,9 +185,12 @@
 {% block content %}
 
 
-<div class="section-header" style="display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:4px; margin-bottom: 14px;">
-    <span style="font-family:var(--font-cond); font-size:0.78rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ sport }} · predictions vs outcomes</span>
-    <h1 style="margin:0;">The Autopsy</h1>
+<div class="section-header" style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom: 14px; flex-wrap:wrap;">
+    <div style="display:flex; flex-direction:column; align-items:flex-start; gap:4px;">
+        <span style="font-family:var(--font-cond); font-size:0.78rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ sport }} · predictions vs outcomes</span>
+        <h1 style="margin:0;">The Autopsy</h1>
+    </div>
+    <a href="{{ url_for(sport_meta.schedule_endpoint) }}" class="sport-chip" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">{{ sport_meta.emoji }} {{ sport }} Schedule →</a>
 </div>
 
 {% set _bt_qs = request.args.to_dict() %}
@@ -326,6 +329,37 @@
     </table>
     </div>
     <p class="section-note">Higher pips should show higher win rate if confidence tracks reality. A flat or inverted line means the pip scale isn't adding signal for this bet type.</p>
+</div>
+{% endif %}
+
+{% if spread_trust_bucket_stats %}
+<div class="card" style="margin-bottom: 14px;">
+    <div class="section-header" style="margin-bottom: 12px;">
+        <h2>Spread Trust Score</h2>
+        <span class="small">composite score (factor consensus + edge zone + calibration) · diagnostic, not yet used to gate picks</span>
+    </div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr><th>Score</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
+        </thead>
+        <tbody>
+        {% for s in spread_trust_bucket_stats %}
+        <tr>
+            <td>{{ s.label }}</td>
+            <td>{{ s.count }}</td>
+            <td><span class="{{ 'calib-err-ok' if s.win_rate >= 55 else ('calib-err-pos' if s.win_rate >= 50 else 'calib-err-neg') }}">{{ s.win_rate }}%</span></td>
+            <td>
+                {% if s.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if s.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if s.avg_roi > 0 }}{{ s.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">A spread-market sibling of MLB's Trust Score, blending how much the model's own reweighted factors agree with the pick, the edge-size zone, and the probability-calibration bucket — each weighted by how that bucket has actually performed historically. If higher scores show higher ROI here, that's a sign this score could tighten which spread picks earn a ★; if not, it isn't adding signal beyond the existing edge/Kelly bar.</p>
 </div>
 {% endif %}
 

@@ -937,10 +937,13 @@ def _line_move_pct(home_prob, current_home_odds, current_away_odds,
     return round((curr - opn) * 100, 2)
 
 
-def _consensus_bucket(factors_json, fav_home):
-    """Fraction of significant-factor weight aligned with pick → bucket label."""
+def _consensus_bucket_from_pairs(pairs, fav_home):
+    """Fraction of significant-factor weight aligned with pick → bucket label,
+    given an already-parsed [(label, contrib), ...] list. Shared by
+    _consensus_bucket (moneyline, raw factors_json) and the spread trust
+    score (spread_model.weighted_factors' reweighted rows)."""
     try:
-        sig = [(l, c) for l, c in json.loads(factors_json or '[]') if abs(c) > 0.03]
+        sig = [(l, c) for l, c in (pairs or []) if abs(c) > 0.03]
         if sig:
             tw = sum(abs(c) for _, c in sig)
             aw = sum(abs(c) for _, c in sig if (c > 0) == fav_home)
@@ -953,6 +956,15 @@ def _consensus_bucket(factors_json, fav_home):
     except Exception:
         pass
     return '40–60%'
+
+
+def _consensus_bucket(factors_json, fav_home):
+    """Fraction of significant-factor weight aligned with pick → bucket label."""
+    try:
+        pairs = json.loads(factors_json or '[]')
+    except Exception:
+        pairs = []
+    return _consensus_bucket_from_pairs(pairs, fav_home)
 
 
 # ── Grade-conditional probability calibration ────────────────────────────────
@@ -1854,6 +1866,22 @@ def _recompute_market_edge_shrink(sport='MLB'):
           flush=True)
 
 
+def _trust_blend(vals, prior, baseline_roi, min_n=5, norm=60.0):
+    """Credibility-weighted blend of a bucket's empirical ROI (relative to
+    baseline_roi) toward its hand-tuned prior — shared by every trust-weight
+    recompute pass (moneyline, spread, ...) so the blend math lives in one
+    place. alpha = min(n/50, 1.0): 100% prior below `min_n` samples, 100%
+    empirical at n>=50. `norm` controls how many ROI points of relative lift
+    map to the full 0-1 range (default ±30% -> norm=60)."""
+    n = len(vals)
+    if n < min_n:
+        return prior
+    avg = sum(vals) / n
+    empirical = max(0.05, min(1.0, 0.5 + (avg - baseline_roi) / norm))
+    alpha = min(n / 50.0, 1.0)
+    return round(alpha * empirical + (1 - alpha) * prior, 4)
+
+
 def _recompute_trust_weights(sport='MLB'):
     """
     Derive per-bucket ROI weights from resolved game_predictions and update
@@ -1947,23 +1975,11 @@ def _recompute_trust_weights(sport='MLB'):
             else:                    cbk = '70–75%'
             calib_bkts[cbk].append(roi_pct)
 
-    NORM = 60.0   # ±30% relative ROI → full 0–1 range (30% × 2 = 60)
-    MIN_N = 5
-
-    def _blend(vals, prior):
-        n = len(vals)
-        if n < MIN_N:
-            return prior
-        avg = sum(vals) / n
-        empirical = max(0.05, min(1.0, 0.5 + (avg - baseline_roi) / NORM))
-        alpha = min(n / 50.0, 1.0)
-        return round(alpha * empirical + (1 - alpha) * prior, 4)
-
     new_weights = {
-        'cons':   {k: _blend(cons_bkts[k],   _PRIOR_CONS[k])   for k in cons_bkts},
-        'edge':   {k: _blend(edge_bkts[k],   _PRIOR_EDGE[k])   for k in edge_bkts},
-        'favdog': {k: _blend(favdog_bkts[k], _PRIOR_FAVDOG[k]) for k in favdog_bkts},
-        'calib':  {k: _blend(calib_bkts[k],  _PRIOR_CALIB[k])  for k in calib_bkts},
+        'cons':   {k: _trust_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
+        'edge':   {k: _trust_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
+        'favdog': {k: _trust_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
+        'calib':  {k: _trust_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
         'n': n_total,
         'baseline_roi': round(baseline_roi, 2),
         'computed_at': datetime.now(timezone.utc).isoformat(),
@@ -2046,6 +2062,205 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
         favdog_val = w['favdog'].get(fl, 0.5)
 
     # Calibration bucket: pick_prob range → historical ROI signal
+    pp = pick_prob * 100
+    if pp < 52:   cbk = '50–52%'
+    elif pp < 54: cbk = '52–54%'
+    elif pp < 56: cbk = '54–56%'
+    elif pp < 58: cbk = '56–58%'
+    elif pp < 60: cbk = '58–60%'
+    elif pp < 65: cbk = '60–65%'
+    elif pp < 70: cbk = '65–70%'
+    else:         cbk = '70–75%'
+    calib_val = w['calib'].get(cbk, 0.5)
+
+    raw = (0.50 * cons_val + 0.40 * edge_val + 0.00 * favdog_val + 0.10 * calib_val)
+    score = round(raw * 100)
+
+    if detail:
+        return {
+            'score': score,
+            'c':  round(cons_val,   3), 'cl': ck,
+            'e':  round(edge_val,   3), 'el': ek,
+            'f':  round(favdog_val, 3), 'fl': fl,
+            'k':  round(calib_val,  3), 'kl': cbk,
+        }
+    return score
+
+
+# ── Spread Trust Score (spread_model.VALIDATED_SPORTS — MLB, NHL) ───────────
+# Same composite-scoring idea as _trust_score above, applied to the spread
+# market instead of moneyline. No new DB column: everything is replayed from
+# the already-persisted factors_json via spread_model.weighted_factors/
+# cover_prob, the same way _recompute_spread_confidence_tiers already proves
+# out for margin alone. Deliberately recomputes cover_prob fresh here rather
+# than trusting the stored spread_cover_prob column, which is populated via
+# spread_proxy (not spread_model) at write time — see spread_model.py's
+# VALIDATED_SPORTS docstring: same pick side, different probability
+# magnitude, which matters for edge/calibration bucketing.
+_SPREAD_TRUST_WEIGHTS = {}
+
+
+def _default_spread_trust_weights():
+    return _default_trust_weights()
+
+
+def _spread_pick_vars(sport, factors_json, spread_pick_line, spread_home_price, spread_away_price):
+    """Shared per-row extraction for _recompute_spread_trust_weights and
+    _spread_trust_score. Returns (favors_home, pick_prob, mkt_implied,
+    amer_odds, wf_rows) or None if this row can't be evaluated — either
+    missing fields, or spread_model has no fitted coefficients for `sport`."""
+    if not factors_json or spread_pick_line is None or not spread_home_price or not spread_away_price:
+        return None
+    try:
+        factors = json.loads(factors_json or '[]')
+    except Exception:
+        return None
+    if not factors:
+        return None
+    cover_prob = spread_model.cover_prob(sport, factors, spread_pick_line)
+    if cover_prob is None:
+        return None
+    vf_h, vf_a = _vig_free_implied(spread_home_price, spread_away_price)
+    if vf_h is None:
+        return None
+    favors_home = cover_prob >= 0.5
+    pick_prob   = cover_prob if favors_home else 1.0 - cover_prob
+    mkt_implied = vf_h if favors_home else vf_a
+    amer_odds   = spread_home_price if favors_home else spread_away_price
+    wf          = spread_model.weighted_factors(sport, factors)
+    wf_rows     = wf['rows'] if wf else []
+    return favors_home, pick_prob, mkt_implied, amer_odds, wf_rows
+
+
+def _recompute_spread_trust_weights(sport):
+    """Spread-market sibling of _recompute_trust_weights — same bucket/blend
+    machinery (_trust_blend, _PRIOR_*), applied to resolved spread picks
+    instead of moneyline. No-ops for sports outside spread_model.VALIDATED_SPORTS
+    (today: MLB, NHL) since there's no fitted factor model to replay otherwise.
+    Called from _recompute_all_calibration alongside the moneyline pass."""
+    if sport not in spread_model.VALIDATED_SPORTS:
+        return
+
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.sport == sport,
+            GamePrediction.spread_covered.isnot(None),
+            GamePrediction.factors_json.isnot(None),
+            GamePrediction.spread_pick_line.isnot(None),
+            GamePrediction.spread_home_price.isnot(None),
+            GamePrediction.spread_away_price.isnot(None),
+        ).all()
+
+    base_vals = []
+    rows = []
+    for p in resolved:
+        ext = _spread_pick_vars(sport, p.factors_json, p.spread_pick_line,
+                                 p.spread_home_price, p.spread_away_price)
+        if ext is None:
+            continue
+        favors_home, pick_prob, mkt_implied, amer_odds, wf_rows = ext
+        won = bool(p.spread_covered) == favors_home
+        try:
+            o = int(amer_odds)
+            profit = o / 100.0 if o > 0 else 100.0 / (-o)
+        except (TypeError, ValueError):
+            continue
+        base_vals.append(profit if won else -1.0)
+        edge = round((pick_prob - mkt_implied) * 100, 1)
+        roi_pct = (profit if won else -1.0) * 100
+        rows.append((favors_home, pick_prob, edge, mkt_implied, wf_rows, roi_pct))
+
+    n_total = len(rows)
+    if n_total < 10 or not base_vals:
+        return  # too few replayable games for any empirical signal
+    baseline_roi = sum(base_vals) / len(base_vals) * 100
+
+    cons_bkts   = {k: [] for k in _PRIOR_CONS}
+    edge_bkts   = {k: [] for k in _PRIOR_EDGE}
+    favdog_bkts = {k: [] for k in _PRIOR_FAVDOG}
+    calib_bkts  = {k: [] for k in _PRIOR_CALIB}
+
+    for favors_home, pick_prob, edge, mkt_implied, wf_rows, roi_pct in rows:
+        ck = _consensus_bucket_from_pairs(wf_rows, favors_home)
+        cons_bkts[ck].append(roi_pct)
+
+        if edge < -6:    ek = '< -6%'
+        elif edge < -2:  ek = '-6 to -2%'
+        elif edge <= 5:  ek = '-2 to +5%'
+        elif edge <= 10: ek = '+5 to +10%'
+        else:            ek = '> +10%'
+        edge_bkts[ek].append(roi_pct)
+
+        favdog_bkts['Fav' if mkt_implied >= 0.5 else 'Dog'].append(roi_pct)
+
+        pp = pick_prob * 100
+        if pp < 52:   cbk = '50–52%'
+        elif pp < 54: cbk = '52–54%'
+        elif pp < 56: cbk = '54–56%'
+        elif pp < 58: cbk = '56–58%'
+        elif pp < 60: cbk = '58–60%'
+        elif pp < 65: cbk = '60–65%'
+        elif pp < 70: cbk = '65–70%'
+        else:         cbk = '70–75%'
+        calib_bkts[cbk].append(roi_pct)
+
+    new_weights = {
+        'cons':   {k: _trust_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
+        'edge':   {k: _trust_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
+        'favdog': {k: _trust_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
+        'calib':  {k: _trust_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
+        'n': n_total,
+        'baseline_roi': round(baseline_roi, 2),
+        'computed_at': datetime.now(timezone.utc).isoformat(),
+    }
+
+    with _TRUST_LOCK:
+        _SPREAD_TRUST_WEIGHTS[sport] = new_weights
+
+    print(f'[spread-trust-weights] recomputed from {n_total} {sport} spread picks '
+          f'(baseline ROI {baseline_roi:+.1f}%).', flush=True)
+
+
+def _spread_trust_score(sport, factors_json, spread_pick_line, spread_home_price,
+                         spread_away_price, detail=False):
+    """Spread-market sibling of _trust_score — same 50/40/0/10 component
+    blend and _PRIOR_*/credibility machinery, but scored against a fresh
+    spread_model.cover_prob/weighted_factors replay (_spread_pick_vars)
+    instead of moneyline's home_prob/factors_json. 0-100, or a detail dict
+    when detail=True. Returns 0 (or {}) if this sport has no fitted
+    spread_model or the row is missing required fields."""
+    if sport not in spread_model.VALIDATED_SPORTS:
+        return ({} if detail else 0)
+    ext = _spread_pick_vars(sport, factors_json, spread_pick_line, spread_home_price, spread_away_price)
+    if ext is None:
+        return ({} if detail else 0)
+    favors_home, pick_prob, mkt_implied, amer_odds, wf_rows = ext
+    edge = round((pick_prob - mkt_implied) * 100, 1)
+
+    with _TRUST_LOCK:
+        w = dict(_SPREAD_TRUST_WEIGHTS.get(sport) or _default_spread_trust_weights())
+
+    sig = [(l, c) for l, c in (wf_rows or []) if abs(c) > 0.03]
+    if sig:
+        total_w  = sum(abs(c) for _, c in sig)
+        align_w  = sum(abs(c) for _, c in sig if (c > 0) == favors_home)
+        ratio    = align_w / total_w if total_w > 0 else 0.5
+        ck       = _consensus_bucket_from_pairs(wf_rows, favors_home)
+        cons_val = 0.70 * w['cons'].get(ck, 0.5) + 0.30 * ratio
+    else:
+        cons_val, ck = 0.5, '40–60%'
+
+    e = edge or 0
+    if e < -6:    ek = '< -6%'
+    elif e < -2:  ek = '-6 to -2%'
+    elif e <= 5:  ek = '-2 to +5%'
+    elif e <= 10: ek = '+5 to +10%'
+    else:         ek = '> +10%'
+    edge_val = w['edge'].get(ek, 0.5)
+
+    fl = 'Fav' if mkt_implied >= 0.5 else 'Dog'
+    favdog_val = w['favdog'].get(fl, 0.5)
+
     pp = pick_prob * 100
     if pp < 52:   cbk = '50–52%'
     elif pp < 54: cbk = '52–54%'
@@ -5895,6 +6110,56 @@ def model_performance():
         'lift_roi': round(avg_roi - baseline_roi, 1) if (avg_roi is not None and baseline_roi is not None) else None,
     })
 
+  # ── Spread Trust Score buckets (diagnostic: does the score separate ROI?) ───
+  # Only computed for the Spread tab on a spread_model.VALIDATED_SPORTS sport
+  # (MLB, NHL) — see _spread_trust_score's docstring for why. Intentionally no
+  # lift_wr/lift_roi columns here: baseline_wr/baseline_roi above are the
+  # moneyline baseline and aren't a meaningful comparison for spread picks.
+  spread_trust_bucket_stats = []
+  if bet_type == 'spread' and sport in spread_model.VALIDATED_SPORTS:
+    _sts_order = ['70+', '55–70', '42–55', '28–42', '< 28']
+    _sts_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _sts_order}
+    for p in resolved:
+      if p.spread_covered is None:
+        continue
+      ext = _spread_pick_vars(sport, p.factors_json, p.spread_pick_line,
+                               p.spread_home_price, p.spread_away_price)
+      if ext is None:
+        continue
+      favors_home, _pick_prob, _mkt_implied, amer_odds, _wf_rows = ext
+      sts = _spread_trust_score(sport, p.factors_json, p.spread_pick_line,
+                                 p.spread_home_price, p.spread_away_price)
+      if sts == 0:
+        continue
+      if   sts >= 70: slbl = '70+'
+      elif sts >= 55: slbl = '55–70'
+      elif sts >= 42: slbl = '42–55'
+      elif sts >= 28: slbl = '28–42'
+      else:           slbl = '< 28'
+      won = bool(p.spread_covered) == favors_home
+      try:
+        o = int(amer_odds)
+        profit = o / 100.0 if o > 0 else 100.0 / (-o)
+      except (TypeError, ValueError):
+        continue
+      bkt = _sts_bkts[slbl]
+      bkt['total'] += 1
+      if won:
+        bkt['wins'] += 1
+      bkt['roi'].append(profit if won else -1.0)
+
+    for lbl in _sts_order:
+      bkt = _sts_bkts[lbl]
+      if bkt['total'] == 0:
+        continue
+      roi_vals = bkt['roi']
+      spread_trust_bucket_stats.append({
+          'label':    lbl,
+          'count':    bkt['total'],
+          'win_rate': round(bkt['wins'] / bkt['total'] * 100, 1),
+          'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
+      })
+
   # ── Market agreement (model vs opening market) ──────────────────────────────
   _mkt_order = ['< -6%', '-6 to -2%', '-2 to +5%', '+5 to +10%', '> +10%']
   _mkt_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _mkt_order}
@@ -6412,6 +6677,7 @@ def model_performance():
       factor_stats=factor_stats,
       rank_stats=rank_stats,
       score_bucket_stats=score_bucket_stats,
+      spread_trust_bucket_stats=spread_trust_bucket_stats,
       market_agree_stats=market_agree_stats,
       consensus_stats=consensus_stats,
       fav_dog_stats=fav_dog_stats,
@@ -8474,6 +8740,7 @@ def _recompute_all_calibration(sport):
     safe to call for sports with few/no resolved games (each recompute_*
     function no-ops below its own minimum sample size)."""
     _recompute_trust_weights(sport)
+    _recompute_spread_trust_weights(sport)
     _recompute_team_bias(sport)
     _recompute_market_edge_shrink(sport)
     _recompute_unified_rank_stats(sport)
