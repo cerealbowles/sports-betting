@@ -4393,6 +4393,45 @@ _HUB_CACHE_TTL = 60  # seconds — long enough to absorb refreshes/back-and-fort
                      # nav chrome (bankroll, open-bet/sheet counts) has to
                      # reflect the current DB state on every request, not
                      # whatever it was when the cache was last filled.
+_hub_refresh_lock = threading.Lock()
+_hub_refreshing = False  # guarded by _hub_refresh_lock — collapses concurrent
+                         # stale-cache hits into a single background rebuild
+                         # instead of one per request.
+
+
+def _rebuild_hub_cache():
+  """Does the actual 6-sport fan-out and stores the result in _hub_cache.
+  Runs either inline (nothing cached yet — a request has to wait on
+  *something*) or on a background thread (stale-while-revalidate path in
+  index() below)."""
+  global _hub_refreshing
+  today = datetime.now(_ET).date()
+  today_str = today.strftime('%Y-%m-%d')
+
+  # url_for needs a request context, which the background-refresh thread
+  # (stale-while-revalidate path in index() below) never has — these are
+  # fixed routes with no args, so resolving them inside a throwaway
+  # test_request_context works the same as doing it from a real request.
+  with app.test_request_context():
+    hrefs = {sport: url_for(endpoint) for sport, icon, endpoint in _HUB_SPORTS}
+
+  with ThreadPoolExecutor(max_workers=len(_HUB_SPORTS)) as pool:
+    futures = [pool.submit(_hub_sport_data, sport, icon, hrefs[sport], today_str)
+               for sport, icon, endpoint in _HUB_SPORTS]
+    results = [f.result() for f in futures]
+
+  sport_summaries = [summary for summary, _picks in results]
+  unified_picks = [p for _summary, picks in results for p in picks]
+  unified_picks = [p for p in unified_picks if p['edge'] > 0]
+  unified_picks.sort(key=lambda p: -p['edge'])
+  unified_picks = unified_picks[:12]
+
+  today_display = _fmt(today, '%A, %B %-d')
+
+  _hub_cache['data'] = (sport_summaries, unified_picks, today_display)
+  _hub_cache['ts'] = time.time()
+  with _hub_refresh_lock:
+    _hub_refreshing = False
 
 
 @app.route('/')
@@ -4409,31 +4448,26 @@ def index():
   parallel via a thread pool rather than one after another — sequentially
   this page was paying the full cold-cache cost of every sport, one at a
   time, on every visit (schedule data's TTL is only 2 min, well under the
-  cache-warmer's 2-hour cadence). A short-lived result cache on top means
-  repeat visits inside that window don't redo any of it."""
+  cache-warmer's 2-hour cadence).
+
+  Stale-while-revalidate: once there's anything cached at all, a request
+  past _HUB_CACHE_TTL still gets served that stale copy immediately — a
+  background thread refreshes it for next time instead of making the
+  request itself pay the full per-sport rebuild cost (measured up to ~17s
+  cold, dwarfing the TTL). Only the very first request after a cold start,
+  with nothing cached yet, blocks on the synchronous rebuild."""
+  global _hub_refreshing
   now = time.time()
-  if _hub_cache['data'] is not None and (now - _hub_cache['ts']) < _HUB_CACHE_TTL:
-    sport_summaries, unified_picks, today_display = _hub_cache['data']
-  else:
-    today = datetime.now(_ET).date()
-    today_str = today.strftime('%Y-%m-%d')
+  if _hub_cache['data'] is None:
+    _rebuild_hub_cache()
+  elif (now - _hub_cache['ts']) >= _HUB_CACHE_TTL:
+    with _hub_refresh_lock:
+      already_refreshing = _hub_refreshing
+      _hub_refreshing = True
+    if not already_refreshing:
+      threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
 
-    with ThreadPoolExecutor(max_workers=len(_HUB_SPORTS)) as pool:
-      futures = [pool.submit(_hub_sport_data, sport, icon, url_for(endpoint), today_str)
-                 for sport, icon, endpoint in _HUB_SPORTS]
-      results = [f.result() for f in futures]
-
-    sport_summaries = [summary for summary, _picks in results]
-    unified_picks = [p for _summary, picks in results for p in picks]
-    unified_picks = [p for p in unified_picks if p['edge'] > 0]
-    unified_picks.sort(key=lambda p: -p['edge'])
-    unified_picks = unified_picks[:12]
-
-    today_display = _fmt(today, '%A, %B %-d')
-
-    _hub_cache['data'] = (sport_summaries, unified_picks, today_display)
-    _hub_cache['ts'] = now
-
+  sport_summaries, unified_picks, today_display = _hub_cache['data']
   return render_template('today.html', today_display=today_display,
                          sport_summaries=sport_summaries, top_picks=unified_picks)
 
