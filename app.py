@@ -59,6 +59,56 @@ _ET = ZoneInfo('America/New_York')
 app = Flask(__name__)
 app.jinja_env.filters['fmt'] = _fmt
 
+# ── Season-phase badges ──────────────────────────────────────────────────────
+# Each sport's current phase (preseason/regular/postseason), surfaced as a
+# small badge wherever a sport's name/header appears so an off night doesn't
+# read as "no games today" when it's actually "this league isn't in regular
+# season at all right now" (e.g. NBA preseason, MLB/WNBA postseason). Backed
+# by each *_api.py module's own get_season_phase() (reuses that module's
+# existing scoreboard cache — no extra API calls in the common case); cached
+# here for a few hours since this changes at most a handful of times a year,
+# with a short retry window on failure so a transient network blip doesn't
+# hide the badge all day.
+_SEASON_PHASE_FNS = {
+    'MLB':  mlb_api.get_season_phase,
+    'NHL':  nhl_api.get_season_phase,
+    'NFL':  nfl_api.get_season_phase,
+    'CFB':  cfb_api.get_season_phase,
+    'NBA':  nba_api.get_season_phase,
+    'WNBA': wnba_api.get_season_phase,
+}
+_SEASON_PHASE_CACHE = {}
+_SEASON_PHASE_LOCK = threading.Lock()
+_SEASON_PHASE_TTL_OK   = 6 * 3600   # 6h — phase barely changes
+_SEASON_PHASE_TTL_FAIL = 600        # 10m — retry soon after a fetch failure
+
+
+def _get_season_phase(sport):
+    """'preseason' / 'regular' / 'postseason' / None (unknown sport, fetch
+    failure, or true offseason — nothing to badge in any of those cases)."""
+    sport = (sport or '').upper()
+    fn = _SEASON_PHASE_FNS.get(sport)
+    if fn is None:
+        return None
+    now = time.time()
+    with _SEASON_PHASE_LOCK:
+        cached = _SEASON_PHASE_CACHE.get(sport)
+    if cached is not None:
+        phase, ts = cached
+        ttl = _SEASON_PHASE_TTL_OK if phase else _SEASON_PHASE_TTL_FAIL
+        if now - ts < ttl:
+            return phase
+    try:
+        phase = fn()
+    except Exception:
+        phase = None
+    with _SEASON_PHASE_LOCK:
+        _SEASON_PHASE_CACHE[sport] = (phase, now)
+    return phase
+
+
+app.jinja_env.globals['season_phase'] = _get_season_phase
+
 # DB_PATH can be overridden via env var — used to mount a persistent Docker volume.
 # Defaults to ./instance/bets.db for local dev (matches Flask's default instance folder).
 _DB_PATH = os.environ.get('DB_PATH', os.path.join(app.instance_path, 'bets.db'))

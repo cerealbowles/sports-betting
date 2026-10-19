@@ -510,6 +510,25 @@ def get_today_game_count():
     return 0
 
 
+def get_season_phase():
+    """Current NHL season phase ('preseason'/'regular'/'postseason'), or
+    None on fetch failure/unknown. Reuses the same cached ESPN scoreboard
+    fetch _get_espn_event_map() makes for today (same cache key) — no extra
+    request in the common case. ESPN's leagues[0].season.type: 1=preseason,
+    2=regular, 3=postseason."""
+    today_str = _today_et()
+    date_compact = today_str.replace('-', '')
+    data = _cached_get(f"{ESPN_NHL_SCOREBOARD}?dates={date_compact}&limit=100",
+                        f'espn_nhl_sched_{today_str}', _TTL['schedule'])
+    if not data:
+        return None
+    try:
+        t = data['leagues'][0]['season']['type']['type']
+    except (KeyError, IndexError, TypeError):
+        return None
+    return {1: 'preseason', 2: 'regular', 3: 'postseason'}.get(t)
+
+
 def _get_period_linescore(game_id):
     """Period-by-period goals for one game from the gamecenter boxscore
     endpoint — only meaningful once a game has started, and this is a

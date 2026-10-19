@@ -2,11 +2,12 @@
    the mockup's "sport pill-tabs" above the date-nav. Distinct from the header's
    sport-switch dropdown (base.html) — this is always-visible, page-local nav.
    Expects `current_sport` (e.g. 'NBA') set by the including page. #}
+{% import "_season_badge.html" as sb %}
 {% set _sp_list = [('MLB','mlb_schedule'), ('NHL','nhl_schedule'), ('NFL','nfl_schedule'), ('CFB','cfb_schedule'), ('NBA','nba_schedule'), ('WNBA','wnba_schedule')] %}
 <div role="group" aria-label="Sport" style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px; margin-bottom:12px;">
-<div style="display:flex; flex-wrap:wrap; gap:6px;">
+<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
 {% for label, endpoint in _sp_list %}
-<a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if label == current_sport else '' }}" style="text-decoration:none;">{{ label }}</a>
+<a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if label == current_sport else '' }}" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px;">{{ label }}{{ sb.season_badge(label) }}</a>
 {% endfor %}
 </div>
 <a href="{{ url_for('model_performance', sport=current_sport) }}" class="sport-chip" style="text-decoration:none;">📊 Model</a>

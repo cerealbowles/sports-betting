@@ -939,6 +939,23 @@ def get_today_game_count():
     return len([e for e in events if _event_date_et(e.get('date', '')) == today_str])
 
 
+def get_season_phase():
+    """Current NFL season phase ('preseason'/'regular'/'postseason'), or
+    None on fetch failure/unknown. Reuses the same cached scoreboard fetch
+    as get_today_game_count() (same cache key) — no extra request in the
+    common case. ESPN's leagues[0].season.type: 1=preseason, 2=regular,
+    3=postseason."""
+    today_str = _today_et()
+    data = _cached_get(ESPN_NFL, {}, f'nfl_{today_str}', _TTL['scoreboard'])
+    if not data:
+        return None
+    try:
+        t = data['leagues'][0]['season']['type']['type']
+    except (KeyError, IndexError, TypeError):
+        return None
+    return {1: 'preseason', 2: 'regular', 3: 'postseason'}.get(t)
+
+
 def build_schedule_context():
     """Returns today's NFL games from ESPN with model predictions. Empty list during offseason."""
     today_str = _today_et()

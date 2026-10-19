@@ -2,6 +2,7 @@
 {% block title %}Today — Dead Money{% endblock %}
 
 {% block content %}
+{% import "_season_badge.html" as sb %}
 {% set _flavor_lines = [
     'The board is restless tonight.',
     'Something wicked this way covers.',
@@ -80,6 +81,7 @@
     <div class="hub-sport-card-head">
         <span class="hub-sport-icon">{{ s.icon }}</span>
         <span class="hub-sport-name">{{ s.sport }}</span>
+        {{ sb.season_badge(s.sport) }}
         <span class="game-count">{{ s.games_today }} game{{ 's' if s.games_today != 1 }}</span>
     </div>
     {% if not s.top_picks %}

@@ -1,0 +1,18 @@
+{# Sport-level season-phase badge — shown next to a sport's name wherever it
+   appears as a header (nav sport-switcher, the schedule-page pill row, the
+   Tonight hub's sport cards), so an off night doesn't read as "no games"
+   when the whole league simply isn't in regular season right now (e.g. NBA
+   preseason, MLB/WNBA postseason). Backed by the `season_phase(sport)` jinja
+   global (app.py), itself backed by each sport module's own
+   get_season_phase(). Reuses the existing per-game preseason-badge/
+   playoffs-badge classes (schedule game cards already use them for an
+   individual game's own phase) so a sport-level badge looks identical to a
+   game-level one. Renders nothing for 'regular' or unknown/None. #}
+{% macro season_badge(sport) %}
+{%- set _p = season_phase(sport) -%}
+{%- if _p == 'preseason' -%}
+<span class="preseason-badge">Preseason</span>
+{%- elif _p == 'postseason' -%}
+<span class="playoffs-badge">Postseason</span>
+{%- endif -%}
+{% endmacro %}

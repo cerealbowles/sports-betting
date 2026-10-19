@@ -757,6 +757,35 @@ def get_today_game_count():
     return len(dates[0].get('games', [])) if dates else 0
 
 
+def get_season_phase():
+    """Current MLB season phase ('preseason'/'regular'/'postseason'), or
+    None on fetch failure/true offseason. Uses the Stats API's /seasons
+    endpoint (date ranges for pre-season/regular-season/post-season)
+    rather than scanning for a nearby game's gameType, since the date-range
+    check still works on a day with zero scheduled games (e.g. a World
+    Series travel day) — a per-game signal alone can't tell 'off night
+    mid-postseason' from 'preseason' from 'true offseason'."""
+    year = datetime.now(_ET).year
+    data = _cached_get(f'{MLB_API}/seasons', {'sportId': 1, 'season': year},
+                        f'mlb_seasons_{year}', _TTL['stats'])
+    if not data:
+        return None
+    seasons = data.get('seasons') or []
+    if not seasons:
+        return None
+    s = seasons[0]
+    today = _today_et()
+    for phase, (start_key, end_key) in (
+        ('preseason',  ('preSeasonStartDate', 'preSeasonEndDate')),
+        ('postseason', ('postSeasonStartDate', 'postSeasonEndDate')),
+        ('regular',    ('regularSeasonStartDate', 'regularSeasonEndDate')),
+    ):
+        start, end = s.get(start_key), s.get(end_key)
+        if start and end and start <= today <= end:
+            return phase
+    return None  # true offseason — nothing to flag
+
+
 def build_schedule_context(target_date=None):
     """Returns target_date's (default today, YYYY-MM-DD ET) games with full
     context ready for the template."""
