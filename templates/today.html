@@ -83,7 +83,24 @@
         <span class="game-count">{{ s.games_today }} game{{ 's' if s.games_today != 1 }}</span>
     </div>
     {% if not s.top_picks %}
-    <p class="hub-sport-empty">{{ 'Dead quiet. No games tonight.' if s.games_today == 0 else 'No positive-edge picks right now' }}</p>
+      {% if s.games_today == 0 %}
+      <p class="hub-sport-empty">Dead quiet. No games tonight.</p>
+      {% else %}
+      <p class="hub-sport-empty" style="margin-bottom:6px;">No positive-edge picks right now</p>
+      <ul class="hub-sport-picks">
+      {% for g in s.all_games[:8] %}
+        <li>
+            <span class="hub-pick-matchup">{{ g.matchup }}</span>
+            {% if g.status == 'Final' %}<span class="hub-pick-label" style="color:var(--text-muted);">Final</span>
+            {% elif g.status == 'Live' %}<span class="hub-pick-label" style="color:var(--win);">Live</span>
+            {% elif g.game_time_utc %}<span class="hub-pick-label game-time" data-utc="{{ g.game_time_utc }}" style="color:var(--text-muted);">—</span>{% endif %}
+        </li>
+      {% endfor %}
+      {% if s.all_games | length > 8 %}
+        <li><span class="hub-pick-matchup" style="color:var(--text-muted);">+{{ s.all_games | length - 8 }} more</span></li>
+      {% endif %}
+      </ul>
+      {% endif %}
     {% else %}
     <ul class="hub-sport-picks">
     {% for p in s.top_picks %}

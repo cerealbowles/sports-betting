@@ -4214,6 +4214,26 @@ def _cache_only(*modules):
             m._CACHE_ONLY = False
 
 
+def _schedule_matchups(schedule):
+  """Flat list of {'matchup', 'game_time_utc', 'status'} for every game in a
+  schedule (list of {'games': [...]} day dicts) — used by the Today hub so a
+  sport with games but no qualifying pick still shows its actual slate
+  instead of just 'no picks'. Tolerates both abbr/abbrev key naming used
+  across the sport-specific *_api.py modules (MLB uses 'abbr', everyone
+  else 'abbrev')."""
+  out = []
+  for day in (schedule or []):
+    for g in day.get('games', []):
+      away = g.get('away') or {}
+      home = g.get('home') or {}
+      out.append({
+          'matchup':       f"{away.get('abbrev') or away.get('abbr') or ''} @ {home.get('abbrev') or home.get('abbr') or ''}",
+          'game_time_utc': g.get('game_time_utc', ''),
+          'status':        g.get('status', ''),
+      })
+  return out
+
+
 def _hub_sport_data(sport, icon, href, today_str):
   """One sport's slice of the Today hub: fetch its schedule, run the same
   prep each sport's own page runs, and rank its recommendations. Runs
@@ -4228,6 +4248,7 @@ def _hub_sport_data(sport, icon, href, today_str):
     with app.app_context():
       games_today = 0
       top_picks = []
+      all_games = []
 
       if sport == 'MLB':
         with _cache_only(mlb_api):
@@ -4239,6 +4260,7 @@ def _hub_sport_data(sport, icon, href, today_str):
         # this; the hub only needs to read what's already there.
         _attach_graded_results(schedule, 'MLB')
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+        all_games = _schedule_matchups(schedule)
         all_candidates = _mlb_candidates(schedule)
         best_bets = _mlb_best_bets(schedule, all_candidates)
         ranked = sorted(best_bets or all_candidates[:5], key=lambda b: -b['adj_edge'])
@@ -4287,6 +4309,7 @@ def _hub_sport_data(sport, icon, href, today_str):
         _stamp_movement(schedule, sport)
         _attach_graded_results(schedule, sport)
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+        all_games = _schedule_matchups(schedule)
         recommended = _edge_recommendations(schedule, sport, limit=5)
         for r in recommended:
           g = r['game']
@@ -4304,10 +4327,11 @@ def _hub_sport_data(sport, icon, href, today_str):
               'pips':          r['pips'],
           })
   except Exception:
-    games_today, top_picks = 0, []
+    games_today, top_picks, all_games = 0, [], []
 
   summary = {'sport': sport, 'icon': icon, 'href': href,
-             'games_today': games_today, 'top_picks': top_picks[:3]}
+             'games_today': games_today, 'top_picks': top_picks[:3],
+             'all_games': all_games}
   return summary, top_picks
 
 
