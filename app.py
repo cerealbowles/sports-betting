@@ -5381,40 +5381,107 @@ _SPORT_META = {
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
 
-def _recommended_bets_history(resolved, sport):
-  """How the ★ recommendations have held up. Replays the star rule
-  (_edge_star.html) over resolved games using the odds and model probability
-  stored at prediction time: the market favorite is recommended when the model
-  gives it a >=4pt edge over the vig-free price, Kelly is positive and the
-  payout is at least 0.25 to 1. MLB probabilities get the same consensus
+def _rb_extract_ml(p, sport):
+  """Per-row extraction for the moneyline market: returns
+  (pick_prob, mkt_implied, amer_odds, won, pick_label, opp_label) or None if
+  this row can't be evaluated. MLB probabilities get the same consensus
   calibration the live star uses (the rank-history blend isn't stored, so it
-  isn't replayed). Flat 1u stakes at the stored American price."""
+  isn't replayed)."""
+  if p.home_prob is None or not p.home_odds or not p.away_odds:
+    return None
+  vf_h, vf_a = _vig_free_implied(p.home_odds, p.away_odds)
+  if vf_h is None:
+    return None
+  fav_home = vf_h >= 0.5
+  prob = p.home_prob if fav_home else (p.away_prob if p.away_prob is not None else 1.0 - p.home_prob)
+  if sport == 'MLB':
+    raw_fav = p.home_prob if p.home_prob >= 0.5 else 1.0 - p.home_prob
+    adj = _consensus_adjusted_prob(raw_fav, p.factors_json, p.home_prob >= 0.5, sport='MLB')
+    # adjustment is defined for the model's pick side; mirror it onto the favorite
+    prob = adj if (p.home_prob >= 0.5) == fav_home else 1.0 - adj
+  amer = p.home_odds if fav_home else p.away_odds
+  mkt = vf_h if fav_home else vf_a
+  won = bool(p.home_won) == fav_home
+  pick = p.home_team if fav_home else p.away_team
+  opp = p.away_team if fav_home else p.home_team
+  return prob, mkt, amer, won, pick, opp
+
+
+def _rb_extract_spread(p, sport):
+  """Per-row extraction for the spread market (spread_proxy cover prob vs the
+  odds_api line captured at prediction time). Only meaningful for
+  spread_model.VALIDATED_SPORTS, gated by the caller."""
+  if p.spread_cover_prob is None or not p.spread_home_price or not p.spread_away_price or p.spread_covered is None:
+    return None
+  vf_h, vf_a = _vig_free_implied(p.spread_home_price, p.spread_away_price)
+  if vf_h is None:
+    return None
+  fav_home = p.spread_cover_prob >= 0.5
+  prob = p.spread_cover_prob if fav_home else 1.0 - p.spread_cover_prob
+  amer = p.spread_home_price if fav_home else p.spread_away_price
+  mkt = vf_h if fav_home else vf_a
+  won = bool(p.spread_covered) == fav_home
+  line = p.spread_pick_line if p.spread_pick_line is not None else 0.0
+  val = line if fav_home else -line
+  team = p.home_team if fav_home else p.away_team
+  pick = f"{team} {'+' if val > 0 else ''}{val:g}"
+  opp = p.away_team if fav_home else p.home_team
+  return prob, mkt, amer, won, pick, opp
+
+
+def _rb_extract_total(p, sport):
+  """Per-row extraction for the total market (_total_over_prob vs the
+  odds_api O/U line captured at prediction time). Only meaningful for sports
+  _total_confidence_tier doesn't flag 'unproven', gated by the caller."""
+  if p.total_over_prob is None or not p.total_over_price or not p.total_under_price or p.total_went_over is None:
+    return None
+  vf_o, vf_u = _vig_free_implied(p.total_over_price, p.total_under_price)
+  if vf_o is None:
+    return None
+  fav_over = p.total_over_prob >= 0.5
+  prob = p.total_over_prob if fav_over else 1.0 - p.total_over_prob
+  amer = p.total_over_price if fav_over else p.total_under_price
+  mkt = vf_o if fav_over else vf_u
+  won = bool(p.total_went_over) == fav_over
+  line = p.total_pick_line
+  pick = f"{'O' if fav_over else 'U'} {line:g}" if line is not None else ('O' if fav_over else 'U')
+  opp = f"{p.away_team} @ {p.home_team}"
+  return prob, mkt, amer, won, pick, opp
+
+
+_RB_EXTRACTORS = {'moneyline': _rb_extract_ml, 'spread': _rb_extract_spread, 'total': _rb_extract_total}
+
+
+def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
+  """How the ★ recommendations have held up for a given market. Replays the
+  star rule (_best_market_pick/_edge_star.html) over resolved games using the
+  odds and model probability stored at prediction time: the picked side is
+  recommended when the model gives it a >=4pt edge over the vig-free price,
+  Kelly is positive and the payout is at least 0.25 to 1. Flat 1u stakes at
+  the stored American price. Spread/total are only evaluated for sports with
+  a validated model in that market (mirrors _best_market_pick's restriction),
+  same as the live ★ — elsewhere this returns None so the card hides itself."""
+  if bet_type == 'spread' and sport not in spread_model.VALIDATED_SPORTS:
+    return None
+  if bet_type == 'total' and _total_confidence_tier(sport, 'high') == 'unproven':
+    return None
+  extractor = _RB_EXTRACTORS.get(bet_type, _rb_extract_ml)
+
   rows = []
   for p in resolved:
-    if p.home_prob is None or not p.home_odds or not p.away_odds:
+    ext = extractor(p, sport)
+    if ext is None:
       continue
-    vf_h, vf_a = _vig_free_implied(p.home_odds, p.away_odds)
-    if vf_h is None:
-      continue
-    fav_home = vf_h >= 0.5
-    prob = p.home_prob if fav_home else (p.away_prob if p.away_prob is not None else 1.0 - p.home_prob)
-    if sport == 'MLB':
-      raw_fav = p.home_prob if p.home_prob >= 0.5 else 1.0 - p.home_prob
-      adj = _consensus_adjusted_prob(raw_fav, p.factors_json, p.home_prob >= 0.5, sport='MLB')
-      # adjustment is defined for the model's pick side; mirror it onto the favorite
-      prob = adj if (p.home_prob >= 0.5) == fav_home else 1.0 - adj
-    amer = p.home_odds if fav_home else p.away_odds
+    prob, mkt, amer, won, pick, opp = ext
     b = (amer / 100.0) if amer > 0 else (-100.0 / amer)
-    mkt = vf_h if fav_home else vf_a
     edge = (prob - mkt) * 100
     kelly = (b * prob - (1 - prob)) / b
     if not (kelly > 0 and edge >= 4 and b >= 0.25):
       continue
-    won = bool(p.home_won) == fav_home
     rows.append({
         'date': p.game_date,
-        'pick': p.home_team if fav_home else p.away_team,
-        'opp': p.away_team if fav_home else p.home_team,
+        'pick': pick,
+        'opp': opp,
         'amer': amer,
         'edge': round(edge, 1),
         'won': won,
@@ -5426,21 +5493,18 @@ def _recommended_bets_history(resolved, sport):
   n = len(rows)
   wins = sum(1 for r in rows if r['won'])
   units = sum(r['profit'] for r in rows)
-  # Baseline: how the same market favorites did when NOT recommended.
+  # Baseline: how the same market's model-favored side did when NOT recommended.
   base_n = base_w = 0
   rec_keys = {(r['date'], r['pick']) for r in rows}
   for p in resolved:
-    if not p.home_odds or not p.away_odds:
+    ext = extractor(p, sport)
+    if ext is None:
       continue
-    vf_h, _ = _vig_free_implied(p.home_odds, p.away_odds)
-    if vf_h is None:
-      continue
-    fav_home = vf_h >= 0.5
-    team = p.home_team if fav_home else p.away_team
-    if (p.game_date, team) in rec_keys:
+    _, _, _, won, pick, _ = ext
+    if (p.game_date, pick) in rec_keys:
       continue
     base_n += 1
-    base_w += 1 if bool(p.home_won) == fav_home else 0
+    base_w += 1 if won else 0
 
   cum, running = [], 0.0
   for r in rows:
@@ -6330,7 +6394,7 @@ def model_performance():
     except ValueError:
       grp['date_label'] = grp['date']
 
-  rec_bets = _recommended_bets_history(resolved, sport)
+  rec_bets = _recommended_bets_history(resolved, sport, bet_type)
 
   resp = make_response(render_template('model_performance.html',
       rec_bets=rec_bets,
