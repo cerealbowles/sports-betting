@@ -2099,6 +2099,14 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
 # magnitude, which matters for edge/calibration bucketing.
 _SPREAD_TRUST_WEIGHTS = {}
 
+# Minimum _spread_trust_score to earn a spread ★ (_best_market_pick) or count
+# as a recommended pick in the historical replay (_recommended_bets_history).
+# Set from the first live backtest on real NHL data (982 resolved picks):
+# score < 28 ran 35.2% WR / -39.7% ROI (n=54) while every bucket >= 28 cleared
+# +8% to +24% ROI. Revisit this cutoff once more sports/seasons accumulate —
+# it's fit from NHL's bucket boundaries, not re-derived per sport.
+_SPREAD_TRUST_FLOOR = 28
+
 
 def _default_spread_trust_weights():
     return _default_trust_weights()
@@ -2108,13 +2116,19 @@ def _spread_pick_vars(sport, factors_json, spread_pick_line, spread_home_price, 
     """Shared per-row extraction for _recompute_spread_trust_weights and
     _spread_trust_score. Returns (favors_home, pick_prob, mkt_implied,
     amer_odds, wf_rows) or None if this row can't be evaluated — either
-    missing fields, or spread_model has no fitted coefficients for `sport`."""
+    missing fields, or spread_model has no fitted coefficients for `sport`.
+    `factors_json` accepts either a stored JSON string (resolved GamePrediction
+    rows) or an already-parsed [(label, contrib), ...] list (the live
+    model.get('factors') _best_market_pick works with) — same shape either way."""
     if not factors_json or spread_pick_line is None or not spread_home_price or not spread_away_price:
         return None
-    try:
-        factors = json.loads(factors_json or '[]')
-    except Exception:
-        return None
+    if isinstance(factors_json, str):
+        try:
+            factors = json.loads(factors_json)
+        except Exception:
+            return None
+    else:
+        factors = factors_json
     if not factors:
         return None
     cover_prob = spread_model.cover_prob(sport, factors, spread_pick_line)
@@ -5118,6 +5132,15 @@ def _best_market_pick(game):
         mkt_implied = vf_h if favors_home else vf_a
         amer_odds   = hp_price if favors_home else ap_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
+        # Spread Trust Score floor — backtest on 982 resolved NHL picks showed
+        # score < _SPREAD_TRUST_FLOOR running -39.7% ROI (n=54) while every
+        # higher bucket cleared +8% to +24%. No-op outside VALIDATED_SPORTS,
+        # where _spread_trust_score always returns 0 (would wrongly fail
+        # every pick rather than skipping a meaningless check).
+        if q and sport in spread_model.VALIDATED_SPORTS:
+          sts = _spread_trust_score(sport, factors, home_spread, hp_price, ap_price)
+          if sts < _SPREAD_TRUST_FLOOR:
+            q = None
         if q:
           edge, kelly, b = q
           abbr = home_abbr if favors_home else away_abbr
@@ -5693,6 +5716,11 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
     kelly = (b * prob - (1 - prob)) / b
     if not (kelly > 0 and edge >= 4 and b >= 0.25):
       continue
+    if bet_type == 'spread' and sport in spread_model.VALIDATED_SPORTS:
+      sts = _spread_trust_score(sport, p.factors_json, p.spread_pick_line,
+                                 p.spread_home_price, p.spread_away_price)
+      if sts < _SPREAD_TRUST_FLOOR:
+        continue
     rows.append({
         'date': p.game_date,
         'pick': pick,
