@@ -43,7 +43,8 @@ _cache = {}
 # often with no issues.
 # summary (weather + injuries) doesn't need live-game freshness — 10 min
 # is plenty and keeps this to one extra request per game per refresh cycle.
-_TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600, 'prior_season_stats': 24 * 3600}
+_TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600, 'prior_season_stats': 24 * 3600,
+        'player_grades': 180}
 
 
 def _parse_linescores(comp, regulation_periods=4):
@@ -109,6 +110,26 @@ def _cached_get(url, params, key, ttl):
         data = r.json()
     except Exception:
         return _cache[key][0] if key in _cache else None
+    _cache[key] = (data, now)
+    return data
+
+
+def _cached_compute(key, ttl, compute_fn):
+    """TTL memoization for pure-Python/DB-backed computations, as opposed to
+    _cached_get's HTTP fetches — shares the same _cache dict/namespace.
+    Used around the offense/defense grade pipeline (a DB query plus
+    aggregation per team, run twice per game — once per build_schedule_
+    context/build_week_schedule_context call) so repeat requests (the
+    Tonight hub's per-sport fetch, back-to-back page loads, etc.) don't
+    redo it from scratch. A few minutes of staleness is fine: the
+    underlying box scores only change when a game finishes, at most a
+    handful of times a day."""
+    now = time.time()
+    if key in _cache:
+        data, ts = _cache[key]
+        if now - ts < ttl:
+            return data
+    data = compute_fn()
     _cache[key] = (data, now)
     return data
 
@@ -777,19 +798,23 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
                 # per-player "key defender" identification exists yet from
                 # this box score source (sparse D-stat categories, no
                 # position labels — see identify_key_players()'s docstring).
-                games_with_players = nfl_stats_db.get_team_games_with_players_db(
-                    team_id, before_date=game_date_et)
-                # "As of today" (not game_date_et, which can be days in the
-                # future) — ESPN's injury report is current-state, so the
-                # latest snapshot we have IS the best available read for any
-                # upcoming game, not just one dated on the game's own day.
-                unavailable_ids = nfl_stats_db.get_unavailable_player_ids(team_id, _today_str)
-                offense = (nfl_player_model.compute_offense_grade_excluding(games_with_players, unavailable_ids)
-                           if games_with_players else None)
+                def _compute():
+                    games_with_players = nfl_stats_db.get_team_games_with_players_db(
+                        team_id, before_date=game_date_et)
+                    # "As of today" (not game_date_et, which can be days in
+                    # the future) — ESPN's injury report is current-state,
+                    # so the latest snapshot we have IS the best available
+                    # read for any upcoming game, not just one dated on the
+                    # game's own day.
+                    unavailable_ids = nfl_stats_db.get_unavailable_player_ids(team_id, _today_str)
+                    offense = (nfl_player_model.compute_offense_grade_excluding(games_with_players, unavailable_ids)
+                               if games_with_players else None)
 
-                _, def_list = nfl_stats_db.get_team_game_aggregates_db(team_id, before_date=game_date_et)
-                defense = nfl_player_model.compute_defense_grade(def_list)
-                return offense, defense
+                    _, def_list = nfl_stats_db.get_team_game_aggregates_db(team_id, before_date=game_date_et)
+                    defense = nfl_player_model.compute_defense_grade(def_list)
+                    return offense, defense
+                return _cached_compute(f'nfl_grades_{team_id}_{game_date_et}_{_today_str}',
+                                        _TTL['player_grades'], _compute)
 
             home_off, home_def = _grades(home.get('id'))
             away_off, away_def = _grades(away.get('id'))

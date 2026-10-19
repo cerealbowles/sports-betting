@@ -28,6 +28,7 @@ _TTL = {
     'recent':   3600,   # 1 hour
     'goalie':   21600,  # 6 hours
     'prior_season_stats': 24 * 3600,
+    'player_grades': 180,
 }
 
 # Below this many current-season games played, a team's points%/split/gf-ga
@@ -71,6 +72,25 @@ def _cached_get(url, key, ttl):
         data = r.json()
     except Exception:
         return _cache[key][0] if key in _cache else None
+    _cache[key] = (data, now)
+    return data
+
+
+def _cached_compute(key, ttl, compute_fn):
+    """TTL memoization for pure-Python/DB-backed computations, as opposed to
+    _cached_get's HTTP fetches — shares the same _cache dict/namespace.
+    Used around the skater/goalie grade pipeline (a DB query plus
+    aggregation per team, run twice per game — once per build_schedule_
+    context call) so repeat requests (the Tonight hub's per-sport fetch,
+    back-to-back page loads, etc.) don't redo it from scratch. A few
+    minutes of staleness is fine: the underlying box scores only change
+    when a game finishes, at most a handful of times a day."""
+    now = time.time()
+    if key in _cache:
+        data, ts = _cache[key]
+        if now - ts < ttl:
+            return data
+    data = compute_fn()
     _cache[key] = (data, now)
     return data
 
@@ -699,14 +719,17 @@ def build_schedule_context(target_date=None):
                             nhl_stats_db.ingest_injury_report(tid, injuries_by_team.get(tid, []), today_str)
 
                 def _grades(team_id):
-                    games_with_players = nhl_stats_db.get_team_games_with_players_db(
-                        team_id, before_date=today_str)
-                    if not games_with_players:
-                        return None, None
-                    unavailable_ids = nhl_stats_db.get_unavailable_player_ids(team_id, today_str)
-                    skater = nhl_player_model.compute_skater_grade(games_with_players)
-                    goalie = nhl_player_model.compute_goalie_grade_excluding(games_with_players, unavailable_ids)
-                    return skater, goalie
+                    def _compute():
+                        games_with_players = nhl_stats_db.get_team_games_with_players_db(
+                            team_id, before_date=today_str)
+                        if not games_with_players:
+                            return None, None
+                        unavailable_ids = nhl_stats_db.get_unavailable_player_ids(team_id, today_str)
+                        skater = nhl_player_model.compute_skater_grade(games_with_players)
+                        goalie = nhl_player_model.compute_goalie_grade_excluding(games_with_players, unavailable_ids)
+                        return skater, goalie
+                    return _cached_compute(f'nhl_grades_{team_id}_{today_str}',
+                                            _TTL['player_grades'], _compute)
 
                 home_skater, home_goalie = _grades(espn_home_id)
                 away_skater, away_goalie = _grades(espn_away_id)
