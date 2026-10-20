@@ -16,8 +16,15 @@ import json
 import os
 from datetime import datetime, timezone
 
-_SNAPSHOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               'market_edge_shrink_snapshot.json')
+# Lives next to bets.db (DB_PATH's directory — /data in prod, via the bind
+# mount in docker-compose.yml) rather than next to this source file: the code
+# directory is baked into the Docker image and rebuilt from git on every
+# deploy, which was silently resetting this file to whatever was last
+# committed and discarding every live recalibration in between.
+_DATA_DIR = os.path.dirname(os.environ.get('DB_PATH', '')) or \
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance')
+os.makedirs(_DATA_DIR, exist_ok=True)
+_SNAPSHOT_PATH = os.path.join(_DATA_DIR, 'market_edge_shrink_snapshot.json')
 
 # Prior rate — from MLB's initial 50-game / 8-large-edge-game study (see
 # mlb_model.py). Used for any sport until it has its own recomputed snapshot.

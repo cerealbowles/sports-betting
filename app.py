@@ -1728,8 +1728,12 @@ _OMEN_LOCK = threading.Lock()
 # live recompute themselves. Written every time _recompute_team_bias() runs
 # in this (the real app) process — i.e. at most once per nightly resolve /
 # daily pick generation, not once per backfill invocation.
+# Must match mlb_model.py's _TEAM_BIAS_SNAPSHOT_PATH (both read/write the same
+# file) — lives in DB_PATH's directory so it survives deploys/rebuilds; see
+# that module's comment, and market_edge_calibration.py for the same fix
+# applied to the market-edge shrink snapshot.
 _TEAM_BIAS_SNAPSHOT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'team_bias_snapshot.json')
+    os.path.dirname(_DB_PATH), 'team_bias_snapshot.json')
 
 
 def _save_team_bias_snapshot(sport, bias):
@@ -5894,6 +5898,51 @@ def _rb_extract_total(p, sport):
 _RB_EXTRACTORS = {'moneyline': _rb_extract_ml, 'spread': _rb_extract_spread, 'total': _rb_extract_total}
 
 
+# Deploy date of the market-edge-shrink/team-bias snapshot persistence fix:
+# those snapshot files lived next to the source code and were baked into the
+# Docker image, so every git-pull-and-rebuild deploy silently reset the live
+# recalibrated rate back to whatever was last committed, discarding
+# corrections in between (see market_edge_calibration.py). Picks from before
+# this date may have been made under a stale, under-shrunk rate; the ★
+# history below reports its headline stats only from this cutoff forward so
+# a now-fixed infra bug doesn't keep dragging down the numbers, while still
+# keeping the full history available underneath.
+_CALIBRATION_FIX_DATE = '2026-10-20'
+
+
+def _rb_stats_block(rows):
+  """Record/ROI/cum/by-month summary over an already-filtered list of ★ rows
+  (see _recommended_bets_history) — shared so the all-time and
+  since-calibration-fix blocks compute identically."""
+  n = len(rows)
+  if not n:
+    return None
+  wins = sum(1 for r in rows if r['won'])
+  units = sum(r['profit'] for r in rows)
+  cum, running = [], 0.0
+  for r in rows:
+    running += r['profit']
+    cum.append(round(running, 2))
+  months = {}
+  for r in rows:
+    m = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'n': 0, 'w': 0, 'units': 0.0})
+    m['n'] += 1
+    m['w'] += 1 if r['won'] else 0
+    m['units'] += r['profit']
+  by_month = []
+  for m in sorted(months.values(), key=lambda x: x['month'], reverse=True):
+    by_month.append({'month': m['month'], 'n': m['n'], 'record': f"{m['w']}-{m['n'] - m['w']}",
+                     'win_rate': round(100 * m['w'] / m['n'], 1),
+                     'units': round(m['units'], 2), 'roi': round(100 * m['units'] / m['n'], 1)})
+  return {
+      'n': n, 'wins': wins, 'losses': n - wins,
+      'win_rate': round(100 * wins / n, 1),
+      'units': round(units, 2), 'roi': round(100 * units / n, 1),
+      'avg_edge': round(sum(r['edge'] for r in rows) / n, 1),
+      'cum': cum, 'by_month': by_month,
+  }
+
+
 def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
   """How the ★ recommendations have held up for a given market. Replays the
   star rule (_best_market_pick/_edge_star.html) over resolved games using the
@@ -5937,9 +5986,6 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
   if not rows:
     return None
   rows.sort(key=lambda r: r['date'])
-  n = len(rows)
-  wins = sum(1 for r in rows if r['won'])
-  units = sum(r['profit'] for r in rows)
   # Baseline: how the same market's model-favored side did when NOT recommended.
   base_n = base_w = 0
   rec_keys = {(r['date'], r['pick']) for r in rows}
@@ -5953,30 +5999,17 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
     base_n += 1
     base_w += 1 if won else 0
 
-  cum, running = [], 0.0
-  for r in rows:
-    running += r['profit']
-    cum.append(round(running, 2))
-  months = {}
-  for r in rows:
-    m = months.setdefault(r['date'][:7], {'month': r['date'][:7], 'n': 0, 'w': 0, 'units': 0.0})
-    m['n'] += 1
-    m['w'] += 1 if r['won'] else 0
-    m['units'] += r['profit']
-  by_month = []
-  for m in sorted(months.values(), key=lambda x: x['month'], reverse=True):
-    by_month.append({'month': m['month'], 'n': m['n'], 'record': f"{m['w']}-{m['n'] - m['w']}",
-                     'win_rate': round(100 * m['w'] / m['n'], 1),
-                     'units': round(m['units'], 2), 'roi': round(100 * m['units'] / m['n'], 1)})
+  all_time = _rb_stats_block(rows)
+  since_fix_rows = [r for r in rows if r['date'] >= _CALIBRATION_FIX_DATE]
+  since_fix = _rb_stats_block(since_fix_rows) if since_fix_rows else None
+
   return {
-      'n': n, 'wins': wins, 'losses': n - wins,
-      'win_rate': round(100 * wins / n, 1),
-      'units': round(units, 2), 'roi': round(100 * units / n, 1),
-      'avg_edge': round(sum(r['edge'] for r in rows) / n, 1),
+      **all_time,
       'baseline_n': base_n,
       'baseline_wr': round(100 * base_w / base_n, 1) if base_n else None,
-      'cum': cum, 'by_month': by_month,
       'recent': list(reversed(rows[-15:])),
+      'calibration_fix_date': _CALIBRATION_FIX_DATE,
+      'since_fix': since_fix,
   }
 
 

@@ -33,6 +33,21 @@
     </div>
 </div>
 
+{% if rec_bets.since_fix and rec_bets.since_fix.n < rec_bets.n %}
+<div class="card" style="margin-bottom:14px;padding:10px 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">
+        Since {{ rec_bets.calibration_fix_date }} calibration fix
+    </div>
+    <div style="font-size:0.85rem;">
+        <span style="font-weight:700;">{{ rec_bets.since_fix.wins }}-{{ rec_bets.since_fix.losses }}</span>
+        <span style="color:var(--text-muted);">({{ rec_bets.since_fix.n }} picks)</span>
+        · <span class="{{ 'calib-err-ok' if rec_bets.since_fix.roi > 0 else 'calib-err-neg' }}">{{ '+' if rec_bets.since_fix.roi > 0 }}{{ rec_bets.since_fix.roi }}% ROI</span>
+        · <span class="{{ 'status-win' if rec_bets.since_fix.units >= 0 else 'status-loss' }}">{{ '+' if rec_bets.since_fix.units > 0 }}{{ rec_bets.since_fix.units }}u</span>
+    </div>
+    <p class="section-note" style="margin:0;flex-basis:100%;">Picks before this date may have been made under an under-shrunk model-vs-market calibration (a persistence bug reset the live-recalibrated rate back to a stale value on every deploy) — the all-time numbers above include that period.</p>
+</div>
+{% endif %}
+
 {% if rec_bets.cum | length >= 2 %}
 {% set cmin = ([0] + rec_bets.cum) | min %}
 {% set cmax = ([0] + rec_bets.cum) | max %}

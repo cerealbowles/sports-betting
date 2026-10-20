@@ -152,8 +152,16 @@ _TEAM_BIAS = {
 # (see app.py's DISABLE_STARTUP_TASKS guard); they get whatever the live app
 # last computed and wrote here, which is the "snapshot once per day/week"
 # behavior instead of "recompute from current DB state on every run".
-_TEAM_BIAS_SNAPSHOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        'team_bias_snapshot.json')
+# Lives next to bets.db (DB_PATH's directory — /data in prod, via the bind
+# mount in docker-compose.yml), not next to this source file: the code
+# directory is baked into the Docker image and rebuilt from git on every
+# deploy, which would silently reset this file on each deploy and discard
+# every live recalibration in between (same bug fixed for
+# market_edge_shrink_snapshot.json — see market_edge_calibration.py).
+_TEAM_BIAS_DATA_DIR = os.path.dirname(os.environ.get('DB_PATH', '')) or \
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance')
+os.makedirs(_TEAM_BIAS_DATA_DIR, exist_ok=True)
+_TEAM_BIAS_SNAPSHOT_PATH = os.path.join(_TEAM_BIAS_DATA_DIR, 'team_bias_snapshot.json')
 
 
 def _load_team_bias_snapshot(sport='MLB'):
