@@ -1235,6 +1235,10 @@ body.embed-mode .container { padding-bottom: 0; }
 .mc-chip.mc-confidence-unproven .mc-big { color: var(--loss); }
 .mc-chip.mc-confidence-unproven .mc-pips i.on { background: var(--loss); }
 .mc-chip-marketonly .mc-side { color: var(--text-muted); }
+/* Marks whichever chip's factors panel is currently showing below the
+   chips row — mirrors the old .mf-tab.active look now that the chips
+   themselves are the tab switcher (switchFactorsTab, main.js). */
+.mc-chip.mc-chip-active { border-color: var(--blue); background: rgba(96,165,250,0.08); }
 
 /* Live win/loss badge (checkmark/X) — top-right corner of the open-bet's
    mc-chip, shown once a game is Live/Final and we can tell whether this
@@ -1427,43 +1431,17 @@ body.embed-mode .container { padding-bottom: 0; }
 .factor-neg { color: var(--loss); background: rgba(255,178,122,0.55); }
 .factor-val { width: 42px; text-align: right; font-weight: 600; }
 
-/* ── Diverging factor bobbers (CFB/NFL game-card details) — always-on,
-     one mini bobber per row: a center-split track, an endpoint circle
-     (✓ agrees with the model's pick / ✗ disagrees), its
-     value floating beside the marker on the line, and the label on the
-     opposite side of the center divider at a fixed offset. Replaces the
-     old FanDuel/Model number rows + <details class="model-factors"> toggle
-     for these two sports only — other sports still use .model-factors. ── */
-.factors-collapsible { border-top: 1px solid var(--border); }
-.factors-collapsible .factors-panel { border-top: none; }
-.factors-collapsible-summary {
-  padding: 10px 14px;
-  font-size: 0.67rem; color: var(--text-muted);
-  letter-spacing: 0.3px; text-transform: uppercase;
-  cursor: pointer; user-select: none;
-}
-.factors-collapsible-summary:hover { color: var(--text); }
+/* ── Diverging factor bobbers (game-card details) — always-on, one mini
+     bobber per row: a center-split track, an endpoint circle (✓ agrees
+     with the model's pick / ✗ disagrees), its value floating beside the
+     marker on the line, and the label on the opposite side of the center
+     divider at a fixed offset. Lives directly under the market chips
+     (_market_chips.html) now — the chips are the tab switcher
+     (switchFactorsTab, main.js), so there's no tab row or collapsible
+     wrapper of its own here any more. ── */
 .factors-panel {
-  border-top: 1px solid var(--border);
-  padding: 10px 14px 14px;
+  padding: 10px 2px 4px;
 }
-/* ML/Spread/Total tab switcher (_factors_panel.html) — all three render
-   through the same diverging-bar chart, overlaid in the same spot with
-   only the active one visible, instead of three sections stacked one
-   after another. */
-.mf-tabs {
-  display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  overflow: hidden; margin-bottom: 12px;
-}
-.mf-tab {
-  flex: 1; padding: 7px 4px; font-size: 0.72rem; font-weight: 700;
-  letter-spacing: 0.3px; text-transform: uppercase;
-  border: none; border-right: 1px solid var(--border); border-radius: 0;
-  background: var(--bg-card-2); color: var(--text-muted); cursor: pointer;
-  box-shadow: none; transform: none;
-}
-.mf-tab:last-child { border-right: none; }
-.mf-tab.active { background: rgba(96,165,250,0.14); color: var(--blue); }
 .mf-panel[hidden] { display: none; }
 
 /* ── Live/final team-stats panel (ESPN boxscore totals) — replaces the

@@ -510,8 +510,8 @@
         {% endif %}
 
         {% if game.model %}
+        {% set mc_show_factors = true %}
         {% include "_market_chips.html" %}
-        {% include "_factors_panel.html" %}
         {% endif %}
 
     </div>

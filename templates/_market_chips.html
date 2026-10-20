@@ -247,12 +247,16 @@
 {% endif %}
 {% endmacro %}
 
+{% set mc_show_factors_on = mc_show_factors is defined and mc_show_factors %}
+{% set mc_factors_default = ('ml' if ml_factors_panel(game) else ('spread' if spread_factors_panel(game) else ('total' if total_factors_panel(game) else none))) if mc_show_factors_on else none %}
 <div class="mc-wrap">
     <div class="mc-chips">
-        {# ML — surfaces the "Model Factors" panel behind this number instead
-           of jumping straight to the bet slip (the bet is still one tap
-           away from there, once you've seen why the model says what it says). #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
+        {# ML — surfaces the "Model Factors" panel directly below the chips
+           instead of jumping straight to the bet slip (the bet is still one
+           tap away from there, once you've seen why the model says what it
+           says). The clicked chip IS the tab switcher for that panel now —
+           no separate ML/Spread/Total tab row. #}
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}{{ ' mc-chip-active' if mc_factors_default == 'ml' }}" data-mc-kind="ml" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
             {{ move_header('ML', game.movement_profile, movement_stat(game.movement_profile, game.sport)) }}
             {% if mc_ml_has %}
             <span class="mc-big">{{ mc_ml_model_side }}</span>
@@ -268,7 +272,7 @@
            to its "Spread" tab — spread_model.py, a real regression fit
            against actual margins, not derived from the win-prob model's
            logit like the old spread_proxy.py was. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_model_ok }}{{ ' mc-hot' if mc_sp_model_ok and mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_model_ok }}" title="{% if mc_sp_model_ok %}{% if mc_sp_validated %}Model predicted spread{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model spread{% endif %}"{% if mc_sp_model_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_model_ok }}{{ ' mc-hot' if mc_sp_model_ok and mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_model_ok }}{{ ' mc-chip-active' if mc_factors_default == 'spread' }}" data-mc-kind="spread" title="{% if mc_sp_model_ok %}{% if mc_sp_validated %}Model predicted spread{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model spread{% endif %}"{% if mc_sp_model_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
             {{ move_header('SPREAD', game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport)) }}
             {% if mc_sp_model_ok %}
             <span class="mc-big">{{ mc_sp_model_fav_val | round(1) }}</span>
@@ -287,7 +291,7 @@
            whichever side the market itself currently favors. Switches the
            shared factors panel (_factors_panel.html) to its "Total" tab —
            totals don't share the ML win-prob model's factor list. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
+        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}{{ ' mc-chip-active' if mc_factors_default == 'total' }}" data-mc-kind="total" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
             {{ move_header('TOTAL', game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport)) }}
             {% if mc_tot_model_ok %}
             <span class="mc-big">{{ game.total_model.total_projection | round | int }}</span>
@@ -309,6 +313,10 @@
             {% endif %}
         </div>
     </div>
+
+    {% if mc_show_factors_on %}
+    {% include "_factors_panel.html" %}
+    {% endif %}
 
     <details class="mc-fold" onclick="event.stopPropagation()">
         <summary class="mc-toggle">Market vs model</summary>

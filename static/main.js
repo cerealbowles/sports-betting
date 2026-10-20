@@ -124,23 +124,22 @@ if (btn && btn.tagName === 'BUTTON') btn.click();
 /* Switches which of ML/Spread/Total is visible inside the single shared
    factors panel (_factors_panel.html) — all three render through the same
    chart (_factor_diverge_panel.html), overlaid in the same spot rather
-   than stacked as separate sections, with a small tab row picking which
-   one shows. `container` is the <details class="factors-collapsible">
-   element (there's exactly one per game now, not one per model type). */
+   than stacked as separate sections. The market chips themselves
+   (_market_chips.html) are the tab switcher now — there's no separate
+   tab row — so this also mirrors the "active" state onto whichever chip
+   matches `kind`. `container` is the `.factors-panel` div (there's
+   exactly one per game, a sibling of `.mc-chips` inside `.mc-wrap`). */
 function switchFactorsTab(container, kind) {
-container.querySelectorAll('.mf-tab').forEach(function (b) {
-    b.classList.toggle('active', b.getAttribute('data-mf-tab') === kind);
-});
 container.querySelectorAll('.mf-panel').forEach(function (p) {
     p.hidden = p.getAttribute('data-mf-panel') !== kind;
 });
+var wrap = container.closest('.mc-wrap');
+if (wrap) {
+    wrap.querySelectorAll('.mc-chip[data-mc-kind]').forEach(function (c) {
+    c.classList.toggle('mc-chip-active', c.getAttribute('data-mc-kind') === kind);
+    });
 }
-document.addEventListener('click', function (e) {
-var tab = e.target.closest('.mf-tab');
-if (!tab) return;
-var container = tab.closest('.factors-collapsible');
-if (container) switchFactorsTab(container, tab.getAttribute('data-mf-tab'));
-});
+}
 
 /* Recap lineup tabs (nfl_recap.html) — Recommended/Best possible/Sim
    Median/Sim Ceiling used to render as a cramped 2x2 grid of four full
@@ -197,7 +196,6 @@ setTimeout(function () {
     // valid in an id attribute but break an unescaped CSS #id selector.
     var target = document.getElementById('factors-' + gameKey);
     if (!target || !details.contains(target)) return;
-    target.open = true;
     switchFactorsTab(target, kind);
     target.scrollIntoView({behavior: 'smooth', block: 'start'});
 }, 350);
