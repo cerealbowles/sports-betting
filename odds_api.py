@@ -12,10 +12,10 @@ _ET = ZoneInfo('America/New_York')
 BASE = "https://api.the-odds-api.com/v4/sports"
 
 _cache = {}
-_TTL = 7200   # 2 hours — matches cron schedule below
+_TTL = 3600   # 1 hour — matches cron schedule below
 _FETCH_WINDOW = (8, 22)  # safety gate: never hit API outside this ET window
 # Fixed ET hours the cron job fires — predictable, budget-safe
-_SCHEDULE_HOURS = (8, 10, 12, 14, 16, 18, 20)
+_SCHEDULE_HOURS = (8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
 
 # File-based cache so restarts don't burn API quota
 _CACHE_FILE = os.path.join(

@@ -7682,23 +7682,33 @@ def _nfl_dst_card_context(team_id, opponent_team_id, season):
   if own_defense['recent'] is None and own_defense['season'] is None:
     own_defense = None
 
-  opponent_offense = None
-  if opponent_team_id:
-    offense_list, _ = nfl_stats_db.get_team_game_aggregates_db(opponent_team_id, limit=NFL_CARD_RECENT_WINDOW)
-    if offense_list:
-      games = len(offense_list)
-      opponent_offense = {
-        'games': games,
-        'pass_att_pg': sum(o['pass_att'] for o in offense_list) / games,
-        'pass_yds_pg': sum(o['pass_yds'] for o in offense_list) / games,
-        'pass_td_pg': sum(o['pass_td'] for o in offense_list) / games,
-        'rush_att_pg': sum(o['rush_att'] for o in offense_list) / games,
-        'rush_yds_pg': sum(o['rush_yds'] for o in offense_list) / games,
-        'recv_tgt_pg': sum(o['recv_tgt'] for o in offense_list) / games,
-        'recv_yds_pg': sum(o['recv_yds'] for o in offense_list) / games,
-        'giveaways_pg': sum(o['giveaways'] for o in offense_list) / games,
-      }
+  opponent_offense = _nfl_team_offense_snapshot(opponent_team_id) if opponent_team_id else None
   return own_defense, opponent_offense
+
+
+def _nfl_team_offense_snapshot(team_id, recent_window=NFL_CARD_RECENT_WINDOW):
+  """Last `recent_window` games' per-game offensive output for `team_id`
+  (pass/rush volume+yards, giveaways) — the same shape _nfl_dst_card_
+  context() builds for the OPPONENT offense a DST card faces, factored
+  out so /nfl/compare can call it for a player's OWN team too (as a
+  stand-in "offensive environment" signal alongside that player's
+  defensive matchup grade). Returns None if this team has no stored
+  games in the window."""
+  offense_list, _ = nfl_stats_db.get_team_game_aggregates_db(team_id, limit=recent_window)
+  if not offense_list:
+    return None
+  games = len(offense_list)
+  return {
+    'games': games,
+    'pass_att_pg': sum(o['pass_att'] for o in offense_list) / games,
+    'pass_yds_pg': sum(o['pass_yds'] for o in offense_list) / games,
+    'pass_td_pg': sum(o['pass_td'] for o in offense_list) / games,
+    'rush_att_pg': sum(o['rush_att'] for o in offense_list) / games,
+    'rush_yds_pg': sum(o['rush_yds'] for o in offense_list) / games,
+    'recv_tgt_pg': sum(o['recv_tgt'] for o in offense_list) / games,
+    'recv_yds_pg': sum(o['recv_yds'] for o in offense_list) / games,
+    'giveaways_pg': sum(o['giveaways'] for o in offense_list) / games,
+  }
 
 
 @app.route('/nfl/players')
@@ -7868,6 +7878,91 @@ def nfl_player_detail(player_id):
                           splits=splits, opponent_explosiveness=opponent_explosiveness,
                           dst_own_defense=dst_own_defense, dst_opponent_offense=dst_opponent_offense,
                           opponent_defense=opponent_defense, matchup=matchup)
+
+@app.route('/nfl/compare')
+def nfl_compare():
+  """Side-by-side "who should I start" comparison for two players in one
+  week's slate — reuses the same build_player_pool() projection every
+  other fantasy page relies on, plus the opponent matchup-grade machinery
+  from nfl_player_detail() (_nfl_build_matchup_card) for defensive
+  context, and _nfl_team_offense_snapshot() for each player's OWN team's
+  recent offensive volume as an "offensive environment" stand-in — there's
+  no separate offense-strength model in this app, so this is display-only
+  context next to the projection, same convention as every other card here.
+
+  `a`/`b` (query params): free-text player names, resolved against this
+  week's pool via exact-then-substring case-insensitive match (so
+  "Jayden Daniels" or just "Daniels" both work, as long as "Daniels" isn't
+  ambiguous). `week` (optional): same default as every other /nfl/* page."""
+  week = request.args.get('week', type=int)
+  week_ctx = nfl_api.build_week_games_light(week)
+  games = week_ctx['games']
+  pool = nfl_fantasy.build_player_pool(games) if games else []
+
+  name_a = (request.args.get('a') or '').strip()
+  name_b = (request.args.get('b') or '').strip()
+
+  def resolve(name):
+    if not name:
+      return None, None
+    lname = name.lower()
+    exact = next((p for p in pool if p['name'].lower() == lname), None)
+    if exact:
+      return exact, None
+    matches = [p for p in pool if lname in p['name'].lower()]
+    if len(matches) == 1:
+      return matches[0], None
+    if not matches:
+      return None, f'No player matching "{name}" in this week’s pool.'
+    return None, f'"{name}" matches {len(matches)} players — try a fuller name.'
+
+  player_a, error_a = resolve(name_a)
+  player_b, error_b = resolve(name_b)
+
+  team_abbrevs = _nfl_team_abbrev_map()
+  abbrev_to_team_id = {v: k for k, v in team_abbrevs.items()}
+  season = nfl_api._get_nfl_season()
+  league_profile = _nfl_league_defense_profile(season)
+
+  def build_side(player):
+    if not player:
+      return None
+    is_dst = player['position'] == 'DST'
+    own_team_id = abbrev_to_team_id.get(player.get('team'))
+    opponent_team_id = abbrev_to_team_id.get(player.get('opponent'))
+    if is_dst:
+      matchup = _nfl_build_matchup_card(league_profile, own_team_id, 'DST') if own_team_id else None
+    else:
+      matchup = _nfl_build_matchup_card(league_profile, opponent_team_id, player['position']) if opponent_team_id else None
+    offense = _nfl_team_offense_snapshot(own_team_id) if own_team_id and not is_dst else None
+    return {'player': player, 'matchup': matchup, 'offense': offense, 'is_dst': is_dst}
+
+  side_a = build_side(player_a)
+  side_b = build_side(player_b)
+
+  verdict = None
+  if side_a and side_b:
+    pa, pb = side_a['player'], side_b['player']
+    diff = pa['projection'] - pb['projection']
+    if diff >= 0:
+      leader, trailer, lead_side, trail_side = pa, pb, side_a, side_b
+    else:
+      leader, trailer, lead_side, trail_side = pb, pa, side_b, side_a
+    # Flag when the trailing player's matchup grades meaningfully better
+    # than the leader's — a display-only nudge that the raw projection
+    # gap may be overstating the gap, never a change to either projection.
+    matchup_swings = (trail_side['matchup'] and lead_side['matchup']
+                       and trail_side['matchup']['tone'] == 'good' and lead_side['matchup']['tone'] == 'bad')
+    verdict = {
+      'leader_name': leader['name'], 'trailer_name': trailer['name'],
+      'diff': abs(diff), 'close': abs(diff) < 2.0, 'matchup_swings': matchup_swings,
+    }
+
+  resp = make_response(render_template('nfl_compare.html', week_ctx=week_ctx, subnav_sport='NFL',
+                         name_a=name_a, name_b=name_b, error_a=error_a, error_b=error_b,
+                         side_a=side_a, side_b=side_b, verdict=verdict,
+                         player_names=sorted({p['name'] for p in pool})))
+  return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/cfb')
 def cfb_schedule():
@@ -9165,9 +9260,11 @@ def _start_cache_warmer():
     from zoneinfo import ZoneInfo
 
     scheduler = BackgroundScheduler(daemon=True)
-    # Non-noon runs: 8,10,14,16,18,20 ET — TS alerts only
+    # Non-noon runs: hourly 8-21 ET (noon excluded, covered by the daily-picks
+    # run below) — matches odds_api._SCHEDULE_HOURS/._TTL, bumped from every
+    # 2 hours to hourly now that the odds-API quota has headroom for it.
     scheduler.add_job(_warm_all_caches, 'cron',
-                      hour='8,10,14,16,18,20', minute=0,
+                      hour='8,9,10,11,13,14,15,16,17,18,19,20,21', minute=0,
                       timezone='America/New_York', id='warm_caches')
     # Noon run: TS alerts + daily picks message
     scheduler.add_job(_warm_all_caches_noon, 'cron',

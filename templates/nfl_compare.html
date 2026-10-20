@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}NFL Player Compare — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.cmp-form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.cmp-field { flex: 1; min-width: 160px; }
+.cmp-field label { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
+.cmp-field input { width: 100%; padding: 9px 11px; background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.9rem; }
+.cmp-vs-label { font-size: 0.72rem; color: var(--text-muted); padding: 0 2px 10px; }
+.cmp-submit { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card-2); color: var(--text); font-size: 0.85rem; cursor: pointer; }
+.cmp-error { color: var(--loss); font-size: 0.8rem; margin: -6px 0 10px; }
+
+.cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 700px) { .cmp-grid { grid-template-columns: 1fr; } }
+.cmp-empty { color: var(--text-muted); font-size: 0.85rem; padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+
+.cmp-verdict { padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card-2); margin-bottom: 14px; font-size: 0.85rem; }
+.cmp-verdict strong { color: var(--win); }
+
+.cmp-offense-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.cmp-offense-grid .pc-mini { padding: 8px 10px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NFL' %}
+{% include "_sport_pills.html" %}
+{% set active_tool = 'fantasy' %}
+{% include "_sport_tools.html" %}
+<h1>Compare Players</h1>
+<p class="dfs-subhead">Side-by-side projection, opponent matchup grade, and recent offensive volume for two players in the same week — useful for a start/sit call. Pulled from the same weekly projection as <a href="{{ url_for('nfl_lineup') }}">Fantasy</a>.</p>
+
+<div class="week-nav-header">
+    {% if week_ctx.prev_week %}
+    <a href="{{ url_for('nfl_compare', week=week_ctx.prev_week, a=name_a, b=name_b) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">◂</span>
+    {% endif %}
+    <div class="week-nav-title">
+        Week {{ week_ctx.week }}
+        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
+    </div>
+    {% if week_ctx.next_week %}
+    <a href="{{ url_for('nfl_compare', week=week_ctx.next_week, a=name_a, b=name_b) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
+    {% else %}
+    <span class="week-nav-btn week-nav-disabled">▸</span>
+    {% endif %}
+</div>
+
+<datalist id="cmp-player-names">
+{% for n in player_names %}
+<option value="{{ n }}"></option>
+{% endfor %}
+</datalist>
+
+<form class="cmp-form" method="get" action="{{ url_for('nfl_compare') }}">
+    <input type="hidden" name="week" value="{{ week_ctx.week }}">
+    <div class="cmp-field">
+        <label for="cmp-a">Player A</label>
+        <input id="cmp-a" type="text" name="a" list="cmp-player-names" value="{{ name_a }}" placeholder="e.g. Jayden Daniels" autocomplete="off">
+    </div>
+    <div class="cmp-vs-label">vs</div>
+    <div class="cmp-field">
+        <label for="cmp-b">Player B</label>
+        <input id="cmp-b" type="text" name="b" list="cmp-player-names" value="{{ name_b }}" placeholder="e.g. Caleb Williams" autocomplete="off">
+    </div>
+    <button class="cmp-submit" type="submit">Compare</button>
+</form>
+
+{% if error_a %}<div class="cmp-error">{{ error_a }}</div>{% endif %}
+{% if error_b %}<div class="cmp-error">{{ error_b }}</div>{% endif %}
+
+{% if not side_a and not side_b %}
+<div class="cmp-empty">Type two player names from this week's slate above to compare their projections.</div>
+{% else %}
+
+{% if verdict %}
+<div class="cmp-verdict">
+    {% if verdict.close %}
+    <strong>Toss-up</strong> — {{ verdict.leader_name }} projects just {{ '%.1f'|format(verdict.diff) }} pt{{ 's' if verdict.diff != 1 else '' }} ahead of {{ verdict.trailer_name }}. Lean on the matchup grades below to break the tie.
+    {% else %}
+    <strong>{{ verdict.leader_name }}</strong> projects {{ '%.1f'|format(verdict.diff) }} pts ahead of {{ verdict.trailer_name }} this week.
+    {% endif %}
+    {% if verdict.matchup_swings %}
+    That said, {{ verdict.trailer_name }} has the more favorable matchup — the raw projection gap may be overstating the gap.
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="cmp-grid">
+{% for side in [side_a, side_b] %}
+{% if side %}
+{% set player = side.player %}
+{% set matchup = side.matchup %}
+{% set offense = side.offense %}
+<div class="card">
+    <div class="pc-hero">
+        <div class="pc-player-row">
+            <div class="pc-avatar">{% if side.is_dst %}{{ player.team[:3]|upper }}{% else %}{% set parts = player.name.split() %}{{ ((parts[0][0] if parts else '?') + (parts[-1][0] if parts|length > 1 else '')) | upper }}{% endif %}</div>
+            <div class="pc-player-meta">
+                <div class="pc-eyebrow">{{ player.team }} · {{ player.position }}</div>
+                <h2>{{ player.name }}</h2>
+                <div class="pc-vs">vs {{ player.opponent }}{% if player.position_rank %} · ranked <strong style="color: var(--text);">{{ player.position }}{{ player.position_rank }}</strong> this week{% endif %}</div>
+            </div>
+            <div class="pc-score"><strong>{{ player.projection }}</strong><span>Proj pts</span></div>
+        </div>
+
+        {% if matchup %}
+        {% set tone_label = {'good': 'Favorable', 'neutral': 'Average', 'bad': 'Tough'} %}
+        <div class="pc-verdict">
+            <div class="pc-grade pc-grade-{{ matchup.tone }}">{{ matchup.grade }}</div>
+            <div class="pc-verdict-copy">
+                <strong>{% if side.is_dst %}{{ {'good': 'Defense trending well', 'neutral': 'Defense near average', 'bad': 'Defense trending rough'}[matchup.tone] }}{% else %}{{ tone_label[matchup.tone] }} {{ player.position }} matchup{% endif %}</strong>
+                <span>
+                {% if side.is_dst %}
+                    {{ player.team }}'s defense is {% if matchup.tone == 'good' %}allowing fewer points per game than a typical defense{% elif matchup.tone == 'bad' %}allowing more points per game than a typical defense{% else %}allowing points at a roughly average rate{% endif %}.
+                {% else %}
+                    {{ player.opponent }}'s defense {% if matchup.tone == 'good' %}gives up above-average fantasy production to {{ matchup.bucket_label }}{% elif matchup.tone == 'bad' %}is tougher than average against {{ matchup.bucket_label }}{% else %}is about average against {{ matchup.bucket_label }}{% endif %}.
+                {% endif %}
+                </span>
+            </div>
+            <span class="pc-tag pc-tag-{{ matchup.tone }}">{{ '%+.0f'|format(matchup.pct) }}% {{ 'vs avg' if side.is_dst else 'matchup' }}</span>
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted); font-size: 0.78rem; margin-top: 10px;">Not enough stored games yet to grade this matchup.</p>
+        {% endif %}
+    </div>
+
+    {% if offense %}
+    <div class="dfs-pool-pos-hdr" style="margin-top: 0;">{{ player.team }} offense, last {{ offense.games }} games</div>
+    <div class="cmp-offense-grid">
+        <div class="pc-mini"><span>Pass att/gm</span><strong>{{ '%.1f'|format(offense.pass_att_pg) }}</strong></div>
+        <div class="pc-mini"><span>Pass yds/gm</span><strong>{{ '%.0f'|format(offense.pass_yds_pg) }}</strong></div>
+        <div class="pc-mini"><span>Rush att/gm</span><strong>{{ '%.1f'|format(offense.rush_att_pg) }}</strong></div>
+        <div class="pc-mini"><span>Rush yds/gm</span><strong>{{ '%.0f'|format(offense.rush_yds_pg) }}</strong></div>
+    </div>
+    {% endif %}
+
+    <p class="dfs-note" style="margin-top: 10px;"><button type="button" class="refresh-link" style="background:none;border:none;padding:0;font:inherit;cursor:pointer;" onclick="openPlayerDetail('{{ player.id }}', {{ week_ctx.week }})">Full player card →</button></p>
+</div>
+{% else %}
+<div class="cmp-empty">Enter a player name above.</div>
+{% endif %}
+{% endfor %}
+</div>
+
+{% endif %}
+
+</div>
+<script>
+function openPlayerDetail(playerId, week) {
+    var body = document.getElementById('gameDetailsSheetBody');
+    var overlay = document.getElementById('gameDetailsOverlay');
+    if (!body || !overlay) return;
+    body.innerHTML = '<p class="plyr-empty">Loading…</p>';
+    overlay.style.display = 'flex';
+    overlay.offsetHeight;
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    fetch('/nfl/player/' + encodeURIComponent(playerId) + '?week=' + week)
+        .then(function(r) { return r.text(); })
+        .then(function(html) { body.innerHTML = html; })
+        .catch(function() { body.innerHTML = '<p class="plyr-empty">Couldn\'t load player details.</p>'; });
+}
+</script>
+{% endblock %}

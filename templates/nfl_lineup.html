@@ -104,6 +104,7 @@
 <div role="group" aria-label="Fantasy view" class="sport-chip-bar">
     <button type="button" class="sport-chip sport-chip-active" id="dfs-view-tab-builder" onclick="dfsShowView('builder')">Builder</button>
     <button type="button" class="sport-chip" id="dfs-view-tab-rankings" onclick="dfsShowView('rankings')">Rankings</button>
+    <a href="{{ url_for('nfl_compare', week=week_ctx.week) }}" class="sport-chip">Compare</a>
     <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip">Recap</a>
 </div>
 
