@@ -4430,6 +4430,8 @@ def _hub_sport_data(sport, icon, href, today_str):
               'k_cls':         'edge-pos' if b['adj_edge'] > 0 else 'edge-neutral',
               'game_time_utc': b['game_time_utc'],
               'pips':          _confidence_pips('MLB', 'ml', b['adj_prob'] / 100.0),
+              'omen_score':    b['omen_score'],
+              'score_kind':    b['score_kind'],
           })
       else:
         if sport == 'NHL':
@@ -4474,6 +4476,8 @@ def _hub_sport_data(sport, icon, href, today_str):
               'k_cls':         r['k_cls'],
               'game_time_utc': g.get('game_time_utc', ''),
               'pips':          r['pips'],
+              'omen_score':    r['omen_score'],
+              'score_kind':    r['score_kind'],
           })
   except Exception:
     games_today, top_picks, all_games = 0, [], []
@@ -4522,7 +4526,7 @@ def _rebuild_hub_cache():
   sport_summaries = [summary for summary, _picks in results]
   unified_picks = [p for _summary, picks in results for p in picks]
   unified_picks = [p for p in unified_picks if p['edge'] > 0]
-  unified_picks.sort(key=lambda p: -p['edge'])
+  unified_picks.sort(key=lambda p: -(p['omen_score'] if p['omen_score'] is not None else -1))
   unified_picks = unified_picks[:12]
 
   today_display = _fmt(today, '%A, %B %-d')

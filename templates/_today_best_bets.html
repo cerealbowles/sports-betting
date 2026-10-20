@@ -27,6 +27,7 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;" title="Phantom/Omen Score — 0-100 confidence, used to rank this list">Score</th>
         <th style="padding:5px 8px;text-align:center;">Verdict</th>
       </tr>
     </thead>
@@ -45,6 +46,19 @@
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;">
+        {% if r.omen_score is not none %}
+        {% set om_cls = 'omen-high' if r.omen_score >= 55 else ('omen-mid' if r.omen_score >= 42 else ('omen-low' if r.omen_score >= 28 else 'omen-skip')) %}
+        <span class="kelly-verdict {{ om_cls }}" style="display:inline-flex;align-items:center;gap:3px;" title="{{ 'Phantom Score' if r.score_kind == 'phantom' else 'Omen Score' }}">
+          {% if r.score_kind == 'phantom' %}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 10h.01M15 10h.01M4 20V10a8 8 0 0 1 16 0v10l-2.5-2-2.5 2-2.5-2-2.5 2-2.5-2L4 20z"></path></svg>
+          {% else %}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% endif %}
+          {{ r.omen_score }}
+        </span>
+        {% else %}—{% endif %}
+      </td>
       <td style="padding:6px 8px;text-align:center;">
         <span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span>
         {% if r.pips %}
