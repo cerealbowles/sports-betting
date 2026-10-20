@@ -132,10 +132,20 @@ def _live_clock_map():
 def _get_schedule_raw(target_date=None):
     """NHL's /schedule/now returns a rolling 'gameWeek' window centered on
     today; /schedule/{date} returns the same shape but centered on that date
-    instead, so a specific day just needs a different endpoint, not a filter."""
-    if target_date:
+    instead, so a specific day just needs a different endpoint, not a filter.
+
+    Cache key is always keyed off the resolved date (today's ET date when
+    target_date is omitted), not 'now' — so a no-arg call (the cache warmer)
+    and an explicit-today call (the Tonight hub, /nhl itself) share one
+    cache entry instead of two. They used to diverge: the warmer's startup
+    fetch populated 'nhl_sched_now' while the hub's cache-only lookup read
+    'nhl_sched_{today}', which the warmer never touched — so the Tonight hub
+    stayed empty for NHL after every restart until someone visited /nhl and
+    populated the dated key themselves."""
+    today = _today_et()
+    if target_date and target_date != today:
         return _cached_get(f"{NHL_API}/schedule/{target_date}", f'nhl_sched_{target_date}', _TTL['schedule'])
-    return _cached_get(f"{NHL_API}/schedule/now", 'nhl_sched_now', _TTL['schedule'])
+    return _cached_get(f"{NHL_API}/schedule/now", f'nhl_sched_{today}', _TTL['schedule'])
 
 
 def _full_team_name(team_data):
