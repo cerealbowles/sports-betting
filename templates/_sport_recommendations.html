@@ -1,5 +1,5 @@
 {# Shared recommendations list for every sport except MLB (which has its own
-   Trust Score table). Expects `recommended` (from _edge_recommendations). #}
+   Omen Score table). Expects `recommended` (from _edge_recommendations). #}
 <details class="card rec-details" style="margin-bottom:14px;">
   <summary class="rec-summary">
     <h2>Recommendations</h2>
@@ -16,6 +16,7 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;" title="Omen Score — moneyline-side confidence, 0-100">Omen</th>
         <th style="padding:5px 8px;text-align:center;">Verdict</th>
         <th style="padding:5px 8px;"></th>
       </tr>
@@ -37,6 +38,12 @@
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
       <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
+      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;">
+        {% if r.omen_score is not none %}
+        {% set om_cls = 'omen-high' if r.omen_score >= 55 else ('omen-mid' if r.omen_score >= 42 else ('omen-low' if r.omen_score >= 28 else 'omen-skip')) %}
+        <span class="kelly-verdict {{ om_cls }}">{{ r.omen_score }}</span>
+        {% else %}—{% endif %}
+      </td>
       <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
       <td style="padding:6px 8px;text-align:right;"><button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}', '{{ {'ml': 'Moneyline', 'spread': 'Spread', 'total': 'Over/Under'}[r.market] }}')">Bet</button></td>
     </tr>

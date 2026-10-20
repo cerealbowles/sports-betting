@@ -54,7 +54,7 @@
     Thresholds come from confidence_tiers(game.sport) (app.py) — each
     sport's own percentile cutoffs over its actual blended-confidence
     history (0.6*model + 0.4*empirical win rate at that confidence level;
-    MLB's version of that blend also folds in its trust-score rank bucket —
+    MLB's version of that blend also folds in its omen-score rank bucket —
     see _historical_confidence_values's docstring), not a flat guessed
     number. A flat 65% 'high' cutoff was found to be mathematically
     unreachable for MLB (1,027-game sample topped out at 64.0%). Recomputed

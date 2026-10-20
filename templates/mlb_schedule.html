@@ -97,10 +97,6 @@
 .kelly-strong { background: #1d3318; color: var(--win); border: 1px solid rgba(168,240,122,0.3); }
 .kelly-value  { background: var(--purple-dim); color: var(--purple-text); border: 1px solid rgba(203,184,255,0.25); }
 .kelly-lean   { background: var(--warn-bg); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.25); }
-.ts-high   { background: #1d3318; color: var(--win); border: 1px solid rgba(168,240,122,0.3); }
-.ts-mid    { background: var(--warn-bg); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.25); }
-.ts-low    { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
-.ts-skip   { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 .wind-mod    { color: #f59e0b; font-weight: 600; }
 .wind-strong { color: var(--loss); font-weight: 700; }
 @media (max-width: 600px) {
@@ -164,7 +160,7 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Mkt</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
-        <th class="rec-sort-th" data-sort-key="ts" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Trust Score">TS<span class="rec-sort-arrow"></span></th>
+        <th class="rec-sort-th" data-sort-key="omen" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Omen Score">OM<span class="rec-sort-arrow"></span></th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Zone</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">EV%</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Move</th>
@@ -173,11 +169,11 @@
     </thead>
     <tbody>
     {% for b in best_bets %}
-    {% set ts = b.trust_score %}
-    {% set td = b.ts_detail if b.ts_detail else {} %}
+    {% set ts = b.omen_score %}
+    {% set td = b.omen_detail if b.omen_detail else {} %}
     {% set unf = ts %}
-    {% set unf_cls = 'ts-high' if unf >= 55 else ('ts-mid' if unf >= 42 else ('ts-low' if unf >= 28 else 'ts-skip')) %}
-    <tr data-game="{{ b.away_abbr }}@{{ b.home_abbr }}" data-ts="{{ ts }}"
+    {% set unf_cls = 'omen-high' if unf >= 55 else ('omen-mid' if unf >= 42 else ('omen-low' if unf >= 28 else 'omen-skip')) %}
+    <tr data-game="{{ b.away_abbr }}@{{ b.home_abbr }}" data-omen="{{ ts }}"
         data-amer-odds="{{ b.amer_odds }}"
         data-prob="{{ (b.adj_prob / 100) | round(4) }}"
         data-pick-name="{{ b.pick_abbr }} ML"
@@ -212,7 +208,7 @@
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if b.amer_odds > 0 }}{{ b.amer_odds }}</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ b.mkt_implied }}%</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if b.adj_edge > 0 else 'var(--loss)' }};">{{ '+' if b.adj_edge > 0 }}{{ b.adj_edge }}%</td>
-      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ unf_cls }}" data-ts-detail='{{ b.ts_detail | tojson if b.ts_detail else "" }}' style="min-width:28px;cursor:default;" title="Trust Score (hover for factor breakdown)">{{ unf }}</span></td>
+      <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ unf_cls }}" data-omen-detail='{{ b.omen_detail | tojson if b.omen_detail else "" }}' style="min-width:28px;cursor:default;" title="Omen Score (hover for factor breakdown)">{{ unf }}</span></td>
       {# TS component columns — color-coded by component value (0–1 scale) #}
       {% set ev = td.e or 0 %}
       <td class="rec-col-hide" style="padding:6px 8px;text-align:center;font-size:0.70rem;color:{{ 'var(--win)' if ev >= 0.65 else ('var(--text)' if ev >= 0.45 else ('var(--orange)' if ev >= 0.30 else 'var(--loss)')) }};">{{ td.el or '—' }}</td>
@@ -624,7 +620,7 @@
     var ths   = table.querySelectorAll('.rec-sort-th');
     if (!tbody || !ths.length) return;
 
-    var sortKey = 'ts', sortDir = -1;  // default: Trust Score descending (matches server order)
+    var sortKey = 'omen', sortDir = -1;  // default: Omen Score descending (matches server order)
 
     function applySort() {
         var rows = Array.from(tbody.querySelectorAll('tr[data-game]'));
@@ -821,7 +817,7 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeRefreshModal();
 });
 
-/* ── Trust Score Radar Chart ──────────────────────────── */
+/* ── Omen Score Radar Chart ──────────────────────────── */
 (function () {
   var _tt = null;
 
@@ -923,18 +919,18 @@ document.addEventListener('keydown', function(e) {
   document.addEventListener('mouseover', function (e) {
     var el = e.target;
     while (el && el !== document.body) {
-      if (el.hasAttribute && el.hasAttribute('data-ts-detail')) break;
+      if (el.hasAttribute && el.hasAttribute('data-omen-detail')) break;
       el = el.parentElement;
     }
-    if (!el || !el.hasAttribute('data-ts-detail')) return;
-    var raw = el.getAttribute('data-ts-detail');
+    if (!el || !el.hasAttribute('data-omen-detail')) return;
+    var raw = el.getAttribute('data-omen-detail');
     if (!raw) return;
     try {
       var d = JSON.parse(raw);
       if (!d || d.score === undefined) return;
       _hoverEl = el;
       var tt = _getOrCreateTooltip();
-      tt.innerHTML = '<div style="font-size:0.72rem;font-weight:700;color:#f97316;text-align:center;margin-bottom:6px;">Factor Breakdown (Trust Score: ' + d.score + ')</div>' + _svgRadar(d);
+      tt.innerHTML = '<div style="font-size:0.72rem;font-weight:700;color:#f97316;text-align:center;margin-bottom:6px;">Factor Breakdown (Omen Score: ' + d.score + ')</div>' + _svgRadar(d);
       tt.style.display = 'block';
       _positionTooltip(el);
     } catch (_e) {}

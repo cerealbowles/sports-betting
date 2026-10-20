@@ -2783,6 +2783,10 @@ body.embed-mode .container { padding-bottom: 0; }
     padding: 2px 5px; border-radius: 3px;
     white-space: nowrap; text-transform: uppercase; letter-spacing: 0.3px;
 }
+.omen-high   { background: #1d3318; color: var(--win); border: 1px solid rgba(168,240,122,0.3); }
+.omen-mid    { background: var(--warn-bg); color: var(--warn-text); border: 1px solid rgba(255,196,107,0.25); }
+.omen-low    { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
+.omen-skip   { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 
 /* ── Today hub — per-sport summary cards ── */
 .hub-sport-grid {

@@ -1,6 +1,6 @@
 """
 Prototype: fit one unified ranking score from the same underlying components
-that Trust/Sharp/Experimental already use (c=consensus, e=edge, k=calibration,
+that Omen/Sharp/Experimental already use (c=consensus, e=edge, k=calibration,
 m=market signal), instead of three hand-set weight splits.
 
 Grid-searches weights (step 0.05, sum to 1) to maximize realistic flat-stake
@@ -13,7 +13,7 @@ Usage: python unified_score_fit.py [SPORT]
 import sys
 from itertools import groupby, product
 
-from app import (app, db, GamePrediction, _trust_score, _line_move_pct)
+from app import (app, db, GamePrediction, _omen_score, _line_move_pct)
 
 SPORT = sys.argv[1].upper() if len(sys.argv) > 1 else 'MLB'
 
@@ -27,7 +27,7 @@ def load_games():
         games = [p for p in resolved if p.pick_roi is not None and p.home_odds and p.away_odds]
         rows = []
         for g in games:
-            td = _trust_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, detail=True)
+            td = _omen_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, detail=True)
             if not td:
                 continue
             lm = _line_move_pct(g.home_prob, g.closing_home_odds or g.home_odds,

@@ -990,7 +990,7 @@ def _line_move_pct(home_prob, current_home_odds, current_away_odds,
 def _consensus_bucket_from_pairs(pairs, fav_home):
     """Fraction of significant-factor weight aligned with pick → bucket label,
     given an already-parsed [(label, contrib), ...] list. Shared by
-    _consensus_bucket (moneyline, raw factors_json) and the spread trust
+    _consensus_bucket (moneyline, raw factors_json) and the spread omen
     score (spread_model.weighted_factors' reweighted rows)."""
     try:
         sig = [(l, c) for l, c in (pairs or []) if abs(c) > 0.03]
@@ -1106,7 +1106,7 @@ def _recompute_consensus_calibration(sport='MLB'):
 
 
 # ── Cross-sport confidence blend + tier calibration ─────────────────────────
-# MLB's ML chip already blends its model probability with a trust-score
+# MLB's ML chip already blends its model probability with a omen-score
 # rank-bucket win rate (see mlb_schedule's final_home_prob stamping) — this
 # section brings the same "don't just trust the raw model number, temper it
 # with what actually happened historically at this confidence level" idea to
@@ -1293,11 +1293,11 @@ def _historical_confidence_values(sport):
     whichever blend that sport's schedule route actually applies at render
     time, so the tier cutoffs derived from this distribution match what's
     actually displayed:
-      - MLB: 0.6*consensus-adjusted prob + 0.4*trust-score rank-bucket win
+      - MLB: 0.6*consensus-adjusted prob + 0.4*omen-score rank-bucket win
         rate — mirrors mlb_schedule's own final_home_prob stamping exactly.
       - Every other sport: 0.6*raw model prob + 0.4*this-sport's-own
         confidence-band win rate (_recompute_prob_calibration) — MLB's
-        richer trust-score/rank pipeline doesn't exist for these sports.
+        richer omen-score/rank pipeline doesn't exist for these sports.
     """
     with app.app_context():
         resolved = GamePrediction.query.filter(
@@ -1685,7 +1685,7 @@ def _recompute_total_model_refit(sport):
           f'total_actual ~= {a:+.2f} + {b:.3f}*total_proj (sigma={sigma:.2f})', flush=True)
 
 
-# ── Trust Score weight cache ──────────────────────────────────────────────────
+# ── Omen Score weight cache ──────────────────────────────────────────────────
 # Prior weights (fixed starting point before history accumulates).
 # Blend toward empirical ROI-derived weights as resolved game count grows.
 # Weights: 50% consensus · 25% edge zone · 15% fav/dog · 10% calibration
@@ -1704,7 +1704,7 @@ _PRIOR_CALIB  = {
     '65–70%': 0.30, '70–75%': 0.50,
 }
 
-def _default_trust_weights():
+def _default_omen_weights():
     return {
         'cons':   dict(_PRIOR_CONS),
         'edge':   dict(_PRIOR_EDGE),
@@ -1717,10 +1717,10 @@ def _default_trust_weights():
 
 
 # {sport: {...}} — used to be one flat dict shared across every sport's
-# calibration pass, so whichever sport's _recompute_trust_weights ran last
+# calibration pass, so whichever sport's _recompute_omen_weights ran last
 # in the calibration loop silently overwrote every other sport's weights.
-_TRUST_WEIGHTS = {}
-_TRUST_LOCK = threading.Lock()
+_OMEN_WEIGHTS = {}
+_OMEN_LOCK = threading.Lock()
 
 
 # Where the live-recomputed team-bias dict is persisted so offline scripts
@@ -1916,7 +1916,7 @@ def _recompute_market_edge_shrink(sport='MLB'):
           flush=True)
 
 
-def _trust_blend(vals, prior, baseline_roi, min_n=5, norm=60.0):
+def _omen_blend(vals, prior, baseline_roi, min_n=5, norm=60.0):
     """Credibility-weighted blend of a bucket's empirical ROI (relative to
     baseline_roi) toward its hand-tuned prior — shared by every trust-weight
     recompute pass (moneyline, spread, ...) so the blend math lives in one
@@ -1932,10 +1932,10 @@ def _trust_blend(vals, prior, baseline_roi, min_n=5, norm=60.0):
     return round(alpha * empirical + (1 - alpha) * prior, 4)
 
 
-def _recompute_trust_weights(sport='MLB'):
+def _recompute_omen_weights(sport='MLB'):
     """
     Derive per-bucket ROI weights from resolved game_predictions and update
-    _TRUST_WEIGHTS in place. Called at startup and after each nightly resolve.
+    _OMEN_WEIGHTS in place. Called at startup and after each nightly resolve.
 
     Credibility blend: alpha = min(n_bucket / 50, 1.0).
       - n < 5  → 100% prior
@@ -2026,26 +2026,26 @@ def _recompute_trust_weights(sport='MLB'):
             calib_bkts[cbk].append(roi_pct)
 
     new_weights = {
-        'cons':   {k: _trust_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
-        'edge':   {k: _trust_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
-        'favdog': {k: _trust_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
-        'calib':  {k: _trust_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
+        'cons':   {k: _omen_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
+        'edge':   {k: _omen_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
+        'favdog': {k: _omen_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
+        'calib':  {k: _omen_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
         'n': n_total,
         'baseline_roi': round(baseline_roi, 2),
         'computed_at': datetime.now(timezone.utc).isoformat(),
     }
 
-    with _TRUST_LOCK:
-        _TRUST_WEIGHTS[sport] = new_weights
+    with _OMEN_LOCK:
+        _OMEN_WEIGHTS[sport] = new_weights
 
-    print(f'[trust-weights] recomputed from {n_total} {sport} games '
+    print(f'[omen-weights] recomputed from {n_total} {sport} games '
           f'(baseline ROI {baseline_roi:+.1f}%). '
           f'Cons: {new_weights["cons"]}', flush=True)
 
 
-def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', detail=False):
+def _omen_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', detail=False):
     """
-    0-100 composite trust score for ranking recommendations.
+    0-100 composite omen score for ranking recommendations.
 
     Components (50/25/15/10 split; per-bucket weights adapt from history):
       50% factor consensus   — % of significant factors aligned with pick
@@ -2055,9 +2055,9 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
 
     Weights start as hand-tuned priors and blend toward empirical ROI-derived
     values as resolved game count grows (credibility: full empirical at n ≥ 50).
-    _TRUST_WEIGHTS is namespaced per sport — pass the right `sport` or this
+    _OMEN_WEIGHTS is namespaced per sport — pass the right `sport` or this
     silently falls back to fresh priors instead of that sport's own
-    calibrated weights (see _recompute_trust_weights's docstring for why
+    calibrated weights (see _recompute_omen_weights's docstring for why
     this used to be a single dict shared across every sport).
 
     When detail=True, returns a dict with per-component values for radar chart display.
@@ -2067,8 +2067,8 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
     if edge is None:
         return ({} if detail else 0)
 
-    with _TRUST_LOCK:
-        w = dict(_TRUST_WEIGHTS.get(sport) or _default_trust_weights())
+    with _OMEN_LOCK:
+        w = dict(_OMEN_WEIGHTS.get(sport) or _default_omen_weights())
 
     fav_home  = (home_prob or 0.5) >= 0.5
     pick_prob = (home_prob or 0.5) if fav_home else 1.0 - (home_prob or 0.5)
@@ -2137,8 +2137,8 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
     return score
 
 
-# ── Spread Trust Score (spread_model.VALIDATED_SPORTS — MLB, NHL) ───────────
-# Same composite-scoring idea as _trust_score above, applied to the spread
+# ── Spread Omen Score (spread_model.VALIDATED_SPORTS — MLB, NHL) ───────────
+# Same composite-scoring idea as _omen_score above, applied to the spread
 # market instead of moneyline. No new DB column: everything is replayed from
 # the already-persisted factors_json via spread_model.weighted_factors/
 # cover_prob, the same way _recompute_spread_confidence_tiers already proves
@@ -2147,24 +2147,24 @@ def _trust_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', det
 # spread_proxy (not spread_model) at write time — see spread_model.py's
 # VALIDATED_SPORTS docstring: same pick side, different probability
 # magnitude, which matters for edge/calibration bucketing.
-_SPREAD_TRUST_WEIGHTS = {}
+_SPREAD_OMEN_WEIGHTS = {}
 
-# Minimum _spread_trust_score to earn a spread ★ (_best_market_pick) or count
+# Minimum _spread_omen_score to earn a spread ★ (_best_market_pick) or count
 # as a recommended pick in the historical replay (_recommended_bets_history).
 # Set from the first live backtest on real NHL data (982 resolved picks):
 # score < 28 ran 35.2% WR / -39.7% ROI (n=54) while every bucket >= 28 cleared
 # +8% to +24% ROI. Revisit this cutoff once more sports/seasons accumulate —
 # it's fit from NHL's bucket boundaries, not re-derived per sport.
-_SPREAD_TRUST_FLOOR = 28
+_SPREAD_OMEN_FLOOR = 28
 
 
-def _default_spread_trust_weights():
-    return _default_trust_weights()
+def _default_spread_omen_weights():
+    return _default_omen_weights()
 
 
 def _spread_pick_vars(sport, factors_json, spread_pick_line, spread_home_price, spread_away_price):
-    """Shared per-row extraction for _recompute_spread_trust_weights and
-    _spread_trust_score. Returns (favors_home, pick_prob, mkt_implied,
+    """Shared per-row extraction for _recompute_spread_omen_weights and
+    _spread_omen_score. Returns (favors_home, pick_prob, mkt_implied,
     amer_odds, wf_rows) or None if this row can't be evaluated — either
     missing fields, or spread_model has no fitted coefficients for `sport`.
     `factors_json` accepts either a stored JSON string (resolved GamePrediction
@@ -2196,9 +2196,9 @@ def _spread_pick_vars(sport, factors_json, spread_pick_line, spread_home_price, 
     return favors_home, pick_prob, mkt_implied, amer_odds, wf_rows
 
 
-def _recompute_spread_trust_weights(sport):
-    """Spread-market sibling of _recompute_trust_weights — same bucket/blend
-    machinery (_trust_blend, _PRIOR_*), applied to resolved spread picks
+def _recompute_spread_omen_weights(sport):
+    """Spread-market sibling of _recompute_omen_weights — same bucket/blend
+    machinery (_omen_blend, _PRIOR_*), applied to resolved spread picks
     instead of moneyline. No-ops for sports outside spread_model.VALIDATED_SPORTS
     (today: MLB, NHL) since there's no fitted factor model to replay otherwise.
     Called from _recompute_all_calibration alongside the moneyline pass."""
@@ -2269,25 +2269,25 @@ def _recompute_spread_trust_weights(sport):
         calib_bkts[cbk].append(roi_pct)
 
     new_weights = {
-        'cons':   {k: _trust_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
-        'edge':   {k: _trust_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
-        'favdog': {k: _trust_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
-        'calib':  {k: _trust_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
+        'cons':   {k: _omen_blend(cons_bkts[k],   _PRIOR_CONS[k],   baseline_roi) for k in cons_bkts},
+        'edge':   {k: _omen_blend(edge_bkts[k],   _PRIOR_EDGE[k],   baseline_roi) for k in edge_bkts},
+        'favdog': {k: _omen_blend(favdog_bkts[k], _PRIOR_FAVDOG[k], baseline_roi) for k in favdog_bkts},
+        'calib':  {k: _omen_blend(calib_bkts[k],  _PRIOR_CALIB[k],  baseline_roi) for k in calib_bkts},
         'n': n_total,
         'baseline_roi': round(baseline_roi, 2),
         'computed_at': datetime.now(timezone.utc).isoformat(),
     }
 
-    with _TRUST_LOCK:
-        _SPREAD_TRUST_WEIGHTS[sport] = new_weights
+    with _OMEN_LOCK:
+        _SPREAD_OMEN_WEIGHTS[sport] = new_weights
 
-    print(f'[spread-trust-weights] recomputed from {n_total} {sport} spread picks '
+    print(f'[spread-omen-weights] recomputed from {n_total} {sport} spread picks '
           f'(baseline ROI {baseline_roi:+.1f}%).', flush=True)
 
 
-def _spread_trust_score(sport, factors_json, spread_pick_line, spread_home_price,
+def _spread_omen_score(sport, factors_json, spread_pick_line, spread_home_price,
                          spread_away_price, detail=False):
-    """Spread-market sibling of _trust_score — same 50/40/0/10 component
+    """Spread-market sibling of _omen_score — same 50/40/0/10 component
     blend and _PRIOR_*/credibility machinery, but scored against a fresh
     spread_model.cover_prob/weighted_factors replay (_spread_pick_vars)
     instead of moneyline's home_prob/factors_json. 0-100, or a detail dict
@@ -2301,8 +2301,8 @@ def _spread_trust_score(sport, factors_json, spread_pick_line, spread_home_price
     favors_home, pick_prob, mkt_implied, amer_odds, wf_rows = ext
     edge = round((pick_prob - mkt_implied) * 100, 1)
 
-    with _TRUST_LOCK:
-        w = dict(_SPREAD_TRUST_WEIGHTS.get(sport) or _default_spread_trust_weights())
+    with _OMEN_LOCK:
+        w = dict(_SPREAD_OMEN_WEIGHTS.get(sport) or _default_spread_omen_weights())
 
     sig = [(l, c) for l, c in (wf_rows or []) if abs(c) > 0.03]
     if sig:
@@ -2387,7 +2387,7 @@ def _sharp_score(td, line_move_val=0.5):
 
 
 # ── Recommendation ranking ─────────────────────────────────────────────────────
-# Everything ranks by the Trust Score (_trust_score). The old data-fit 'Unified'
+# Everything ranks by the Omen Score (_omen_score). The old data-fit 'Unified'
 # and 'Pick of the Day' composite scores were retired in its favour.
 
 def _odds_multiplier(pick_odds):
@@ -2424,8 +2424,8 @@ def _odds_multiplier(pick_odds):
 
 
 def _unified_score(td, market_val=0.5, movement_val=0.5, pick_odds=None):
-    """The score every recommendation ranking sorts by. This is the Trust Score
-    (td['score']) — the old separate 'Trust Score' composite was retired in
+    """The score every recommendation ranking sorts by. This is the Omen Score
+    (td['score']) — the old separate 'Omen Score' composite was retired in
     favour of it. The extra args are ignored; kept so existing call sites
     (rank stats, alerts, daily picks) needn't change."""
     if not td:
@@ -2446,7 +2446,7 @@ def _unified_rank_bucket(rank):
 
 
 def _recompute_unified_rank_stats(sport='MLB'):
-    """Retroactive win-rate per Trust-Score daily-rank bucket (#1, #2-3, #4-6, #7+),
+    """Retroactive win-rate per Omen-Score daily-rank bucket (#1, #2-3, #4-6, #7+),
     from resolved games with odds. Same ranking logic as the Rank Comparison table
     in model_performance(), cached here so /api/empirical_info can look it up cheaply.
     """
@@ -2467,7 +2467,7 @@ def _recompute_unified_rank_stats(sport='MLB'):
         day = list(_grp)
         scored = []
         for g in day:
-            td = _trust_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, sport=sport, detail=True)
+            td = _omen_score(g.home_prob, g.home_odds, g.away_odds, g.factors_json, sport=sport, detail=True)
             lm = _line_move_pct(g.home_prob, g.closing_home_odds or g.home_odds,
                                  g.closing_away_odds or g.away_odds,
                                  g.opening_home_odds, g.opening_away_odds)
@@ -2518,11 +2518,19 @@ def _default_movement_weights():
 
 
 # {sport: {...}} — used to be one flat dict shared across every sport's
-# calibration pass (same bug class as _CONS_CALIB/_TRUST_WEIGHTS elsewhere
+# calibration pass (same bug class as _CONS_CALIB/_OMEN_WEIGHTS elsewhere
 # in this file), so whichever sport's _recompute_movement_weights ran last
 # silently overwrote every other sport's movement-profile weights.
 _MOVEMENT_WEIGHTS = {}
 _MOVEMENT_LOCK = threading.Lock()
+
+# Cross-sport pooled prior, used as the shrinkage target for a sport's own
+# movement weights instead of the flat 0.5 neutral prior — see
+# _global_movement_prior. Recomputed at most once per _GLOBAL_PRIOR_TTL
+# seconds since _recompute_all_calibration loops over every sport and would
+# otherwise re-scan the whole table once per sport in the same sweep.
+_GLOBAL_MOVEMENT_PRIOR = {'weights': None, 'computed_at': 0.0}
+_GLOBAL_PRIOR_TTL = 30.0
 
 
 def _recompute_movement_profiles(sport='MLB'):
@@ -2567,11 +2575,79 @@ def _recompute_movement_profiles(sport='MLB'):
           f'(of {len(preds)} missing a profile)', flush=True)
 
 
+def _global_movement_prior():
+    """Pools resolved games across EVERY sport to estimate each movement
+    profile's ROI effect, for use as the shrinkage target in a sport's own
+    _recompute_movement_weights in place of the flat 0.5 neutral prior.
+
+    The line-movement shape taxonomy (_classify_series) is pure time-series
+    geometry with no sport-specific parameters, so "late_sharp_against" means
+    the same thing mechanically in NFL as in MLB — but what it's WORTH (the
+    ROI delta) can still differ by sport (liquidity, bettor mix). Pooling
+    gives a thin-data sport (e.g. a newly-added one) a better-than-neutral
+    fallback to lean on while it builds up its own sample, without ever
+    overriding a sport's own evidence once that sample is large enough (see
+    the alpha blend in _recompute_movement_weights, which already down-
+    weights this prior as n grows).
+
+    This prior itself shrinks toward flat 0.5 when the POOLED sample is
+    still thin, and needs a bigger pooled sample than a single sport needs
+    on its own (GLOBAL_MIN_N/ALPHA_NORM below are set higher than the
+    per-sport MIN_N=5/50) — it's meant to be a more-informed fallback than
+    flat neutral, not a shortcut around actually having data."""
+    with app.app_context():
+        resolved = GamePrediction.query.filter(
+            GamePrediction.home_won.isnot(None),
+            GamePrediction.movement_profile.isnot(None),
+            GamePrediction.pick_roi.isnot(None),
+        ).all()
+
+    base_vals = [p.pick_roi for p in resolved]
+    baseline_roi = (sum(base_vals) / len(base_vals) * 100) if base_vals else 0.0
+
+    bkts = {p: [] for p in _MOVEMENT_PROFILES}
+    for p in resolved:
+        if p.movement_profile in bkts:
+            bkts[p.movement_profile].append(p.pick_roi * 100)
+
+    NORM = 60.0
+    GLOBAL_MIN_N = 20
+    ALPHA_NORM = 150.0
+
+    def _blend(vals):
+        n = len(vals)
+        if n < GLOBAL_MIN_N:
+            return 0.5
+        avg = sum(vals) / n
+        empirical = max(0.05, min(1.0, 0.5 + (avg - baseline_roi) / NORM))
+        alpha = min(n / ALPHA_NORM, 1.0)
+        return round(alpha * empirical + (1 - alpha) * 0.5, 4)
+
+    return {p: _blend(bkts[p]) for p in _MOVEMENT_PROFILES}
+
+
+def _cached_global_movement_prior():
+    now = time.time()
+    with _MOVEMENT_LOCK:
+        weights, computed_at = _GLOBAL_MOVEMENT_PRIOR['weights'], _GLOBAL_MOVEMENT_PRIOR['computed_at']
+        if weights is not None and (now - computed_at) < _GLOBAL_PRIOR_TTL:
+            return weights
+    weights = _global_movement_prior()
+    with _MOVEMENT_LOCK:
+        _GLOBAL_MOVEMENT_PRIOR['weights'] = weights
+        _GLOBAL_MOVEMENT_PRIOR['computed_at'] = now
+    return weights
+
+
 def _recompute_movement_weights(sport='MLB'):
     """ROI-derived weight per movement profile, same credibility-blend pattern
-    as _recompute_trust_weights — blends toward 0.5 (neutral prior) until a
-    profile has enough resolved games to trust empirically. Namespaced per
-    sport in _MOVEMENT_WEIGHTS — see that dict's comment for why."""
+    as _recompute_omen_weights — blends toward a prior until a profile has
+    enough resolved games in THIS sport to trust empirically. The prior is
+    the cross-sport pooled estimate from _global_movement_prior (itself
+    shrunk toward flat 0.5 when thin) rather than flat 0.5 directly, so a
+    low-data sport borrows strength from every other sport's line-movement
+    history instead of starting from "no opinion." Namespaced per sport in
+    _MOVEMENT_WEIGHTS — see that dict's comment for why."""
     with app.app_context():
         resolved = GamePrediction.query.filter(
             GamePrediction.sport == sport,
@@ -2589,6 +2665,8 @@ def _recompute_movement_weights(sport='MLB'):
         if p.movement_profile in bkts:
             bkts[p.movement_profile].append(p.pick_roi * 100)
 
+    global_prior = _cached_global_movement_prior()
+
     NORM = 60.0
     MIN_N = 5
 
@@ -2601,7 +2679,7 @@ def _recompute_movement_weights(sport='MLB'):
         alpha = min(n / 50.0, 1.0)
         return round(alpha * empirical + (1 - alpha) * prior, 4)
 
-    new_weights = {p: _blend(bkts[p], _PRIOR_MOVEMENT[p]) for p in _MOVEMENT_PROFILES}
+    new_weights = {p: _blend(bkts[p], global_prior.get(p, _PRIOR_MOVEMENT[p])) for p in _MOVEMENT_PROFILES}
     new_weights['n'] = n_total
     new_weights['computed_at'] = datetime.now(timezone.utc).isoformat()
 
@@ -4437,7 +4515,7 @@ def _rebuild_hub_cache():
 @app.route('/')
 def index():
   """Today — a cross-sport hub. Pulls each sport's own recommendation list
-  (MLB's trust-score _mlb_candidates/_mlb_best_bets, everyone else's shared
+  (MLB's omen-score _mlb_candidates/_mlb_best_bets, everyone else's shared
   _edge_recommendations) scoped to just today's games, merges them into one
   edge-ranked list, and shows a per-sport summary card linking to that
   sport's full schedule page for the detailed view. Read-only display: it
@@ -4792,7 +4870,7 @@ def empirical_info():
   ALPHA = 0.6
   TAU_DAYS = 30.0
 
-  # If this bet is tied to today's Trust Score rank, use that rank-bucket's
+  # If this bet is tied to today's Omen Score rank, use that rank-bucket's
   # retroactive win rate (model-derived) instead of the bettor's own closed-bet
   # history — same #1/#2-3/#4-6/#7+ buckets as the Rank Comparison table.
   if unf_rank:
@@ -5240,14 +5318,14 @@ def _best_market_pick(game):
         mkt_implied = vf_h if favors_home else vf_a
         amer_odds   = hp_price if favors_home else ap_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
-        # Spread Trust Score floor — backtest on 982 resolved NHL picks showed
-        # score < _SPREAD_TRUST_FLOOR running -39.7% ROI (n=54) while every
+        # Spread Omen Score floor — backtest on 982 resolved NHL picks showed
+        # score < _SPREAD_OMEN_FLOOR running -39.7% ROI (n=54) while every
         # higher bucket cleared +8% to +24%. No-op outside VALIDATED_SPORTS,
-        # where _spread_trust_score always returns 0 (would wrongly fail
+        # where _spread_omen_score always returns 0 (would wrongly fail
         # every pick rather than skipping a meaningless check).
         if q and sport in spread_model.VALIDATED_SPORTS:
-          sts = _spread_trust_score(sport, factors, home_spread, hp_price, ap_price)
-          if sts < _SPREAD_TRUST_FLOOR:
+          sts = _spread_omen_score(sport, factors, home_spread, hp_price, ap_price)
+          if sts < _SPREAD_OMEN_FLOOR:
             q = None
         if q:
           edge, kelly, b = q
@@ -5308,7 +5386,7 @@ def _best_market_pick(game):
 
 def _mlb_star_pick(game):
   """Backward-compatible ML-only wrapper around _best_market_pick, kept for
-  the 'Today's Recommendations' Trust Score table (all_candidates/best_bets
+  the 'Today's Recommendations' Omen Score table (all_candidates/best_bets
   above), which is built entirely from ML win-prob/Kelly data — a spread or
   total star would have nothing meaningful to show in those columns. Use
   _best_market_pick directly wherever the recommendation can be any market
@@ -5368,7 +5446,7 @@ app.jinja_env.globals['injury_last_refreshed'] = _injury_last_refreshed
 
 
 def _mlb_candidates(schedule):
-  """Pure MLB trust-score candidate list, built from a schedule (list of
+  """Pure MLB omen-score candidate list, built from a schedule (list of
   {'games': [...]}) with no DB writes — shared by mlb_schedule() (which
   persists daily_rank / stamps game['rec'] itself afterward, then filters
   this list down to best_bets via _mlb_star_pick once that stamping has
@@ -5377,8 +5455,8 @@ def _mlb_candidates(schedule):
   import odds_history as _oh_mv
 
   # Build candidate list.
-  # Preview games: use live schedule data (model + odds) for a fresh trust score.
-  # Live/Final games: use stored pre-game data from GamePrediction so trust scores
+  # Preview games: use live schedule data (model + odds) for a fresh omen score.
+  # Live/Final games: use stored pre-game data from GamePrediction so omen scores
   # reflect the board state at game start and never shift after the game begins.
   all_candidates = []
   for day in (schedule or []):
@@ -5477,14 +5555,14 @@ def _mlb_candidates(schedule):
             line_move_pct = round((pick_curr - pick_open) * 100, 2)
             line_move_val = max(0.0, min(1.0, 0.5 + line_move_pct / 10.0))
 
-      ts_detail = _trust_score(hp, h_odds, a_odds, factors_json, sport='MLB', detail=True)
-      trust = ts_detail.get('score', 0)
+      omen_detail = _omen_score(hp, h_odds, a_odds, factors_json, sport='MLB', detail=True)
+      trust = omen_detail.get('score', 0)
 
       # movement_profile/movement_pct were already classified above (before
       # adj_prob, so the correction could actually apply). unified_score is
-      # display-only (sorting keys off trust_score) but kept for the schedule
+      # display-only (sorting keys off omen_score) but kept for the schedule
       # page's existing columns.
-      unified = _unified_score(ts_detail, line_move_val, _movement_value(movement_profile, sport='MLB'), amer_odds)
+      unified = _unified_score(omen_detail, line_move_val, _movement_value(movement_profile, sport='MLB'), amer_odds)
 
       # Both probable starters must be officially announced. Until then, the
       # model is filling SP-dependent factors (SIERA, K%, BB%, Barrel%, Whiff%)
@@ -5520,8 +5598,8 @@ def _mlb_candidates(schedule):
         'k_label':       k_label,
         'k_cls':         k_cls,
         'k_f_adj':       k_f_adj,
-        'trust_score':   trust,
-        'ts_detail':     ts_detail,
+        'omen_score':   trust,
+        'omen_detail':     omen_detail,
         'ev_pct':        ev_pct,
         'unified_score': unified,
         'sp_confirmed':  sp_confirmed,
@@ -5536,9 +5614,9 @@ def _mlb_candidates(schedule):
       })
 
   # Unconfirmed-SP games sort below every confirmed-SP game regardless of
-  # score (see sp_confirmed comment above) — Trust Score order still applies
+  # score (see sp_confirmed comment above) — Omen Score order still applies
   # within each group.
-  all_candidates.sort(key=lambda x: (not x['sp_confirmed'], -x['trust_score']))
+  all_candidates.sort(key=lambda x: (not x['sp_confirmed'], -x['omen_score']))
   for i, b in enumerate(all_candidates):
     b['rank'] = i + 1
 
@@ -5611,7 +5689,7 @@ def mlb_schedule():
   _attach_graded_results(schedule, 'MLB')
   _mark_favorites(schedule, 'MLB')
   # ML movement is handled inline by _mlb_candidates below (its own
-  # trust-score pipeline, not model.final_home_prob), but spread/total
+  # omen-score pipeline, not model.final_home_prob), but spread/total
   # movement isn't — MLB's spread/total ★ picks and chips go through the
   # same shared _best_market_pick every other sport uses, so MLB needs this
   # stamping too for those two markets.
@@ -5639,7 +5717,7 @@ def mlb_schedule():
   except Exception:
     db.session.rollback()
 
-  # Stamp each game with its rec rank, trust score, and adj_prob for bet URLs
+  # Stamp each game with its rec rank, omen score, and adj_prob for bet URLs
   _rec_idx = {f"{b['away_abbr']}@{b['home_abbr']}": b for b in all_candidates}
   for day in (schedule or []):
     for game in day.get('games', []):
@@ -5651,7 +5729,7 @@ def mlb_schedule():
             'k_label':     b['k_label'],
             'k_cls':       b['k_cls'],
             'adj_edge':    b['adj_edge'],
-            'trust_score': b['trust_score'],
+            'omen_score': b['omen_score'],
         }
         # So the shared MOVE chip in _market_chips.html (game.movement_profile)
         # works on MLB cards too — the other 5 sports get this from
@@ -5825,9 +5903,9 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
     if not (kelly > 0 and edge >= 4 and b >= 0.25):
       continue
     if bet_type == 'spread' and sport in spread_model.VALIDATED_SPORTS:
-      sts = _spread_trust_score(sport, p.factors_json, p.spread_pick_line,
+      sts = _spread_omen_score(sport, p.factors_json, p.spread_pick_line,
                                  p.spread_home_price, p.spread_away_price)
-      if sts < _SPREAD_TRUST_FLOOR:
+      if sts < _SPREAD_OMEN_FLOOR:
         continue
     rows.append({
         'date': p.game_date,
@@ -6197,13 +6275,13 @@ def model_performance():
         'clv_n':    len(clv_vals),
     })
 
-  # ── Trust score buckets ────────────────────────────────────────────────────
+  # ── Omen score buckets ────────────────────────────────────────────────────
   _score_order = ['70+', '55–70', '42–55', '28–42', '< 28']
   _score_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _score_order}
   for p in resolved:
     if not p.home_odds or not p.away_odds:
       continue
-    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
+    ts = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
     if ts == 0:
       continue
     if   ts >= 70: slbl = '70+'
@@ -6246,12 +6324,12 @@ def model_performance():
         'lift_roi': round(avg_roi - baseline_roi, 1) if (avg_roi is not None and baseline_roi is not None) else None,
     })
 
-  # ── Spread Trust Score buckets (diagnostic: does the score separate ROI?) ───
+  # ── Spread Omen Score buckets (diagnostic: does the score separate ROI?) ───
   # Only computed for the Spread tab on a spread_model.VALIDATED_SPORTS sport
-  # (MLB, NHL) — see _spread_trust_score's docstring for why. Intentionally no
+  # (MLB, NHL) — see _spread_omen_score's docstring for why. Intentionally no
   # lift_wr/lift_roi columns here: baseline_wr/baseline_roi above are the
   # moneyline baseline and aren't a meaningful comparison for spread picks.
-  spread_trust_bucket_stats = []
+  spread_omen_bucket_stats = []
   if bet_type == 'spread' and sport in spread_model.VALIDATED_SPORTS:
     _sts_order = ['70+', '55–70', '42–55', '28–42', '< 28']
     _sts_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _sts_order}
@@ -6263,7 +6341,7 @@ def model_performance():
       if ext is None:
         continue
       favors_home, _pick_prob, _mkt_implied, amer_odds, _wf_rows = ext
-      sts = _spread_trust_score(sport, p.factors_json, p.spread_pick_line,
+      sts = _spread_omen_score(sport, p.factors_json, p.spread_pick_line,
                                  p.spread_home_price, p.spread_away_price)
       if sts == 0:
         continue
@@ -6289,7 +6367,7 @@ def model_performance():
       if bkt['total'] == 0:
         continue
       roi_vals = bkt['roi']
-      spread_trust_bucket_stats.append({
+      spread_omen_bucket_stats.append({
           'label':    lbl,
           'count':    bkt['total'],
           'win_rate': round(bkt['wins'] / bkt['total'] * 100, 1),
@@ -6492,16 +6570,16 @@ def model_performance():
         'lift_wr':  round(wr - baseline_wr, 1) if baseline_wr is not None else None,
     })
 
-  # ── Rank comparison: Trust Score vs Sharp Score vs Experimental ─────────────
+  # ── Rank comparison: Omen Score vs Sharp Score vs Experimental ─────────────
   # Use all resolved games with odds + pick_roi. For the market signal we use:
   #   line_move: opening_home_odds → closing_home_odds (preferred going forward)
   #   pick_clv:  entry → close fallback for games without opening_home_odds stored
   # The Experimental formula requires at least one market signal; Sharp Score and
-  # retroactive Trust Score run on all games with odds.
+  # retroactive Omen Score run on all games with odds.
   from itertools import groupby as _igroupby
   _ranked = [p for p in resolved if p.pick_roi is not None and p.home_odds and p.away_odds]
 
-  # Compute per-game retroactive Trust Score and market signal
+  # Compute per-game retroactive Omen Score and market signal
   _retro_ts_map  = {}   # {id: retro_ts_rank}
   _exp_rank_map  = {}   # {id: experimental_rank}
   _sharp_rank_map = {}  # {id: sharp_score_rank}
@@ -6511,10 +6589,10 @@ def model_performance():
   ):
     _day = list(_grp)
 
-    # Retroactive Trust Score rank (current formula, no stale daily_rank)
+    # Retroactive Omen Score rank (current formula, no stale daily_rank)
     _ts_scored = []
     for _g in _day:
-      _td = _trust_score(_g.home_prob, _g.home_odds, _g.away_odds, _g.factors_json, sport=sport, detail=True)
+      _td = _omen_score(_g.home_prob, _g.home_odds, _g.away_odds, _g.factors_json, sport=sport, detail=True)
       _ts_scored.append((_g.id, _td.get('score', 0), _td))
     _ts_scored.sort(key=lambda x: -x[1])
     for _r, (_gid, _, __) in enumerate(_ts_scored, 1):
@@ -6578,13 +6656,13 @@ def model_performance():
   rank_cmp_ts      = _rank_bucket_stats(_ts_eligible,  lambda g: _retro_ts_map.get(g.id))
   rank_cmp_sharp   = _rank_bucket_stats(_sh_eligible,  lambda g: _sharp_rank_map.get(g.id))
   rank_cmp_exp     = _rank_bucket_stats(_exp_eligible, lambda g: _exp_rank_map.get(g.id))
-  rank_comparison = [{'label': b['label'], 'ts': b, 'sharp': s, 'exp': e}
+  rank_comparison = [{'label': b['label'], 'omen': b, 'sharp': s, 'exp': e}
                      for b, s, e in zip(rank_cmp_ts, rank_cmp_sharp, rank_cmp_exp)]
   rank_comparison_n    = len(_ts_eligible)
   rank_comparison_n_exp = len(_exp_eligible)
 
   # ── Movement Profile breakdown — monitoring sample size before this feeds
-  # into the Trust Score (currently 0.5 neutral until each bucket hits MIN_N) ─
+  # into the Omen Score (currently 0.5 neutral until each bucket hits MIN_N) ─
   _mv_games = [p for p in resolved if p.movement_profile]
   movement_stats = []
   for label in _MOVEMENT_PROFILES:
@@ -6605,8 +6683,8 @@ def model_performance():
   movement_n_total = len(_mv_games)
 
   # ── Firing Efficiency Analysis ───────────────────────────────────────────────
-  # Retroactively rank all resolved games with odds by Trust Score within each day.
-  # "Recommended N" = top-N picks per day by Trust Score.
+  # Retroactively rank all resolved games with odds by Omen Score within each day.
+  # "Recommended N" = top-N picks per day by Omen Score.
   _fire_games = []
   for p in resolved:
     if not p.home_odds or not p.away_odds or not p.home_prob:
@@ -6622,7 +6700,7 @@ def model_performance():
         roi = profit if model_won else -1.0
       except (TypeError, ValueError):
         pass
-    td   = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
+    td   = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
     ts   = td.get('score', 0)
     lm   = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
                           p.closing_away_odds or p.away_odds,
@@ -6651,7 +6729,7 @@ def model_performance():
       _frank += 1
     g['rec_rank'] = _frank
 
-  # Separate rank within each day by Trust Score (highest = rank 1)
+  # Separate rank within each day by Omen Score (highest = rank 1)
   from itertools import groupby as _fire_groupby
   for _dt, _grp in _fire_groupby(
       sorted(_fire_games, key=lambda x: (x['date'], -x['unf'])), key=lambda x: x['date']
@@ -6691,9 +6769,9 @@ def model_performance():
     _all_row['lift_roi'] = None; _all_row['lift_wr'] = None; _all_row['lift_eff'] = None
     firing_stats.append(_all_row)
 
-  # Same Top-N breakdown, ranked by Trust Score instead of Trust Score
+  # Same Top-N breakdown, ranked by Omen Score instead of Omen Score
 
-  # ROI by Trust Score bucket: recommended (top 3) vs all games with odds
+  # ROI by Omen Score bucket: recommended (top 3) vs all games with odds
   _fts_order = ['70+', '55–70', '42–55', '28–42', '< 28']
   def _fts_bkt(ts):
     if   ts >= 70: return '70+'
@@ -6726,7 +6804,7 @@ def model_performance():
   _team_pfx = re.compile(r'^(?:Hm|Aw) ')
   enriched_preds = []
   for p in resolved[:40]:
-    ts = _trust_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
+    ts = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
     fav_home = (p.home_prob or 0.5) >= 0.5
     actual_home_won = bool(p.home_won)
     pick_won = (fav_home == actual_home_won)
@@ -6766,7 +6844,7 @@ def model_performance():
         'actual_winner': p.home_team if actual_home_won else p.away_team,
         'home_score': p.home_score,
         'away_score': p.away_score,
-        'trust_score': ts,
+        'omen_score': ts,
         'edge':       _edge,
         'daily_rank': p.daily_rank,
         'exp_rank':   _exp_rank_map.get(p.id),
@@ -6813,7 +6891,7 @@ def model_performance():
       factor_stats=factor_stats,
       rank_stats=rank_stats,
       score_bucket_stats=score_bucket_stats,
-      spread_trust_bucket_stats=spread_trust_bucket_stats,
+      spread_omen_bucket_stats=spread_omen_bucket_stats,
       market_agree_stats=market_agree_stats,
       consensus_stats=consensus_stats,
       fav_dog_stats=fav_dog_stats,
@@ -6841,7 +6919,7 @@ def model_performance():
 
 def _edge_recommendations(days, sport, limit=15):
   """Edge-ranked recommendation list for the non-MLB sports (MLB has its own
-  full Trust Score table, filtered separately by _mlb_star_pick since that
+  full Omen Score table, filtered separately by _mlb_star_pick since that
   table's columns are ML-specific). `days` is the schedule list of
   {'games': [...]}.
 
@@ -6860,6 +6938,17 @@ def _edge_recommendations(days, sport, limit=15):
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
       else:             k_label, k_cls = 'Lean',   'edge-neutral'
 
+      # Moneyline Omen Score — informative on every row regardless of which
+      # market earned the ★ (same convention as MLB's table), since it's
+      # read off the game's own home_prob/odds, not the picked market.
+      model = game.get('model') or {}
+      odds  = game.get('odds') or {}
+      omen_score = None
+      hp, ho, ao = model.get('home_prob'), odds.get('home_best'), odds.get('away_best')
+      if hp is not None and ho is not None and ao is not None:
+        factors_json = json.dumps(model.get('factors') or [])
+        omen_score = _omen_score(hp, ho, ao, factors_json, sport=sport)
+
       recommended.append({
           'game':         game,
           'market':       pick['market'],
@@ -6873,6 +6962,7 @@ def _edge_recommendations(days, sport, limit=15):
           'k_label':      k_label,
           'k_cls':        k_cls,
           'pips':         pick['pips'],
+          'omen_score':   omen_score,
       })
 
   recommended.sort(key=lambda r: -r['edge'])
@@ -7813,7 +7903,7 @@ def api_refresh_stats_stream():
             yield _sse('Saving predictions to database', 'running')
             with app.app_context():
                 _upsert_predictions(schedule, 'MLB')
-                _recompute_trust_weights('MLB')
+                _recompute_omen_weights('MLB')
                 _recompute_team_bias('MLB')
                 _recompute_unified_rank_stats('MLB')
                 _recompute_movement_profiles('MLB')
@@ -8012,10 +8102,10 @@ def api_backfill_stream():
                 'done'
             )
 
-            yield _sse('Refitting Platt scaler & trust weights', 'running')
+            yield _sse('Refitting Platt scaler & omen weights', 'running')
             with app.app_context():
                 _refit_mlb_platt()
-                _recompute_trust_weights('MLB')
+                _recompute_omen_weights('MLB')
                 _recompute_team_bias('MLB')
                 _recompute_unified_rank_stats('MLB')
                 _recompute_movement_profiles('MLB')
@@ -8296,19 +8386,19 @@ def api_lifeos_games():
 # ── Background cache warmer ───────────────────────────────────────────────────
 # Keeps all three schedule caches pre-populated so page loads are instant.
 # ── Discord score alerts ───────────────────────────────────────────────────────
-# Trust Score alerting was removed here (Trust Score itself is still computed
-# internally — Trust Score is partly derived from its component values —
+# Omen Score alerting was removed here (Omen Score itself is still computed
+# internally — Omen Score is partly derived from its component values —
 # but it's no longer surfaced, tracked, or alerted on anywhere in this file).
 _PREV_SCORES: dict = {}    # {game_key: {...snapshot...}} from last warmer run
 _PREV_SCORES_LOCK = threading.Lock()
-_SCORE_ALERT_THRESHOLD = 10   # minimum Trust Score delta to fire a movement alert
+_SCORE_ALERT_THRESHOLD = 10   # minimum Omen Score delta to fire a movement alert
 _UNF_HIGH_THRESHOLD    = 60   # unified score "high confidence" crossing alert
 
 
 def _snapshot_reason_bits(prev, curr):
     """
     Build a human-readable list of "what actually changed" between two
-    Trust Score snapshots of the same game, using the concrete underlying
+    Omen Score snapshots of the same game, using the concrete underlying
     values (not the abstracted 0-1 component weights) — so a Discord alert
     can say *why* the score moved, not just that it did.
 
@@ -8320,7 +8410,7 @@ def _snapshot_reason_bits(prev, curr):
       5. Odds payout bucket (crossed a Kelly-multiplier threshold, e.g. -150)
 
     Returns a list of strings, already ordered; empty if nothing meaningfully
-    changed (can happen if Trust Score moved from rounding/threshold noise
+    changed (can happen if Omen Score moved from rounding/threshold noise
     alone, e.g. crossing bucket bounds by <1 point).
     """
     bits = []
@@ -8350,11 +8440,11 @@ def _snapshot_reason_bits(prev, curr):
 
 
 def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
-    """Compare pre-game Trust Score to the previous warmer snapshot.
+    """Compare pre-game Omen Score to the previous warmer snapshot.
     Fires Discord embeds for:
-      • Trust Score movement ±10+ (with a "why" breakdown — see
+      • Omen Score movement ±10+ (with a "why" breakdown — see
         _snapshot_reason_bits)
-      • Trust Score first crossing 60 (high-confidence alert)
+      • Omen Score first crossing 60 (high-confidence alert)
     """
     import requests as _req
     import odds_history
@@ -8385,13 +8475,13 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             fj  = model.get('factors_json') or json.dumps(model.get('factors', []))
             h_odds = odds.get('home_best')
             a_odds = odds.get('away_best')
-            # Trust Score is computed here purely as an internal input to
-            # Trust Score (which is partly derived from its edge/fav-dog
+            # Omen Score is computed here purely as an internal input to
+            # Omen Score (which is partly derived from its edge/fav-dog
             # component values) — the composite number itself is never
             # stored, compared, or surfaced below.
-            td = _trust_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
+            td = _omen_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
 
-            # Compute Trust Score — needs opening → current line move
+            # Compute Omen Score — needs opening → current line move
             line_move_val = 0.5  # neutral default
             lm_pct = None
             open_h = odds.get('opening_home')
@@ -8475,9 +8565,9 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
         why_str = '\n'.join(f"• {b}" for b in a['why']) if a['why'] else ''
 
         if t == 'unf':
-            title = f"{'📈' if up else '📉'} Trust Score Movement · MLB"
+            title = f"{'📈' if up else '📉'} Omen Score Movement · MLB"
             desc  = (f"**{a['game']}** · Pick: **{a['pick']}**\n"
-                     f"Trust Score: {a['prev']} → **{a['curr']}** ({a['delta']:+d}) {'↑' if up else '↓'}")
+                     f"Omen Score: {a['prev']} → **{a['curr']}** ({a['delta']:+d}) {'↑' if up else '↓'}")
             if why_str:
                 desc += f"\n\n**Why:**\n{why_str}"
             color = 0x4ade80 if up else 0xf87171
@@ -8486,7 +8576,7 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
             prev_str = f"{a['prev']} → " if a['prev'] is not None else ''
             title = f"🎯 High Confidence Pick · MLB"
             desc  = (f"**{a['game']}** · Pick: **{a['pick']}**\n"
-                     f"Trust Score: {prev_str}**{a['curr']}** (crossed {_UNF_HIGH_THRESHOLD})")
+                     f"Omen Score: {prev_str}**{a['curr']}** (crossed {_UNF_HIGH_THRESHOLD})")
             if why_str:
                 desc += f"\n\n**Why:**\n{why_str}"
             color = 0xfb923c  # orange
@@ -8572,7 +8662,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             a_odds = odds.get('away_best', 0)
             bet_side  = 'home' if hp >= ap else 'away'
             fj        = model.get('factors_json') or json.dumps(model.get('factors', []))
-            td        = _trust_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
+            td        = _omen_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
             lm = _line_move_pct(hp, h_odds, a_odds,
                                 odds.get('opening_home'), odds.get('opening_away'))
             lm_val = max(0.0, min(1.0, 0.5 + lm / 10.0)) if lm is not None else 0.5
@@ -8636,7 +8726,7 @@ def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
             'title':       f'⚾ MLB Daily Picks · {today_str}',
             'description': description,
             'color':       0xFB4F14,
-            'footer':      {'text': 'Recommended picks only · sorted by Trust Score · noon ET snapshot'},
+            'footer':      {'text': 'Recommended picks only · sorted by Omen Score · noon ET snapshot'},
         }]}, timeout=10)
         print(f'[daily-picks] Discord response: {r.status_code}', flush=True)
     except Exception as e:
@@ -8875,8 +8965,8 @@ def _recompute_all_calibration(sport):
     Mirrors the MLB-only block that used to be duplicated at each call site —
     safe to call for sports with few/no resolved games (each recompute_*
     function no-ops below its own minimum sample size)."""
-    _recompute_trust_weights(sport)
-    _recompute_spread_trust_weights(sport)
+    _recompute_omen_weights(sport)
+    _recompute_spread_omen_weights(sport)
     _recompute_team_bias(sport)
     _recompute_market_edge_shrink(sport)
     _recompute_unified_rank_stats(sport)
@@ -9071,7 +9161,7 @@ def _start_cache_warmer():
     atexit.register(lambda: scheduler.shutdown(wait=False))
 
     # Calibrations are fast (DB-only) — run synchronously so the first page load
-    # sees correct Platt scaling, grade adjustments, and Trust Score weights.
+    # sees correct Platt scaling, grade adjustments, and Omen Score weights.
     _refit_mlb_platt()
     for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
         _recompute_all_calibration(_sport)

@@ -14,7 +14,7 @@
     text-decoration: none;
 }
 .bet-type-tab.active { background: var(--nav-active-bg); color: #fff; font-weight: 700; }
-.calib-table th, .factor-corr, .factor-n, .pred-score, .grade-badge, .lift-badge, .ts-badge { font-family: var(--font-mono); }
+.calib-table th, .factor-corr, .factor-n, .pred-score, .grade-badge, .lift-badge, .omen-badge { font-family: var(--font-mono); }
 
 .perf-grid {
     display: grid;
@@ -65,7 +65,7 @@
 .pred-game { flex: 1; min-width: 110px; font-weight: 600; }
 .pred-pick-label { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
 .pred-pick-team  { font-weight: 700; color: var(--orange); }
-.ts-badge {
+.omen-badge {
     display: inline-block; font-size: 0.67rem; font-weight: 700;
     padding: 1px 5px; border-radius: 3px; margin-left: 4px;
     background: rgba(255,255,255,0.06); color: var(--text);
@@ -332,10 +332,10 @@
 </div>
 {% endif %}
 
-{% if spread_trust_bucket_stats %}
+{% if spread_omen_bucket_stats %}
 <div class="card" style="margin-bottom: 14px;">
     <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Spread Trust Score</h2>
+        <h2>Spread Omen Score</h2>
         <span class="small">composite score (factor consensus + edge zone + calibration) · diagnostic, not yet used to gate picks</span>
     </div>
     <div class="calib-scroll">
@@ -344,7 +344,7 @@
             <tr><th>Score</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
         </thead>
         <tbody>
-        {% for s in spread_trust_bucket_stats %}
+        {% for s in spread_omen_bucket_stats %}
         <tr>
             <td>{{ s.label }}</td>
             <td>{{ s.count }}</td>
@@ -359,7 +359,7 @@
         </tbody>
     </table>
     </div>
-    <p class="section-note">A spread-market sibling of MLB's Trust Score, blending how much the model's own reweighted factors agree with the pick, the edge-size zone, and the probability-calibration bucket — each weighted by how that bucket has actually performed historically. If higher scores show higher ROI here, that's a sign this score could tighten which spread picks earn a ★; if not, it isn't adding signal beyond the existing edge/Kelly bar.</p>
+    <p class="section-note">A spread-market sibling of MLB's Omen Score, blending how much the model's own reweighted factors agree with the pick, the edge-size zone, and the probability-calibration bucket — each weighted by how that bucket has actually performed historically. If higher scores show higher ROI here, that's a sign this score could tighten which spread picks earn a ★; if not, it isn't adding signal beyond the existing edge/Kelly bar.</p>
 </div>
 {% endif %}
 
@@ -525,7 +525,7 @@
 <!-- ══ ZONE 2: Scoring & Market Signal ══ -->
 <div class="zone-divider">
     <h3>Scoring &amp; Market Signal</h3>
-    <span class="zone-sub">how the trust score reads odds, line movement &amp; edge</span>
+    <span class="zone-sub">how the omen score reads odds, line movement &amp; edge</span>
     <span class="zone-line"></span>
 </div>
 {% endif %}
@@ -604,14 +604,14 @@
 <details class="score-details">
   <summary>
     <span class="sd-title">Rank Comparison</span>
-    <span class="sd-sub">Trust Score · Sharp Score · Experimental</span>
+    <span class="sd-sub">Omen Score · Sharp Score · Experimental</span>
     <span class="sd-teaser">n={{ rank_comparison_n }} games</span>
   </summary>
   <div class="score-details-body">
-  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 10px;">Retroactive Trust Score · Sharp Score · Experimental · n={{ rank_comparison_n }} games (Exp: n={{ rank_comparison_n_exp }})</p>
+  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 10px;">Retroactive Omen Score · Sharp Score · Experimental · n={{ rank_comparison_n }} games (Exp: n={{ rank_comparison_n_exp }})</p>
   <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
     All ranks computed retroactively from stored game data — not from stale <code>daily_rank</code>.<br>
-    <strong style="color:var(--text);">Trust Score</strong> 50% Consensus · 25% Edge · 15% Fav/Dog · 10% Calib &nbsp;|&nbsp;
+    <strong style="color:var(--text);">Omen Score</strong> 50% Consensus · 25% Edge · 15% Fav/Dog · 10% Calib &nbsp;|&nbsp;
     <strong style="color:var(--text);">Sharp Score</strong> 30% Edge · 30% Consensus · 20% Calib · 20% Line Move &nbsp;|&nbsp;
     <strong style="color:var(--text);">Experimental</strong> 40% Edge · 30% Line Move · 20% Consensus · 10% Calib — line move = opening→close (CLV as fallback)
   </p>
@@ -620,7 +620,7 @@
     <thead>
       <tr>
         <th rowspan="2" style="text-align:left;padding:5px 10px;vertical-align:bottom;">Bucket</th>
-        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--orange);">Trust Score</th>
+        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--orange);">Omen Score</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--green, var(--win));">Sharp Score</th>
         <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--blue);">Experimental</th>
       </tr>
@@ -640,13 +640,13 @@
     {% for row in rank_comparison %}
     <tr style="border-bottom:1px solid var(--border);">
       <td style="padding:7px 10px;font-weight:700;font-size:0.8rem;">{{ row.label }}</td>
-      {# Trust Score #}
-      <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.ts.n or '—' }}</td>
+      {# Omen Score #}
+      <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.omen.n or '—' }}</td>
       <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-        {% if row.ts.wr is not none %}<span class="{{ 'calib-err-ok' if row.ts.wr >= 55 else ('calib-err-pos' if row.ts.wr >= 50 else 'calib-err-neg') }}">{{ row.ts.wr }}%</span>{% else %}—{% endif %}
+        {% if row.omen.wr is not none %}<span class="{{ 'calib-err-ok' if row.omen.wr >= 55 else ('calib-err-pos' if row.omen.wr >= 50 else 'calib-err-neg') }}">{{ row.omen.wr }}%</span>{% else %}—{% endif %}
       </td>
       <td style="padding:7px 8px;text-align:right;font-size:0.78rem;border-right:1px solid var(--border);">
-        {% if row.ts.roi is not none %}<span class="{{ 'calib-err-ok' if row.ts.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.ts.roi > 0 }}{{ row.ts.roi }}%</span>{% else %}—{% endif %}
+        {% if row.omen.roi is not none %}<span class="{{ 'calib-err-ok' if row.omen.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.omen.roi > 0 }}{{ row.omen.roi }}%</span>{% else %}—{% endif %}
       </td>
       {# Sharp Score #}
       <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.sharp.n or '—' }}</td>
@@ -685,7 +685,7 @@
   <div class="score-details-body">
   <div class="section-header" style="margin-bottom:12px;">
     <h2 style="display:none;">Movement Profile</h2>
-    <span class="small">n={{ movement_n_total }} classified games · monitoring sample size before this feeds the Trust Score</span>
+    <span class="small">n={{ movement_n_total }} classified games · monitoring sample size before this feeds the Omen Score</span>
   </div>
   <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
     Pre-game moneyline movement on the model-pick side, classified from <code>odds_snapshot</code> history (capture started 2026-06-23; purging disabled).
@@ -730,7 +730,7 @@
     </tbody>
   </table>
   </div>
-  <p class="section-note">Weight column is the live, credibility-blended value each profile contributes if/when wired into the Trust Score — sits at 0.5 (neutral) until n≥5 with stored ROI.</p>
+  <p class="section-note">Weight column is the live, credibility-blended value each profile contributes if/when wired into the Omen Score — sits at 0.5 (neutral) until n≥5 with stored ROI.</p>
   </div>
 </details>
 {% endif %}
@@ -740,12 +740,12 @@
 <details class="score-details">
   <summary>
     <span class="sd-title">Firing Efficiency</span>
-    <span class="sd-sub">top-N picks/day by Trust Score</span>
+    <span class="sd-sub">top-N picks/day by Omen Score</span>
     <span class="sd-teaser">{{ fire_total }} games · {{ fire_days }} days</span>
   </summary>
   <div class="score-details-body">
   <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
-    Each day's games are ranked by Trust Score. "Top N" selects only the highest-ranked bets. Profitable% = fraction of picks where ROI &gt; 0. Lift = vs All picks baseline.
+    Each day's games are ranked by Omen Score. "Top N" selects only the highest-ranked bets. Profitable% = fraction of picks where ROI &gt; 0. Lift = vs All picks baseline.
   </p>
 
   <!-- Main firing table -->
@@ -798,10 +798,10 @@
   </div>
 
 
-  <!-- ROI by Trust Score bucket: top-3 recommended vs all -->
+  <!-- ROI by Omen Score bucket: top-3 recommended vs all -->
   {% if firing_bucket_stats %}
   <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:10px;border-top:1px solid var(--border);padding-top:14px;">
-    ROI by Trust Score Bucket — Top 3 vs All
+    ROI by Omen Score Bucket — Top 3 vs All
   </div>
   <div class="calib-scroll">
   <table class="calib-table" style="width:100%;">
@@ -844,7 +844,7 @@
   </div>
   {% endif %}
 
-  <p class="section-note">Rankings retroactively assigned using Trust Score computed from stored game data. Games without odds excluded from analysis. Profitable% = fraction where pick_roi &gt; 0. Edge = model prob − vig-free market implied.</p>
+  <p class="section-note">Rankings retroactively assigned using Omen Score computed from stored game data. Games without odds excluded from analysis. Profitable% = fraction where pick_roi &gt; 0. Edge = model prob − vig-free market implied.</p>
   </div>
 </details>
 {% endif %}
@@ -1136,7 +1136,7 @@
         <span class="pred-pick-label">
           Pick: <span class="pred-pick-team">{{ p.pick_team.split()[-1] }}</span>
           {% if p.pick_prob %}<span style="color:var(--text-muted);font-weight:400;font-size:0.72rem;">({{ p.pick_prob }}%)</span>{% endif %}
-          {% if p.trust_score %}<span class="ts-badge">TS {{ p.trust_score }}</span>{% endif %}
+          {% if p.omen_score %}<span class="omen-badge">OM {{ p.omen_score }}</span>{% endif %}
           {% if p.daily_rank %}<span style="font-size:0.68rem;color:var(--text-muted);margin-left:4px;">#{{ p.daily_rank }}</span>{% if p.exp_rank %}<span style="font-size:0.68rem;color:var(--blue);margin-left:3px;">exp#{{ p.exp_rank }}</span>{% endif %}{% endif %}
         </span>
         {% if p.pick_won %}
