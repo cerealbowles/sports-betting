@@ -2047,10 +2047,12 @@ def _omen_score(home_prob, home_odds, away_odds, factors_json, sport='MLB', deta
     """
     0-100 composite omen score for ranking recommendations.
 
-    Components (50/25/15/10 split; per-bucket weights adapt from history):
+    Components (50/40/0/10 split; per-bucket weights adapt from history):
       50% factor consensus   — % of significant factors aligned with pick
-      25% edge zone          — market agreement bucket, calibrated from outcomes
-      15% fav/dog            — is pick on market fav or dog? (dog picks −9% ROI)
+      40% edge zone          — market agreement bucket, calibrated from outcomes
+       0% fav/dog            — computed (and returned in `detail`) but currently
+                                unweighted; dog picks have run −9% ROI historically,
+                                reweight here if that keeps holding up
       10% calibration bucket — pick_prob range → historical ROI (56-58% danger zone)
 
     Weights start as hand-tuned priors and blend toward empirical ROI-derived
@@ -2350,13 +2352,20 @@ def _spread_omen_score(sport, factors_json, spread_pick_line, spread_home_price,
     return score
 
 
-def _experimental_score(td, clv_pct=None, line_move_pct=None):
-    """Experimental ranking formula: 0.4*edge + 0.3*market_signal + 0.2*consensus + 0.1*calib.
+def _phantom_score(td, clv_pct=None, line_move_pct=None):
+    """Phantom Score — line-movement-aware ranking formula (formerly
+    'Experimental'): 0.4*edge + 0.3*market_signal + 0.2*consensus + 0.1*calib.
+    Named for what it's actually reading: sharp money moving unseen through
+    the line before most books (or bettors) notice.
 
     market_signal uses the best available market movement source:
       - line_move_pct: opening → current/close (preferred; works pre-game and post-game)
       - clv_pct: entry → close fallback for resolved games without opening odds stored
       Both normalised to 0-1: 0.5 + pct/10, capped at [0, 1]. Returns 0 if neither available.
+
+    Returns a 0-1 raw value (×100 to match Omen Score's 0-100 scale) — see
+    _primary_score, which does that scaling for the sports that use this as
+    their live ranking score.
     """
     if not td:
         return 0.0
@@ -2370,25 +2379,33 @@ def _experimental_score(td, clv_pct=None, line_move_pct=None):
             0.10 * (td.get('k') or 0))
 
 
-def _sharp_score(td, line_move_val=0.5):
-    """Pre-game sharp score: 30% edge + 30% consensus + 20% calibration + 20% line movement.
-
-    line_move_val: 0-1 normalized; 0.5 = neutral (no opening line).
-      Derived from (current_pick_implied − opening_pick_implied) / 10%, capped [0, 1].
-      Positive = market moved toward our pick (sharp agreement signal).
-    """
-    if not td:
-        return 0
-    raw = (0.30 * (td.get('e') or 0) +
-           0.30 * (td.get('c') or 0) +
-           0.20 * (td.get('k') or 0) +
-           0.20 * line_move_val)
-    return round(raw * 100)
-
-
 # ── Recommendation ranking ─────────────────────────────────────────────────────
-# Everything ranks by the Omen Score (_omen_score). The old data-fit 'Unified'
-# and 'Pick of the Day' composite scores were retired in its favour.
+# Default is the Omen Score (_omen_score). MLB and CFB rank by the Phantom
+# Score instead — a 2026-10-20 backtest replaying both formulas over every
+# resolved game with odds (re-ranking each day's slate and checking the #1
+# pick only, since that's the one that actually gets bet) showed Phantom
+# beating Omen on MLB (n=120, +1.2% vs -3.1% ROI) and CFB (n=20, +8.1% vs
+# +5.1% ROI) — sports where pre-game line movement carries real signal.
+# Omen stayed ahead in NHL/WNBA, so it remains the default. The old Sharp
+# Score (_sharp_score, 30% edge + 30% consensus + 20% calib + 20% line move)
+# was retired the same day — it never beat either formula in any sport and
+# dragged aggregate ROI negative everywhere.
+_PHANTOM_SPORTS = {'MLB', 'CFB'}
+
+
+def _primary_score(omen_detail, sport, line_move_pct=None, clv_pct=None):
+    """The score that actually drives ranking/display for `sport` — Omen
+    Score by default, Phantom Score for _PHANTOM_SPORTS. Falls back to Omen
+    Score if Phantom has no market signal to work with (line_move_pct and
+    clv_pct both None) rather than scoring the game a hard 0.
+    Returns (score: int 0-100, kind: 'omen' | 'phantom')."""
+    if not omen_detail:
+        return 0, 'omen'
+    if sport in _PHANTOM_SPORTS:
+        signal = line_move_pct if line_move_pct is not None else clv_pct
+        if signal is not None:
+            return round(_phantom_score(omen_detail, clv_pct=clv_pct, line_move_pct=line_move_pct) * 100), 'phantom'
+    return omen_detail.get('score', 0), 'omen'
 
 def _odds_multiplier(pick_odds):
     """Post-score adjustment surfacing underdog value the weighted formula
@@ -5556,12 +5573,12 @@ def _mlb_candidates(schedule):
             line_move_val = max(0.0, min(1.0, 0.5 + line_move_pct / 10.0))
 
       omen_detail = _omen_score(hp, h_odds, a_odds, factors_json, sport='MLB', detail=True)
-      trust = omen_detail.get('score', 0)
+      trust, score_kind = _primary_score(omen_detail, 'MLB', line_move_pct=line_move_pct)
 
       # movement_profile/movement_pct were already classified above (before
       # adj_prob, so the correction could actually apply). unified_score is
-      # display-only (sorting keys off omen_score) but kept for the schedule
-      # page's existing columns.
+      # display-only (sorting keys off the primary score — Phantom for MLB,
+      # see _PHANTOM_SPORTS) but kept for the schedule page's existing columns.
       unified = _unified_score(omen_detail, line_move_val, _movement_value(movement_profile, sport='MLB'), amer_odds)
 
       # Both probable starters must be officially announced. Until then, the
@@ -5599,6 +5616,7 @@ def _mlb_candidates(schedule):
         'k_cls':         k_cls,
         'k_f_adj':       k_f_adj,
         'omen_score':   trust,
+        'score_kind':   score_kind,
         'omen_detail':     omen_detail,
         'ev_pct':        ev_pct,
         'unified_score': unified,
@@ -5614,8 +5632,8 @@ def _mlb_candidates(schedule):
       })
 
   # Unconfirmed-SP games sort below every confirmed-SP game regardless of
-  # score (see sp_confirmed comment above) — Omen Score order still applies
-  # within each group.
+  # score (see sp_confirmed comment above) — primary-score order (Phantom
+  # for MLB, see _PHANTOM_SPORTS) still applies within each group.
   all_candidates.sort(key=lambda x: (not x['sp_confirmed'], -x['omen_score']))
   for i, b in enumerate(all_candidates):
     b['rank'] = i + 1
@@ -6275,13 +6293,17 @@ def model_performance():
         'clv_n':    len(clv_vals),
     })
 
-  # ── Omen score buckets ────────────────────────────────────────────────────
+  # ── Primary score buckets (Omen, or Phantom for _PHANTOM_SPORTS) ───────────
   _score_order = ['70+', '55–70', '42–55', '28–42', '< 28']
   _score_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _score_order}
   for p in resolved:
     if not p.home_odds or not p.away_odds:
       continue
-    ts = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
+    _omen_detail_sb = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
+    _lm_sb = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
+                             p.closing_away_odds or p.away_odds,
+                             p.opening_home_odds, p.opening_away_odds)
+    ts, _ = _primary_score(_omen_detail_sb, sport, line_move_pct=_lm_sb, clv_pct=p.pick_clv)
     if ts == 0:
       continue
     if   ts >= 70: slbl = '70+'
@@ -6570,19 +6592,20 @@ def model_performance():
         'lift_wr':  round(wr - baseline_wr, 1) if baseline_wr is not None else None,
     })
 
-  # ── Rank comparison: Omen Score vs Sharp Score vs Experimental ─────────────
+  # ── Rank comparison: Omen Score vs Phantom Score ────────────────────────────
   # Use all resolved games with odds + pick_roi. For the market signal we use:
   #   line_move: opening_home_odds → closing_home_odds (preferred going forward)
   #   pick_clv:  entry → close fallback for games without opening_home_odds stored
-  # The Experimental formula requires at least one market signal; Sharp Score and
-  # retroactive Omen Score run on all games with odds.
+  # The Phantom formula requires at least one market signal; retroactive Omen
+  # Score runs on all games with odds. Sharp Score was retired 2026-10-20 — it
+  # never beat either formula in any sport's backtest, so it's gone rather
+  # than carried as dead weight in this comparison.
   from itertools import groupby as _igroupby
   _ranked = [p for p in resolved if p.pick_roi is not None and p.home_odds and p.away_odds]
 
   # Compute per-game retroactive Omen Score and market signal
   _retro_ts_map  = {}   # {id: retro_ts_rank}
-  _exp_rank_map  = {}   # {id: experimental_rank}
-  _sharp_rank_map = {}  # {id: sharp_score_rank}
+  _phantom_rank_map = {}   # {id: phantom_rank}
 
   for _dt, _grp in _igroupby(
       sorted(_ranked, key=lambda x: x.game_date), key=lambda x: x.game_date
@@ -6598,40 +6621,23 @@ def model_performance():
     for _r, (_gid, _, __) in enumerate(_ts_scored, 1):
       _retro_ts_map[_gid] = _r
 
-    # Sharp Score rank: 30%E + 30%C + 20%K + 20%LM
-    # line_move for resolved: opening → close (or CLV as fallback)
-    _sh_scored = []
+    # Phantom rank: requires at least one market signal
+    _phantom_scored = []
     for _g in _day:
       _td = next((t for gid, _, t in _ts_scored if gid == _g.id), {})
       lm = _line_move_pct(_g.home_prob, _g.closing_home_odds or _g.home_odds,
                           _g.closing_away_odds or _g.away_odds,
                           _g.opening_home_odds, _g.opening_away_odds)
-      lm_fallback = _g.pick_clv if lm is None else lm
-      lm_val = max(0.0, min(1.0, 0.5 + lm_fallback / 10.0)) if lm_fallback is not None else 0.5
-      sh = _sharp_score(_td, lm_val)
-      _sh_scored.append((_g.id, sh))
-    _sh_scored.sort(key=lambda x: -x[1])
-    for _r, (_gid, _) in enumerate(_sh_scored, 1):
-      _sharp_rank_map[_gid] = _r
-
-    # Experimental rank: requires at least one market signal
-    _exp_scored = []
-    for _g in _day:
-      _td = next((t for gid, _, t in _ts_scored if gid == _g.id), {})
-      lm = _line_move_pct(_g.home_prob, _g.closing_home_odds or _g.home_odds,
-                          _g.closing_away_odds or _g.away_odds,
-                          _g.opening_home_odds, _g.opening_away_odds)
-      sc = _experimental_score(_td, clv_pct=_g.pick_clv, line_move_pct=lm)
+      sc = _phantom_score(_td, clv_pct=_g.pick_clv, line_move_pct=lm)
       if sc > 0:
-        _exp_scored.append((_g.id, sc))
-    _exp_scored.sort(key=lambda x: -x[1])
-    for _r, (_gid, _) in enumerate(_exp_scored, 1):
-      _exp_rank_map[_gid] = _r
+        _phantom_scored.append((_g.id, sc))
+    _phantom_scored.sort(key=lambda x: -x[1])
+    for _r, (_gid, _) in enumerate(_phantom_scored, 1):
+      _phantom_rank_map[_gid] = _r
 
   # Games eligible for each system
-  _ts_eligible  = _ranked                                   # all with odds
-  _sh_eligible  = _ranked                                   # all with odds
-  _exp_eligible = [g for g in _ranked if _exp_rank_map.get(g.id)]  # need signal
+  _ts_eligible      = _ranked                                            # all with odds
+  _phantom_eligible = [g for g in _ranked if _phantom_rank_map.get(g.id)]  # need signal
 
   _RANK_BUCKETS_DEF = [('#1', 1, 1), ('#2-3', 2, 3), ('#4-6', 4, 6), ('#7+', 7, 999)]
 
@@ -6653,13 +6659,13 @@ def model_performance():
       })
     return rows
 
-  rank_cmp_ts      = _rank_bucket_stats(_ts_eligible,  lambda g: _retro_ts_map.get(g.id))
-  rank_cmp_sharp   = _rank_bucket_stats(_sh_eligible,  lambda g: _sharp_rank_map.get(g.id))
-  rank_cmp_exp     = _rank_bucket_stats(_exp_eligible, lambda g: _exp_rank_map.get(g.id))
-  rank_comparison = [{'label': b['label'], 'omen': b, 'sharp': s, 'exp': e}
-                     for b, s, e in zip(rank_cmp_ts, rank_cmp_sharp, rank_cmp_exp)]
-  rank_comparison_n    = len(_ts_eligible)
-  rank_comparison_n_exp = len(_exp_eligible)
+  rank_cmp_ts      = _rank_bucket_stats(_ts_eligible,      lambda g: _retro_ts_map.get(g.id))
+  rank_cmp_phantom = _rank_bucket_stats(_phantom_eligible, lambda g: _phantom_rank_map.get(g.id))
+  rank_comparison = [{'label': b['label'], 'omen': b, 'phantom': p}
+                     for b, p in zip(rank_cmp_ts, rank_cmp_phantom)]
+  rank_comparison_n        = len(_ts_eligible)
+  rank_comparison_n_phantom = len(_phantom_eligible)
+  rank_comparison_primary = 'phantom' if sport in _PHANTOM_SPORTS else 'omen'
 
   # ── Movement Profile breakdown — monitoring sample size before this feeds
   # into the Omen Score (currently 0.5 neutral until each bucket hits MIN_N) ─
@@ -6683,8 +6689,9 @@ def model_performance():
   movement_n_total = len(_mv_games)
 
   # ── Firing Efficiency Analysis ───────────────────────────────────────────────
-  # Retroactively rank all resolved games with odds by Omen Score within each day.
-  # "Recommended N" = top-N picks per day by Omen Score.
+  # Retroactively rank all resolved games with odds by the primary score
+  # (Omen, or Phantom for _PHANTOM_SPORTS) within each day.
+  # "Recommended N" = top-N picks per day by that score.
   _fire_games = []
   for p in resolved:
     if not p.home_odds or not p.away_odds or not p.home_prob:
@@ -6701,10 +6708,10 @@ def model_performance():
       except (TypeError, ValueError):
         pass
     td   = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
-    ts   = td.get('score', 0)
     lm   = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
                           p.closing_away_odds or p.away_odds,
                           p.opening_home_odds, p.opening_away_odds)
+    ts, _ = _primary_score(td, sport, line_move_pct=lm, clv_pct=p.pick_clv)
     signal_pct = lm if lm is not None else p.pick_clv
     m_val = max(0.0, min(1.0, 0.5 + signal_pct / 10.0)) if signal_pct is not None else 0.5
     mv_val = _movement_value(p.movement_profile, sport=sport)
@@ -6804,7 +6811,11 @@ def model_performance():
   _team_pfx = re.compile(r'^(?:Hm|Aw) ')
   enriched_preds = []
   for p in resolved[:40]:
-    ts = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport)
+    _omen_detail_p = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
+    _lm_p = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
+                            p.closing_away_odds or p.away_odds,
+                            p.opening_home_odds, p.opening_away_odds)
+    ts, score_kind = _primary_score(_omen_detail_p, sport, line_move_pct=_lm_p, clv_pct=p.pick_clv)
     fav_home = (p.home_prob or 0.5) >= 0.5
     actual_home_won = bool(p.home_won)
     pick_won = (fav_home == actual_home_won)
@@ -6845,9 +6856,10 @@ def model_performance():
         'home_score': p.home_score,
         'away_score': p.away_score,
         'omen_score': ts,
+        'score_kind': score_kind,
         'edge':       _edge,
         'daily_rank': p.daily_rank,
-        'exp_rank':   _exp_rank_map.get(p.id),
+        'phantom_rank': _phantom_rank_map.get(p.id),
         'factors':    factors_display,
     })
 
@@ -6906,7 +6918,8 @@ def model_performance():
       pred_days=pred_days,
       rank_comparison=rank_comparison,
       rank_comparison_n=rank_comparison_n,
-      rank_comparison_n_exp=rank_comparison_n_exp,
+      rank_comparison_n_phantom=rank_comparison_n_phantom,
+      rank_comparison_primary=rank_comparison_primary,
       movement_stats=movement_stats,
       movement_weights=movement_weights,
       movement_n_total=movement_n_total,
@@ -6918,11 +6931,13 @@ def model_performance():
   return _set_last_sport_cookie(resp, sport)
 
 def _edge_recommendations(days, sport, limit=15):
-  """Omen-Score-ranked recommendation list for the non-MLB sports (MLB has
-  its own full Omen Score table, filtered separately by _mlb_star_pick since
-  that table's columns are ML-specific). `days` is the schedule list of
+  """Primary-score-ranked recommendation list for the non-MLB sports (MLB has
+  its own full table, filtered separately by _mlb_star_pick since that
+  table's columns are ML-specific). `days` is the schedule list of
   {'games': [...]}. Name kept for the existing call sites even though the
-  sort key is now omen_score, not edge — see the sort below.
+  sort key is the primary score, not edge — see the sort below. Omen Score
+  for most sports, Phantom Score for _PHANTOM_SPORTS (currently CFB here;
+  MLB's own table handles itself) — see _primary_score.
 
   Built directly from _best_market_pick — the same single source of truth
   that decides the ★ on each game's card — so this list is exactly the set
@@ -6939,19 +6954,32 @@ def _edge_recommendations(days, sport, limit=15):
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
       else:             k_label, k_cls = 'Lean',   'edge-neutral'
 
-      # Moneyline Omen Score — informative on every row regardless of which
-      # market earned the ★ (same convention as MLB's table), since it's
-      # read off the game's own home_prob/odds, not the picked market.
+      # Moneyline primary score — informative on every row regardless of
+      # which market earned the ★ (same convention as MLB's table), since
+      # it's read off the game's own home_prob/odds, not the picked market.
       model = game.get('model') or {}
       odds  = game.get('odds') or {}
       omen_score = None
+      score_kind = 'omen'
       hp, ho, ao = model.get('home_prob'), odds.get('home_best'), odds.get('away_best')
       if hp is not None and ho is not None and ao is not None:
         factors_json = json.dumps(model.get('factors') or [])
-        omen_score = _omen_score(hp, ho, ao, factors_json, sport=sport)
+        omen_detail = _omen_score(hp, ho, ao, factors_json, sport=sport, detail=True)
+        line_move_pct = None
+        if sport in _PHANTOM_SPORTS:
+          open_h, open_a = odds.get('opening_home'), odds.get('opening_away')
+          if open_h and open_a:
+            vf_h_open, vf_a_open = _vig_free_implied(open_h, open_a)
+            if vf_h_open is not None:
+              fav_home   = hp >= 0.5
+              pick_open  = vf_h_open if fav_home else vf_a_open
+              pick_curr  = odds.get('home_implied') if fav_home else odds.get('away_implied')
+              if pick_curr is not None:
+                line_move_pct = round((pick_curr - pick_open) * 100, 2)
+        omen_score, score_kind = _primary_score(omen_detail, sport, line_move_pct=line_move_pct)
 
-      # Sort key for the table below — Omen Score, not edge (matches MLB's
-      # own all_candidates/best_bets, which has always sorted this way).
+      # Sort key for the table below — the primary score, not edge (matches
+      # MLB's own all_candidates/best_bets, which has always sorted this way).
       recommended.append({
           'game':         game,
           'market':       pick['market'],
@@ -6966,6 +6994,7 @@ def _edge_recommendations(days, sport, limit=15):
           'k_cls':        k_cls,
           'pips':         pick['pips'],
           'omen_score':   omen_score,
+          'score_kind':   score_kind,
       })
 
   recommended.sort(key=lambda r: -(r['omen_score'] if r['omen_score'] is not None else -1))

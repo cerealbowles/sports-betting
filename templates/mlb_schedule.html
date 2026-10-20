@@ -160,7 +160,8 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Mkt</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
-        <th class="rec-sort-th" data-sort-key="omen" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="Click to sort by Omen Score">OM<span class="rec-sort-arrow"></span></th>
+        {% set _sk = (best_bets[0].score_kind if best_bets else 'omen') %}
+        <th class="rec-sort-th" data-sort-key="omen" style="padding:5px 8px;text-align:center;cursor:pointer;user-select:none;" title="{{ 'Click to sort by Phantom Score' if _sk == 'phantom' else 'Click to sort by Omen Score' }}">{{ 'PH' if _sk == 'phantom' else 'OM' }}<span class="rec-sort-arrow"></span></th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Zone</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">EV%</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:center;color:var(--text-muted);">Move</th>

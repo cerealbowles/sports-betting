@@ -16,7 +16,8 @@
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
         <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;" title="Omen Score — moneyline-side confidence, 0-100">Omen</th>
+        {% set _sk = (recommended[0].score_kind if recommended else 'omen') %}
+        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;" title="{{ 'Phantom Score — line-movement-weighted confidence, 0-100' if _sk == 'phantom' else 'Omen Score — moneyline-side confidence, 0-100' }}">{{ 'Phantom' if _sk == 'phantom' else 'Omen' }}</th>
         <th style="padding:5px 8px;text-align:center;">Verdict</th>
         <th style="padding:5px 8px;"></th>
       </tr>
