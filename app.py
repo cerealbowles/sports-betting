@@ -7302,7 +7302,7 @@ def _nfl_sim_stat_compare(row):
     compare.append({
       'label': label,
       'pred': round(sim_stats[field], 1),
-      'actual': round(actual_value, 1) if actual_value is not None else None,
+      'actual': round(nfl_fantasy._num(actual_value), 1) if actual_value is not None else None,
     })
   row['stat_compare'] = compare
 
