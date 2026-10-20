@@ -6918,10 +6918,11 @@ def model_performance():
   return _set_last_sport_cookie(resp, sport)
 
 def _edge_recommendations(days, sport, limit=15):
-  """Edge-ranked recommendation list for the non-MLB sports (MLB has its own
-  full Omen Score table, filtered separately by _mlb_star_pick since that
-  table's columns are ML-specific). `days` is the schedule list of
-  {'games': [...]}.
+  """Omen-Score-ranked recommendation list for the non-MLB sports (MLB has
+  its own full Omen Score table, filtered separately by _mlb_star_pick since
+  that table's columns are ML-specific). `days` is the schedule list of
+  {'games': [...]}. Name kept for the existing call sites even though the
+  sort key is now omen_score, not edge — see the sort below.
 
   Built directly from _best_market_pick — the same single source of truth
   that decides the ★ on each game's card — so this list is exactly the set
@@ -6949,6 +6950,8 @@ def _edge_recommendations(days, sport, limit=15):
         factors_json = json.dumps(model.get('factors') or [])
         omen_score = _omen_score(hp, ho, ao, factors_json, sport=sport)
 
+      # Sort key for the table below — Omen Score, not edge (matches MLB's
+      # own all_candidates/best_bets, which has always sorted this way).
       recommended.append({
           'game':         game,
           'market':       pick['market'],
@@ -6965,7 +6968,7 @@ def _edge_recommendations(days, sport, limit=15):
           'omen_score':   omen_score,
       })
 
-  recommended.sort(key=lambda r: -r['edge'])
+  recommended.sort(key=lambda r: -(r['omen_score'] if r['omen_score'] is not None else -1))
   return recommended[:limit]
 
 

@@ -109,18 +109,16 @@
 {% set mc_sp_margin = (spread_model_margin(game.sport, game.model.factors) if game.model and game.model.factors else none) if mc_sp_validated else spread_implied_margin(game.sport, mc_model_home_prob) %}
 {% set mc_sp_model_ok = mc_sp_margin is not none %}
 {% if mc_sp_model_ok %}
-{# Favorite is always whichever team the win-prob model favors (same
-   mc_model_home_prob the ML chip is built from) — NOT whichever side
-   spread_margin's sign happens to point to. Both spread_model's regression
-   and spread_proxy's historical intercept can independently disagree with
-   the win-prob favorite (collinear Ridge coefficients don't each carry an
-   intuitive sign; spread_proxy's fitted home-field intercept doesn't
-   exactly cancel at the same home_prob threshold the win-prob model uses).
-   Letting that show up as "ML picks A, Spread picks B" reads as the site
-   being broken; forcing the spread favorite to track the ML favorite means
-   the two chips can only ever disagree on the model's confidence in that
-   team, never on which team it likes. #}
-{% set mc_sp_model_fav_team = mc_home_team if mc_model_home_prob >= 0.5 else mc_away_team %}
+{# Favorite is whichever team spread_margin's own sign points to (positive
+   margin = home favored) — the spread model's real pick, not forced to
+   track the ML win-prob favorite. ML and Spread can legitimately disagree
+   (collinear Ridge coefficients don't each carry an intuitive sign;
+   spread_proxy's fitted home-field intercept doesn't exactly cancel at the
+   same home_prob threshold the win-prob model uses), and the ★ star
+   (_best_market_pick) already stars whichever market/side actually clears
+   the edge bar — forcing this chip to track the ML side instead of the
+   real spread pick made the card contradict its own star. #}
+{% set mc_sp_model_fav_team = mc_home_team if mc_sp_margin >= 0 else mc_away_team %}
 {# MLB's run line and NHL's puck line are fixed at exactly ±1.5 — every
    graded game in game_predictions confirms this (2,312/2,312 MLB, 860/860
    NHL), unlike NBA/WNBA (any half-point) or NFL/CFB (whole or half). A
