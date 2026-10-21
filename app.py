@@ -3747,40 +3747,34 @@ _TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_mo
 
 
 def _effective_spread_cover_prob(sport, model, factors, home_spread):
-    """P(home covers home_spread) for actual spread picks/grading. Prefers
-    spread_model.py's own fitted factor regression where it's proven out
-    (spread_model.VALIDATED_SPORTS = MLB, NHL). Elsewhere, falls back to
-    the blended ensemble margin (model['ensemble_margin'], only set for
-    NBA/WNBA — see nba_ensemble_model.py/wnba_ensemble_model.py) via
-    _margin_cover_prob(), which reuses spread_model.COEFFS[sport]['sigma']
-    for the margin-to-probability conversion even though spread_model's
-    own factor regression isn't validated there. Live-wired per user
-    request (2026-10-06): this turns on a brand-new spread-pick market for
-    NBA/WNBA that didn't exist before, on a thin (n=2 game) backtest
-    sample — explicitly accepted as a 'accumulate and tune as we go'
-    tradeoff rather than waiting for more volume first. Returns None if
-    neither path has what it needs."""
+    """P(home covers home_spread) for actual spread picks/grading. Only
+    spread_model.py's own fitted factor regression, and only where it's
+    proven out (spread_model.VALIDATED_SPORTS = MLB, NHL) — every other
+    sport returns None here, so it can never earn the ★/recommendation
+    slot off spread. The NBA/WNBA ensemble-margin fallback that used to
+    live here (live-wired 2026-10-06 on a 2-game backtest) is now reverted:
+    it was producing a steady stream of 'STRONG' spread picks with no real
+    out-of-sample track record behind them. The ensemble margin itself is
+    still computed and still fed into the parallel blended_spread_cover_prob
+    TRACKING columns (_upsert_predictions, below) so the sample keeps
+    accumulating — this only stops it from driving live picks before it's
+    actually validated."""
     if spread_model.is_validated(sport) and factors and home_spread is not None:
         return spread_model.cover_prob(sport, factors, home_spread)
-    if home_spread is not None and model.get('ensemble_margin') is not None:
-        return _margin_cover_prob(sport, model.get('ensemble_margin'), home_spread)
     return None
 
 
 def _effective_total_projection(game):
     """The total projection actual picks should be graded/made against —
-    prefers the blended team+player total (model['blended_total'], only
-    set for NBA/WNBA, see nba_ensemble_model.py/wnba_ensemble_model.py's
-    TOTAL_FIT) over the team-only total_model.total_projection every other
-    sport still uses (no player total model exists for MLB/NFL/CFB/NHL).
-    Live-wired per user request (2026-10-06) after the parallel TOTAL
-    tracking columns showed the mechanism working correctly end-to-end;
-    sample was still thin (n=2 WNBA games) so this is a judgment call to
-    start feeding the data in now rather than wait for more volume."""
-    model = game.get('model') or {}
-    blended = model.get('blended_total')
-    if blended is not None:
-        return blended
+    the team-only total_model.total_projection every sport uses (gated by
+    _TOTAL_CONFIDENCE_CAP's pre-ship R² numbers). The blended team+player
+    total (model['blended_total'], NBA/WNBA — see nba_ensemble_model.py/
+    wnba_ensemble_model.py's TOTAL_FIT) was live-wired here 2026-10-06 on a
+    2-game backtest, but that's tracking data, not a validated edge —
+    reverted so it can keep accumulating sample via the parallel
+    blended_total_proj/blended_total_over_prob TRACKING columns
+    (_upsert_predictions, below) without driving live recommendations
+    before it's actually proven out."""
     total_model = game.get('total_model') or {}
     return total_model.get('total_projection')
 
