@@ -602,10 +602,18 @@ class NewsSentiment(db.Model):
   bounded to roughly [-1, 1]. matched_terms_json records exactly which
   lexicon phrases fired, purely for auditing a score after the fact.
 
+  `sport` was always the discriminator here, not NFL-specific, even
+  though this table started out NFL-only — nfl_news.py's fetch/match/
+  score/persist engine was split into news_ingest.py so CFB/NHL/NBA/
+  WNBA/MLB news (cfb_news.py/nhl_news.py/nba_news.py/wnba_news.py/
+  mlb_news.py) land in this same table via their own daily scheduler job.
+
   Built for the same reason InjuryStatus was: there's no retroactive
   history (RSS/news endpoints are current-state-only), so this only
   starts accumulating real backtestable data from whenever ingestion
-  first runs forward — see nfl_news_backtest.py.
+  first runs forward — see nfl_news_backtest.py (NFL-only backtest for
+  now; the other sports don't yet have an equivalent fantasy-performance
+  model to correlate sentiment against).
   """
   __tablename__ = 'news_sentiment'
   id                 = db.Column(db.Integer, primary_key=True)
@@ -9278,6 +9286,63 @@ def _ingest_nfl_news():
         pass
 
 
+def _ingest_cfb_news():
+    """Daily CFB news-sentiment ingestion (cfb_news.py) — same engine as
+    _ingest_nfl_news above (see news_ingest.py), restricted to FBS rosters
+    (~124 teams) rather than every D1/D2/D3 program; a cold-cache run took
+    ~50s in testing (ThreadPoolExecutor roster fan-out), still fine for a
+    once-daily background job."""
+    try:
+        import cfb_news
+        cfb_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
+def _ingest_nhl_news():
+    """Daily NHL news-sentiment ingestion (nhl_news.py) — see
+    _ingest_nfl_news's docstring for the shared engine/idempotence/
+    exception-swallowing reasoning."""
+    try:
+        import nhl_news
+        nhl_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
+def _ingest_nba_news():
+    """Daily NBA news-sentiment ingestion (nba_news.py) — see
+    _ingest_nfl_news's docstring for the shared engine/idempotence/
+    exception-swallowing reasoning."""
+    try:
+        import nba_news
+        nba_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
+def _ingest_wnba_news():
+    """Daily WNBA news-sentiment ingestion (wnba_news.py) — see
+    _ingest_nfl_news's docstring for the shared engine/idempotence/
+    exception-swallowing reasoning."""
+    try:
+        import wnba_news
+        wnba_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
+def _ingest_mlb_news():
+    """Daily MLB news-sentiment ingestion (mlb_news.py) — see
+    _ingest_nfl_news's docstring for the shared engine/idempotence/
+    exception-swallowing reasoning."""
+    try:
+        import mlb_news
+        mlb_news.run(lookback_hours=48)
+    except Exception:
+        pass
+
+
 def _start_cache_warmer():
     from apscheduler.schedulers.background import BackgroundScheduler
     from zoneinfo import ZoneInfo
@@ -9326,6 +9391,32 @@ def _start_cache_warmer():
                       hour=7, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_news_ingest')
+    # CFB/NHL/NBA/WNBA/MLB news-sentiment ingestion — staggered every 4
+    # minutes after the NFL run above (same reasoning: after the 5 am
+    # stats self-heal block so each one's own gamelog join target, where
+    # it has one, is already caught up). CFB goes first and gets the
+    # widest gap since its FBS-wide roster fan-out is the slowest of the
+    # six (~50s cold-cache, confirmed in testing) — see _ingest_cfb_news.
+    scheduler.add_job(_ingest_cfb_news, 'cron',
+                      hour=7, minute=4,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='cfb_news_ingest')
+    scheduler.add_job(_ingest_nhl_news, 'cron',
+                      hour=7, minute=10,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nhl_news_ingest')
+    scheduler.add_job(_ingest_nba_news, 'cron',
+                      hour=7, minute=14,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nba_news_ingest')
+    scheduler.add_job(_ingest_wnba_news, 'cron',
+                      hour=7, minute=18,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='wnba_news_ingest')
+    scheduler.add_job(_ingest_mlb_news, 'cron',
+                      hour=7, minute=22,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='mlb_news_ingest')
     # NFL game-outcome simulation — 7:30 am ET daily, after the stats
     # self-heal block (needs a caught-up warehouse for usage shares) and
     # news ingestion above. Slow (minutes, not seconds — see NflSimResult's

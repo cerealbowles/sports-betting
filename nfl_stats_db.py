@@ -1243,11 +1243,17 @@ def _normalize_headline(headline):
 
 
 def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date_et,
-                           matches, score, matched_terms, dedupe_by_headline=False):
+                           matches, score, matched_terms, dedupe_by_headline=False,
+                           sport='NFL'):
     """Persists one article's sentiment score once per matched player/team
-    (see nfl_news.match_players() for `matches`' shape: [{'player_id',
+    (see news_ingest.match_players() for `matches`' shape: [{'player_id',
     'team_id', 'player_name'}, ...] — a team-only mention has
-    player_id=None). Skips any (source, url, player_id) combo already
+    player_id=None). `sport` defaults to 'NFL' for nfl_news.py's own
+    callers; cfb_news.py/nhl_news.py/nba_news.py/wnba_news.py/mlb_news.py
+    (via news_ingest.run()) pass their own. Lives in this module rather
+    than a sport-agnostic one purely for history — NewsSentiment itself
+    (app.py) has always been keyed by `sport`, not NFL-specific. Skips any
+    (source, url, player_id) combo already
     stored, so re-running nfl_news.py's ingestion over an overlapping
     lookback window never duplicates a row — same idempotence goal as
     ingest_injury_report above, just event-level instead of daily-upsert
@@ -1275,16 +1281,16 @@ def ingest_news_sentiment(source, url, headline, raw_snippet, published_at, date
         norm_headline = _normalize_headline(headline) if dedupe_by_headline else None
         for m in matches:
             pid, tid = m.get('player_id'), m.get('team_id')
-            existing = NewsSentiment.query.filter_by(source=source, url=url, player_id=pid).first()
+            existing = NewsSentiment.query.filter_by(sport=sport, source=source, url=url, player_id=pid).first()
             if existing:
                 continue
             if dedupe_by_headline:
-                dup_scope = (NewsSentiment.query.filter_by(source=source, player_id=pid) if pid is not None
-                             else NewsSentiment.query.filter_by(source=source, player_id=None, team_id=tid))
+                dup_scope = (NewsSentiment.query.filter_by(sport=sport, source=source, player_id=pid) if pid is not None
+                             else NewsSentiment.query.filter_by(sport=sport, source=source, player_id=None, team_id=tid))
                 if any(_normalize_headline(r.headline) == norm_headline for r in dup_scope.all()):
                     continue
             db.session.add(NewsSentiment(
-                sport='NFL', date=date_et, published_at=published_at,
+                sport=sport, date=date_et, published_at=published_at,
                 team_id=tid, player_id=pid, player_name=m.get('player_name'),
                 source=source, headline=headline, url=url, raw_snippet=raw_snippet,
                 sentiment_score=score, matched_terms_json=json.dumps(matched_terms),

@@ -8,9 +8,10 @@ dict rather than a fitted model. Expand CORE_LEXICON/<SPORT>_LEXICON based
 on what nfl_news_backtest.py's matched_terms actually show mattering, not
 speculatively upfront.
 
-score_text() is called per-article by nfl_news.py (and, later, an MLB
-equivalent) — kept in its own module specifically so the lexicon/scoring
-logic is reusable across sports without nfl_news.py owning it.
+score_text() is called per-article by nfl_news.py/cfb_news.py/nhl_news.py/
+nba_news.py/wnba_news.py/mlb_news.py (via news_ingest.score_article()) —
+kept in its own module specifically so the lexicon/scoring logic is
+reusable across sports without any one of those owning it.
 """
 import math
 import re
@@ -46,9 +47,8 @@ CORE_LEXICON = [
     ('trending toward playing', 0.4),
 ]
 
-# Sport-specific overlays, merged on top of CORE_LEXICON. NFL only for now
-# (see this feature's plan — MLB/others add a sibling list here later,
-# parameterized purely via the `sport` argument below, no rewrite needed).
+# Sport-specific overlays, merged on top of CORE_LEXICON, parameterized
+# purely via the `sport` argument below — no rewrite needed to add one.
 NFL_LEXICON = [
     ('projected qb1', 0.6),
     ('depth chart move', 0.3),
@@ -64,8 +64,72 @@ NFL_LEXICON = [
     ('smash spot', 0.4),
 ]
 
+# CFB/NHL/NBA/WNBA/MLB overlays added alongside the news-ingest pipeline's
+# expansion to those sports (nfl_news.py's engine was split into
+# news_ingest.py; see cfb_news.py/nhl_news.py/nba_news.py/wnba_news.py/
+# mlb_news.py). Deliberately sparse at launch, same reasoning as this
+# module's own docstring — expand based on what matched_terms actually
+# show mattering once each sport's own backtest exists, not speculatively.
+CFB_LEXICON = [
+    ('entered the transfer portal', -0.7),
+    ('transfer portal', -0.4),
+    ('suspended', -0.6),
+    ('named the starter', 0.6),
+    ('heisman', 0.4),
+    ('decommitted', -0.5),
+    ('committed to', 0.3),
+]
+
+NHL_LEXICON = [
+    ('placed on injured reserve', -1.0),
+    ('day-to-day', -0.2),
+    ('upper-body injury', -0.4),
+    ('lower-body injury', -0.4),
+    ('recalled from', 0.3),
+    ('sent down to', -0.5),
+    ('scratched', -0.5),
+    ('on the top line', 0.4),
+    ('power play unit', 0.3),
+    ('hot streak', 0.5),
+]
+
+NBA_LEXICON = [
+    ('load management', -0.3),
+    ('rest night', -0.4),
+    ('starting lineup', 0.4),
+    ('coming off the bench', -0.2),
+    ('minutes restriction', -0.3),
+    ('triple-double', 0.5),
+    ('cleared for contact', 0.4),
+]
+
+WNBA_LEXICON = [
+    ('starting lineup', 0.4),
+    ('minutes restriction', -0.3),
+    ('ruled out', -1.0),
+    ('cleared to return', 0.6),
+]
+
+MLB_LEXICON = [
+    ('placed on the il', -1.0),
+    ('placed on the injured list', -1.0),
+    ('activated from the il', 0.6),
+    ('demoted to the minors', -0.6),
+    ('called up', 0.5),
+    ('batting leadoff', 0.3),
+    ('moved up in the order', 0.4),
+    ('dropped in the order', -0.3),
+    ('scratched from the lineup', -0.6),
+    ('tommy john', -0.9),
+]
+
 _OVERLAYS = {
     'NFL': NFL_LEXICON,
+    'CFB': CFB_LEXICON,
+    'NHL': NHL_LEXICON,
+    'NBA': NBA_LEXICON,
+    'WNBA': WNBA_LEXICON,
+    'MLB': MLB_LEXICON,
 }
 
 
