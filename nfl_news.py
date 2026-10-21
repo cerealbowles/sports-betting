@@ -10,12 +10,11 @@ weather_api.py/nfl_api.py. The one genuinely new piece of logic here (no
 precedent anywhere in this app) is matching free-text article mentions to
 a player_id — see match_players()'s docstring for the confidence rules.
 
-Meant to run periodically (manually for now, cron later) purely to
-accumulate history going forward — RSS/news endpoints are current-state-
-only, so there is no retroactive backfill possible, same constraint
-InjuryStatus's docstring documents. NOT wired into app.py's
-BackgroundScheduler yet — stays a manually-run research script until
-nfl_news_backtest.py shows the signal is worth automating.
+Meant to run periodically purely to accumulate history going forward —
+RSS/news endpoints are current-state-only, so there is no retroactive
+backfill possible, same constraint InjuryStatus's docstring documents.
+Wired into app.py's BackgroundScheduler as a daily 7am ET job
+(_ingest_nfl_news) — see that job's docstring for the cron details.
 
 Run: python3 nfl_news.py [--dry-run] [--lookback-hours N]
 """
