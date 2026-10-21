@@ -20,33 +20,33 @@
   <table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:10px;">
     <thead>
       <tr style="color:var(--text-muted);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid var(--border);">
-        <th style="padding:5px 8px;text-align:left;">#</th>
-        <th style="padding:5px 8px;text-align:left;">Sport</th>
-        <th style="padding:5px 8px;text-align:left;">Pick</th>
-        <th style="padding:5px 8px;text-align:left;">Matchup</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Odds</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">Edge</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:right;">EV%</th>
-        <th class="rec-col-hide" style="padding:5px 8px;text-align:center;" title="Phantom/Omen Score — 0-100 confidence, used to rank this list">Score</th>
-        <th style="padding:5px 8px;text-align:center;">Verdict</th>
+        <th style="padding:8px;text-align:left;vertical-align:middle;">#</th>
+        <th style="padding:8px;text-align:left;vertical-align:middle;">Sport</th>
+        <th style="padding:8px;text-align:left;vertical-align:middle;">Pick</th>
+        <th style="padding:8px;text-align:left;vertical-align:middle;">Matchup</th>
+        <th class="rec-col-hide" style="padding:8px;text-align:right;vertical-align:middle;">Odds</th>
+        <th class="rec-col-hide" style="padding:8px;text-align:right;vertical-align:middle;">Edge</th>
+        <th class="rec-col-hide" style="padding:8px;text-align:right;vertical-align:middle;">EV%</th>
+        <th class="rec-col-hide" style="padding:8px;text-align:center;vertical-align:middle;" title="Phantom/Omen Score — 0-100 confidence, used to rank this list">Score</th>
+        <th style="padding:8px;text-align:center;vertical-align:middle;">Verdict</th>
       </tr>
     </thead>
     <tbody id="picks-tbody">
     {% for r in top_picks %}
     <tr data-sport="{{ r.sport }}" style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="window.location='{{ r.href }}'">
-      <td style="padding:6px 8px;color:var(--text-muted);">{{ loop.index }}</td>
-      <td style="padding:6px 8px;">{{ r.icon }} <span style="font-weight:700;">{{ r.sport }}</span></td>
-      <td style="padding:6px 8px;font-weight:800;color:var(--orange);">
+      <td style="padding:10px 8px;vertical-align:middle;color:var(--text-muted);">{{ loop.index }}</td>
+      <td style="padding:10px 8px;vertical-align:middle;">{{ r.icon }} <span style="font-weight:700;">{{ r.sport }}</span></td>
+      <td style="padding:10px 8px;vertical-align:middle;font-weight:800;color:var(--orange);">
         {{ r.pick_label }}
         <span style="font-size:0.62rem;font-weight:700;color:var(--text-muted);margin-left:4px;text-transform:uppercase;">{{ r.market }}</span>
       </td>
-      <td style="padding:6px 8px;">{{ r.matchup }}
+      <td style="padding:10px 8px;vertical-align:middle;">{{ r.matchup }}
         {% if r.game_time_utc %}<span class="game-time" data-utc="{{ r.game_time_utc }}" style="font-size:0.7rem;color:var(--text-muted);margin-left:6px;">—</span>{% endif %}
       </td>
-      <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
-      <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
-      <td class="rec-col-hide mono" style="padding:6px 8px;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
-      <td class="rec-col-hide" style="padding:6px 8px;text-align:center;">
+      <td class="rec-col-hide mono" style="padding:10px 8px;vertical-align:middle;text-align:right;color:var(--text-muted);">{{ '+' if r.amer_odds > 0 }}{{ r.amer_odds }}</td>
+      <td class="rec-col-hide mono" style="padding:10px 8px;vertical-align:middle;text-align:right;font-weight:700;color:{{ 'var(--win)' if r.edge > 0 else 'var(--loss)' }};">{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
+      <td class="rec-col-hide mono" style="padding:10px 8px;vertical-align:middle;text-align:right;font-weight:600;color:{{ 'var(--win)' if r.ev_pct > 0 else 'var(--loss)' }};">{{ '+' if r.ev_pct > 0 }}{{ r.ev_pct }}%</td>
+      <td class="rec-col-hide" style="padding:10px 8px;vertical-align:middle;text-align:center;">
         {% if r.omen_score is not none %}
         {% set om_cls = 'omen-high' if r.omen_score >= 55 else ('omen-mid' if r.omen_score >= 42 else ('omen-low' if r.omen_score >= 28 else 'omen-skip')) %}
         <span class="kelly-verdict {{ om_cls }}" style="display:inline-flex;align-items:center;gap:3px;" title="{{ 'Phantom Score' if r.score_kind == 'phantom' else 'Omen Score' }}">
@@ -59,10 +59,10 @@
         </span>
         {% else %}—{% endif %}
       </td>
-      <td style="padding:6px 8px;text-align:center;">
+      <td style="padding:10px 8px;vertical-align:middle;text-align:center;">
         <span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span>
         {% if r.pips %}
-        <span class="mc-pips" style="justify-content:center;margin-top:4px;" title="Model confidence">{% for i in range(6) %}<i class="{{ 'on' if i < r.pips }}"></i>{% endfor %}</span>
+        <span class="mc-pips" style="justify-content:center;margin-top:5px;" title="Model confidence">{% for i in range(6) %}<i class="{{ 'on' if i < r.pips }}"></i>{% endfor %}</span>
         {% endif %}
       </td>
     </tr>
