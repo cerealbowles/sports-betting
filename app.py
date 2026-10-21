@@ -4363,6 +4363,32 @@ def _cache_only(*modules):
             m._CACHE_ONLY = False
 
 
+def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None):
+    """Cache-only fetch for the Today hub, with one live-fetch retry when
+    the cache-only pass comes back completely empty. A cache-only read can
+    turn up empty not just on a real no-games day but also on a cold cache
+    — nothing's been fetched into `modules`' in-process cache yet (right
+    after a restart, or before the hourly warmer's first successful tick
+    of the day) — and the two look identical from here. Retrying live
+    tells them apart: a genuine no-games day confirms empty again (cheap,
+    one HTTP round trip) while a cold cache gets populated and the hub
+    stops showing that sport as dead for the rest of its TTL window. Mirrors
+    the bug fixed for NHL in nhl_api._get_schedule_raw (mismatched cache
+    keys there; this is the more general case — any reason the cache-only
+    key never got written).
+
+    `is_empty` overrides the default falsy check — needed for the week-based
+    sports (NFL/CFB), whose build_week_schedule_context() always returns a
+    populated metadata dict (week/season/...) even when its own 'days' list
+    is empty, so plain truthiness never trips the retry."""
+    is_empty = is_empty or (lambda r: not r)
+    with _cache_only(*modules):
+        result = fetch_fn()
+    if is_empty(result):
+        result = fetch_fn()
+    return result
+
+
 def _schedule_matchups(schedule):
   """Flat list of {'matchup', 'game_time_utc', 'status'} for every game in a
   schedule (list of {'games': [...]} day dicts) — used by the Today hub so a
@@ -4400,8 +4426,8 @@ def _hub_sport_data(sport, icon, href, today_str):
       all_games = []
 
       if sport == 'MLB':
-        with _cache_only(mlb_api):
-          schedule = mlb_api.build_schedule_context(target_date=today_str)
+        schedule = _hub_fetch_with_fallback(
+            [mlb_api], lambda: mlb_api.build_schedule_context(target_date=today_str))
         # No _upsert_predictions here — this is a read-only display, and
         # writing from 6 threads at once against one SQLite file serializes
         # (and can stall) on the DB's write lock. /mlb's own page, and the
@@ -4432,27 +4458,28 @@ def _hub_sport_data(sport, icon, href, today_str):
               'pips':          _confidence_pips('MLB', 'ml', b['adj_prob'] / 100.0),
               'omen_score':    b['omen_score'],
               'score_kind':    b['score_kind'],
+              'logo_url':      b['pick_logo'],
           })
       else:
         if sport == 'NHL':
           day_nav = _build_day_nav(0)
-          with _cache_only(nhl_api, injuries_api):
-            schedule = nhl_api.build_schedule_context(target_date=day_nav['date'])
+          schedule = _hub_fetch_with_fallback(
+              [nhl_api, injuries_api], lambda: nhl_api.build_schedule_context(target_date=day_nav['date']))
         elif sport == 'NBA':
           day_nav = _build_day_nav(0)
-          with _cache_only(nba_api):
-            schedule = nba_api.build_schedule_context(target_date=day_nav['date'])
+          schedule = _hub_fetch_with_fallback(
+              [nba_api], lambda: nba_api.build_schedule_context(target_date=day_nav['date']))
         elif sport == 'WNBA':
           day_nav = _build_day_nav(0)
-          with _cache_only(wnba_api):
-            schedule = wnba_api.build_schedule_context(target_date=day_nav['date'])
+          schedule = _hub_fetch_with_fallback(
+              [wnba_api], lambda: wnba_api.build_schedule_context(target_date=day_nav['date']))
         elif sport == 'NFL':
-          with _cache_only(nfl_api):
-            week_ctx = nfl_api.build_week_schedule_context()
+          week_ctx = _hub_fetch_with_fallback([nfl_api], nfl_api.build_week_schedule_context,
+                                               is_empty=lambda r: not r.get('days'))
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
         else:  # CFB
-          with _cache_only(cfb_api):
-            week_ctx = cfb_api.build_week_schedule_context()
+          week_ctx = _hub_fetch_with_fallback([cfb_api], cfb_api.build_week_schedule_context,
+                                               is_empty=lambda r: not r.get('days'))
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
 
         # See the MLB branch above re: no _upsert_predictions here.
@@ -4478,6 +4505,7 @@ def _hub_sport_data(sport, icon, href, today_str):
               'pips':          r['pips'],
               'omen_score':    r['omen_score'],
               'score_kind':    r['score_kind'],
+              'logo_url':      (g['away'] if r['pick_side'] == 'away' else g['home']).get('logo_url', ''),
           })
   except Exception:
     games_today, top_picks, all_games = 0, [], []
@@ -5613,6 +5641,7 @@ def _mlb_candidates(schedule):
         'away_name':     away_name,
         'game_date':     gdate,
         'pick_abbr':     pick_abbr,
+        'pick_logo':     home_obj.get('logo_url', '') if bet_side == 'home' else away_obj.get('logo_url', ''),
         'bet_side':      bet_side,
         'edge':          edge,
         'adj_edge':      adj_edge,
