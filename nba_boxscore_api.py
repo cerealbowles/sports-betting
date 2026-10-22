@@ -169,6 +169,44 @@ def get_live_boxscore(event_id):
     return out
 
 
+def get_game_boxscore(event_id):
+    """Full live/final per-player boxscore for both teams, shaped for direct
+    display (every player who's played, full stat line) — unlike the
+    top-8-projected-players comparison in _build_game()/_nba_lineups.html.
+    Returns {'away': {'abbr', 'players': [...]}, 'home': {...}}, {} pre-game
+    or on failure. Reuses get_live_boxscore()'s cached fetch — no extra
+    request."""
+    data = _get(event_id)
+    if not data:
+        return {}
+    boxscore = get_live_boxscore(event_id)
+    if not boxscore:
+        return {}
+
+    home_away = {}
+    try:
+        competitors = data.get('header', {}).get('competitions', [{}])[0].get('competitors', [])
+        for comp in competitors:
+            team_id = (comp.get('team') or {}).get('id')
+            if team_id:
+                home_away[team_id] = comp.get('homeAway')
+    except Exception:
+        pass
+
+    abbrevs = {}
+    for team_block in (data.get('boxscore') or {}).get('players') or []:
+        team = team_block.get('team') or {}
+        tid = team.get('id')
+        if tid:
+            abbrevs[tid] = team.get('abbreviation', '')
+
+    out = {}
+    for team_id, players in boxscore.items():
+        side = home_away.get(team_id, 'home')
+        out[side] = {'abbr': abbrevs.get(team_id, ''), 'players': players}
+    return out
+
+
 def get_live_summary(event_id):
     """The raw summary?event= response, for callers that need more than
     the boxscore out of it — e.g. nba_playbyplay_api.py's plays-based

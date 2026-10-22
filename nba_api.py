@@ -747,6 +747,13 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
     }
 
 
+def get_game_boxscore(event_id):
+    """Full live/final per-player boxscore for one NBA game — see
+    nba_boxscore_api.get_game_boxscore(). Used by the schedule page's game
+    detail panel, lazy-loaded on expand."""
+    return nba_boxscore_api.get_game_boxscore(event_id)
+
+
 def get_today_game_count():
     """Cheap today's-game count for the sport-chip badge — shares the same
     cached scoreboard fetch/cache key as build_schedule_context() without

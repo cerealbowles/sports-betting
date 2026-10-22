@@ -8377,6 +8377,17 @@ def api_nba_live_scores():
     return jsonify(nba_api.get_live_game_states())
 
 
+@app.route('/api/nba/game/<event_id>/boxscore')
+def api_nba_game_boxscore(event_id):
+    """Full live/final per-player box score for the schedule page's game
+    detail panel — fetched on demand when the game card is expanded, not on
+    every page load. See api_mlb_game_boxscore() above."""
+    box = nba_api.get_game_boxscore(event_id)
+    if not box:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify(box)
+
+
 @app.route('/api/wnba/live-scores')
 def api_wnba_live_scores():
     """Powers the auto-updating score/clock on the /wnba schedule page's
