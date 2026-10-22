@@ -220,7 +220,7 @@
         {% include "_nba_lineups.html" %}
 
         <!-- ── Bet ── -->
-        {% if game.status != 'Final' %}
+        {% if game.status not in ('Final', 'Live') %}
         <div class="bet-type-section">
             <div class="bet-type-row">
                 <span class="bet-type-label">Moneyline</span>
