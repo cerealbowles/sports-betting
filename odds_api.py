@@ -231,7 +231,7 @@ def get_key_usage():
 
 
 # Sports whose card odds stop updating at kickoff (in-play prices are hidden).
-_FREEZE_AFTER_START = {'americanfootball_nfl'}
+_FREEZE_AFTER_START = set(SPORT_KEYS.values())
 
 
 # Odds API keys for preseason markets. Only queried while active (see
