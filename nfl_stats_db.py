@@ -926,6 +926,46 @@ def get_team_game_aggregates_db(team_id, before_date=None, limit=5):
     return offense_list, defense_list
 
 
+def get_opponent_offense_allowed_db(team_id, before_date=None, limit=20):
+    """Returns a list of per-game offense dicts (parse_team_game_aggregate's
+    shape) describing what EACH OPPONENT's offense did against `team_id` —
+    i.e. what team_id's defense allowed — by filtering PlayerGameStat on
+    opponent_id instead of team_id. Used by the game-detail page's unit-vs-
+    unit matchups (pass D ANY/A allowed, rush D YPC allowed): those need the
+    opposing offense's own box score line from each of this team's games,
+    which get_team_game_aggregates_db() (team_id's OWN offense/defense)
+    doesn't give you. `limit` defaults higher than that function's (20 vs 5)
+    since this feeds season-long rate stats, not a short recent-form window.
+    ([]) if nothing stored yet."""
+    import nfl_player_model as pm
+    from app import app as flask_app, PlayerGameStat
+
+    with flask_app.app_context():
+        q = PlayerGameStat.query.filter_by(sport='NFL', opponent_id=team_id)
+        if before_date:
+            q = q.filter(PlayerGameStat.game_date < before_date)
+        q = q.order_by(PlayerGameStat.game_date.desc())
+        rows = q.all()
+
+    by_game = {}
+    game_order = []
+    for r in rows:
+        if r.game_id not in by_game:
+            by_game[r.game_id] = []
+            game_order.append(r.game_id)
+        try:
+            categories = json.loads(r.stats_json) if r.stats_json else {}
+        except (TypeError, ValueError):
+            categories = {}
+        by_game[r.game_id].append({'categories': categories})
+
+    allowed = []
+    for game_id in game_order[:limit]:
+        off, _ = pm.parse_team_game_aggregate(by_game[game_id])
+        allowed.append(off)
+    return allowed
+
+
 def get_team_games_with_players_db(team_id, before_date=None, limit=5):
     """Returns this team's most recent games, newest first, WITHOUT
     collapsing player identity the way get_team_game_aggregates_db() above
@@ -1126,6 +1166,24 @@ def get_schedule_db(season, game_type='regular'):
             'home_score': r.points,
             'away_score': r.points_allowed,
         } for r in rows]
+
+
+def get_teams_with_data_db(season, game_type='regular'):
+    """Distinct (team_id, team_name) pairs that have at least one stored
+    TeamGameStat row this season — the real "which teams can we rank"
+    universe for the game-detail page's league-rank computation, since
+    there's no static full-32-team id catalog in this codebase (see
+    team_catalog.py, which only fetches display NAMES, not ids, and only
+    live from ESPN)."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NFL', season=season, game_type=game_type)
+                .with_entities(TeamGameStat.team_id, TeamGameStat.team_name)
+                .distinct()
+                .all())
+        return [(r[0], r[1]) for r in rows if r[0]]
 
 
 def get_game_boxscore_db(game_id):

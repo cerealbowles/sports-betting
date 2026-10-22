@@ -29,17 +29,21 @@ import mlb_api
 import mlb_model
 import nhl_api
 import nhl_model
+import nhl_game_detail
 import nfl_api
 import nfl_model
 import nfl_fantasy
 import nfl_recap
 import nfl_stats_db
+import nfl_game_detail
 import cfb_api
 import cfb_model
 import nba_api
 import nba_model
+import nba_game_detail
 import wnba_api
 import wnba_model
+import wnba_game_detail
 import injuries_api
 import market_edge_calibration
 import spread_proxy
@@ -7084,6 +7088,27 @@ def nhl_schedule():
                          recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'NHL')
 
+@app.route('/nhl/game/<game_id>')
+def nhl_game_detail_page(game_id):
+  detail = nhl_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('nhl_schedule'))
+
+  game, _date_str = nhl_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+
+  return render_template('game_detail.html', detail=detail, game=game,
+                          subnav_sport='NHL', bankroll=bankroll,
+                          schedule_endpoint='nhl_schedule', bet_panel_template='_nhl_bet_panel.html',
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
+
 @app.route('/nba')
 def nba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
@@ -7099,6 +7124,33 @@ def nba_schedule():
                          recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'NBA')
 
+@app.route('/nba/game/<game_id>')
+def nba_game_detail_page(game_id):
+  detail = nba_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('nba_schedule'))
+
+  game, _date_str = nba_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+  extra = []
+  if game and game.get('lineups'):
+    extra.append('_nba_lineups.html')
+  if game and game.get('status') == 'Live':
+    extra.append('_nba_live_boxscore.html')
+
+  return render_template('game_detail.html', detail=detail, game=game,
+                          subnav_sport='NBA', bankroll=bankroll,
+                          schedule_endpoint='nba_schedule', bet_panel_template='_nba_bet_panel.html',
+                          extra_panels=extra,
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
+
 @app.route('/wnba')
 def wnba_schedule():
   day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
@@ -7113,6 +7165,31 @@ def wnba_schedule():
   resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA',
                          recommended=recommended, day_nav=day_nav))
   return _set_last_sport_cookie(resp, 'WNBA')
+
+@app.route('/wnba/game/<game_id>')
+def wnba_game_detail_page(game_id):
+  detail = wnba_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('wnba_schedule'))
+
+  game, _date_str = wnba_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+  extra = []
+  if game and game.get('lineups'):
+    extra.append('_nba_lineups.html')
+
+  return render_template('game_detail.html', detail=detail, game=game,
+                          subnav_sport='WNBA', bankroll=bankroll,
+                          schedule_endpoint='wnba_schedule', bet_panel_template='_wnba_bet_panel.html',
+                          extra_panels=extra,
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
 
 @app.route('/nfl')
 def nfl_schedule():
@@ -7151,6 +7228,33 @@ def nfl_schedule():
                          heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
                          sync_next='/nfl'))
   return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/game/<game_id>')
+def nfl_game_detail_page(game_id):
+  detail = nfl_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('nfl_schedule'))
+
+  # The bet-slip panel (_nfl_bet_panel.html) reuses the schedule page's own
+  # bet-type-chip/bet-slip markup and JS (openBetSlip et al in main.js), so
+  # it needs the same `game` dict shape those partials already expect —
+  # build_game_detail() doesn't produce that shape itself (it returns the
+  # richer, page-specific contract above), so re-fetch the plain game dict
+  # for just this panel rather than reshaping one into the other.
+  game, season, week = nfl_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+
+  return render_template('game_detail.html', detail=detail, game=game, week=week,
+                          subnav_sport='NFL', bankroll=bankroll,
+                          schedule_endpoint='nfl_schedule', bet_panel_template='_nfl_bet_panel.html',
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
 
 @app.route('/nfl/lineup')
 def nfl_lineup():

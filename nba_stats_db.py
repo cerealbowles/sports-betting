@@ -293,6 +293,71 @@ def get_schedule_db(season, game_type='regular'):
         } for r in rows]
 
 
+def get_teams_with_data_db(season, game_type='regular'):
+    """Distinct (team_id, team_name) pairs with at least one stored
+    TeamGameStat row this season — the "which teams can we rank" universe
+    for the game-detail page's league-rank computation, same reasoning as
+    nfl_stats_db.get_teams_with_data_db()."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NBA', season=season, game_type=game_type)
+                .with_entities(TeamGameStat.team_id, TeamGameStat.team_name)
+                .distinct()
+                .all())
+        return [(r[0], r[1]) for r in rows if r[0]]
+
+
+def get_team_stat_totals_db(team_id, before_date=None, limit=20):
+    """Season-to-date shooting/rebounding/playmaking totals for one team,
+    summed from its players' PlayerGameStat rows (fgm/fga/three_pm/
+    three_pa/ftm/fta/rebounds/assists/turnovers — all stored per-player,
+    see ingest_game()), plus points/points_allowed from TeamGameStat.
+    Powers the game-detail page's "Team comparison" ranked-stat section —
+    there's no existing team-level aggregate query for this; raw columns
+    exist, this is the first thing to sum them. None if nothing stored yet
+    for this team."""
+    from app import app as flask_app, PlayerGameStat, TeamGameStat
+
+    with flask_app.app_context():
+        tq = TeamGameStat.query.filter_by(sport='NBA', team_id=team_id)
+        if before_date:
+            tq = tq.filter(TeamGameStat.game_date < before_date)
+        tq = tq.order_by(TeamGameStat.game_date.desc())
+        if limit:
+            tq = tq.limit(limit)
+        team_rows = tq.all()
+        game_ids = [r.game_id for r in team_rows]
+        if not game_ids:
+            return None
+
+        points = sum(r.points or 0 for r in team_rows)
+        points_allowed = sum(r.points_allowed or 0 for r in team_rows)
+        games_played = len(team_rows)
+
+        prows = (PlayerGameStat.query
+                 .filter_by(sport='NBA', team_id=team_id)
+                 .filter(PlayerGameStat.game_id.in_(game_ids))
+                 .all())
+        totals = {'fgm': 0, 'fga': 0, 'three_pm': 0, 'three_pa': 0, 'ftm': 0, 'fta': 0,
+                   'rebounds': 0, 'assists': 0, 'turnovers': 0}
+        for r in prows:
+            for key in totals:
+                totals[key] += getattr(r, key, None) or 0
+
+        return {
+            'games_played': games_played,
+            'ppg': round(points / games_played, 1) if games_played else None,
+            'ppg_allowed': round(points_allowed / games_played, 1) if games_played else None,
+            'fg_pct': round(100 * totals['fgm'] / totals['fga'], 1) if totals['fga'] else None,
+            'three_pct': round(100 * totals['three_pm'] / totals['three_pa'], 1) if totals['three_pa'] else None,
+            'rpg': round(totals['rebounds'] / games_played, 1) if games_played else None,
+            'apg': round(totals['assists'] / games_played, 1) if games_played else None,
+            'topg': round(totals['turnovers'] / games_played, 1) if games_played else None,
+        }
+
+
 def get_game_boxscore_db(game_id):
     """Returns {team_id: [{player_id, minutes, points, rebounds, assists,
     fga, fta, tov}]} for one game — the DB equivalent of nba_player_

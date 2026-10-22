@@ -206,6 +206,10 @@ var summary = e.target.closest('.game-card-summary');
 if (!summary) return;
 var card = summary.closest('.game-card');
 if (!card || !card.id) return;
+// NFL cards link to a full game-detail page instead of opening the
+// bottom sheet (see _nfl_game_card.html's data-detail-href and
+// game_detail.html) — every other sport still uses the sheet.
+if (card.dataset.detailHref) { window.location.href = card.dataset.detailHref; return; }
 openGameDetails(card.id.replace(/^gc-/, ''));
 });
 

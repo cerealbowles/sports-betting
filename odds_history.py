@@ -337,6 +337,28 @@ def get_closing_line(sport, game_key, before_dt, market='moneyline'):
         return None
 
 
+def get_snapshot_series(sport, game_key):
+    """Full ordered history of odds_snapshot rows for one game — every field
+    record() ever wrote, oldest first. Powers the game-detail page's line-
+    movement chart (open -> now for ML/Spread/Total), which needs the whole
+    series, not just get_movement()'s opening/previous pair."""
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                'SELECT recorded_at, home_odds, away_odds, home_spread, '
+                'home_spread_price, away_spread_price, total_line, over_odds, under_odds '
+                'FROM odds_snapshot WHERE sport=? AND game_key=? ORDER BY id ASC',
+                (sport, game_key),
+            ).fetchall()
+        return [{
+            't': r[0], 'home_odds': r[1], 'away_odds': r[2], 'home_spread': r[3],
+            'home_spread_price': r[4], 'away_spread_price': r[5], 'total_line': r[6],
+            'over_odds': r[7], 'under_odds': r[8],
+        } for r in rows]
+    except Exception:
+        return []
+
+
 def _classify_series(series, game_start):
     """Shared shape-classification core, extracted from the original ML-only
     classify_movement so Spread/Total can reuse the exact same logic against

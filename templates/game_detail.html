@@ -1,0 +1,409 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.teams.away.abbr }} @ {{ detail.teams.home.abbr }} — Dead Money{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.gdp { --gdp-bg:#0D0E16; --gdp-surface:#151724; --gdp-surface2:#1B1E2E; --gdp-surface3:#11131E;
+       --gdp-border:#272B3F; --gdp-text:#EEF0F6; --gdp-muted:#A3A8BF; --gdp-dim:#8C91AB;
+       --gdp-good:#8EE07A; --gdp-amber:#F5C04E; --gdp-bad:#FF7A7A;
+       background:var(--gdp-bg); color:var(--gdp-text); font-variant-numeric:tabular-nums;
+       margin:0; padding:16px; box-sizing:border-box; }
+.gdp a { color: var(--gdp-muted); text-decoration:none; }
+.gdp .gdp-topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.gdp .gdp-back { display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:14px; }
+.gdp .gdp-week { color:var(--gdp-dim); font-size:14px; margin-left:12px; }
+.gdp .gdp-refresh { font-size:13px; color:var(--gdp-dim); }
+.gdp .gdp-refresh button { margin-left:8px; height:30px; padding:0 10px; border-radius:8px; border:1px solid var(--gdp-border); background:var(--gdp-surface); color:var(--gdp-muted); cursor:pointer; }
+.gdp .gdp-card { background:var(--gdp-surface); border:1px solid var(--gdp-border); border-radius:18px; padding:20px; margin-bottom:16px; }
+.gdp .gdp-hero { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:20px; }
+.gdp .gdp-team { display:flex; align-items:center; gap:14px; flex:1 1 220px; }
+.gdp .gdp-team.home { justify-content:flex-end; text-align:right; }
+.gdp .gdp-badge { width:56px; height:56px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:22px; flex:none; }
+.gdp .gdp-badge.away { background:#1E2A4A; border:2px solid #6E9BFF; color:#CFDDFF; }
+.gdp .gdp-badge.home { background:#3A2214; border:2px solid #FF8A3D; color:#FFD3B5; }
+.gdp .gdp-team-name { font-size:17px; font-weight:700; }
+.gdp .gdp-team-sub { font-size:13px; color:var(--gdp-muted); }
+.gdp .gdp-l5 { display:flex; gap:4px; margin-top:4px; }
+.gdp .gdp-l5 .home { justify-content:flex-end; }
+.gdp .gdp-chip { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; font-size:11px; font-weight:700; }
+.gdp .gdp-chip.w { background:#183222; color:var(--gdp-good); border:1px solid #2F6B3F; }
+.gdp .gdp-chip.l { background:#3A1C1C; color:var(--gdp-bad); border:1px solid #7A3434; }
+.gdp .gdp-center { display:flex; flex-direction:column; align-items:center; gap:8px; flex:1 1 240px; text-align:center; }
+.gdp .gdp-kickoff { font-family:'Barlow Condensed',sans-serif; font-size:30px; font-weight:700; }
+.gdp .gdp-venue { font-size:13px; color:var(--gdp-muted); }
+.gdp .gdp-pills { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; }
+.gdp .gdp-pill { padding:5px 10px; border-radius:999px; background:var(--gdp-surface2); border:1px solid var(--gdp-border); font-size:12px; }
+.gdp .gdp-proj { font-size:12px; color:var(--gdp-dim); }
+.gdp .gdp-verdicts { display:flex; flex-wrap:wrap; gap:14px; }
+.gdp .gdp-vcard { flex:1 1 280px; background:var(--gdp-surface); border:1px solid var(--gdp-border); border-radius:16px; padding:16px 18px; display:flex; flex-direction:column; gap:10px; }
+.gdp .gdp-vcard.tag-play { border-color:#2F6B3F; }
+.gdp .gdp-vcard.tag-check { border-color:#6B3434; }
+.gdp .gdp-vhead { display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:700; letter-spacing:.06em; color:var(--gdp-muted); }
+.gdp .gdp-tag { font-size:11px; font-weight:700; letter-spacing:.06em; padding:3px 9px; border-radius:999px; }
+.gdp .gdp-tag.play { background:#183222; color:var(--gdp-good); }
+.gdp .gdp-tag.lean { background:#352C14; color:var(--gdp-amber); }
+.gdp .gdp-tag.check { background:#3A1C1C; color:var(--gdp-bad); }
+.gdp .gdp-tag.pass { background:#23263A; color:var(--gdp-muted); }
+.gdp .gdp-pick { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+.gdp .gdp-pick-val { font-family:'Barlow Condensed',sans-serif; font-size:30px; font-weight:700; }
+.gdp .gdp-pick-price { font-size:13px; color:var(--gdp-muted); text-align:right; }
+.gdp .gdp-pick-price b { color:var(--gdp-text); font-size:15px; }
+.gdp .gdp-vgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; background:var(--gdp-surface2); border-radius:10px; padding:10px; font-size:13px; }
+.gdp .gdp-vgrid span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
+.gdp .gdp-vgrid b { font-size:14px; font-weight:700; }
+.gdp .gdp-vfoot { display:flex; justify-content:space-between; font-size:12px; color:var(--gdp-muted); }
+.gdp .gdp-why { font-size:12.5px; line-height:1.4; color:var(--gdp-muted); border-top:1px solid var(--gdp-border); padding-top:10px; }
+.gdp .gdp-blend { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; font-size:13px; color:var(--gdp-muted); }
+.gdp .gdp-blend b { color:var(--gdp-text); }
+.gdp .gdp-section-head { font-size:12px; font-weight:700; letter-spacing:.07em; color:var(--gdp-muted); text-transform:uppercase; margin-bottom:12px; display:flex; justify-content:space-between; }
+.gdp .gdp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+.gdp .gdp-main { flex:999 1 560px; min-width:0; }
+.gdp .gdp-rail { flex:1 1 320px; min-width:0; }
+.gdp .gdp-unit-row { display:grid; grid-template-columns:1fr 90px 1fr; align-items:center; gap:10px; background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px; }
+.gdp .gdp-unit-row .edge { text-align:center; font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:#23263A; color:var(--gdp-muted); }
+.gdp .gdp-stat-row { display:grid; grid-template-columns:50px 1fr 110px 1fr 50px; align-items:center; gap:8px; margin-bottom:8px; font-size:13px; }
+.gdp .gdp-stat-bar { height:7px; background:var(--gdp-surface2); border-radius:4px; }
+.gdp .gdp-stat-bar > div { height:100%; border-radius:4px; }
+.gdp .gdp-form-games { display:flex; flex-direction:column; gap:6px; }
+.gdp .gdp-form-row { display:grid; grid-template-columns:26px 1fr 60px; gap:8px; background:var(--gdp-surface2); border-radius:8px; padding:6px 10px; font-size:13px; }
+.gdp .gdp-inj-row { display:grid; grid-template-columns:40px 1fr; gap:10px; background:var(--gdp-surface2); border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:13px; align-items:center; }
+.gdp .gdp-inj-status { font-size:10px; font-weight:700; text-align:center; padding:3px 0; border-radius:6px; }
+.gdp .gdp-inj-status.out { background:#3A1C1C; color:var(--gdp-bad); }
+.gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful { background:#352C14; color:var(--gdp-amber); }
+.gdp .gdp-sit-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.gdp .gdp-sit-cell { background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; }
+.gdp .gdp-sit-cell span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
+.gdp .gdp-sit-cell b { font-size:14px; }
+.gdp .gdp-market { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+.gdp .gdp-market-sides { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.gdp .gdp-market-side { background:var(--gdp-surface2); border:1px solid var(--gdp-border); border-radius:10px; padding:8px 10px; }
+.gdp .gdp-market-side.model { border-color:var(--gdp-good); }
+.gdp .gdp-market-side .price { font-size:16px; font-weight:700; float:right; }
+.gdp .gdp-market-side .sub { font-size:11px; color:var(--gdp-dim); }
+.gdp .nfl-bet-panel.game-card-details { position:sticky; bottom:12px; margin-top:16px; background:var(--gdp-surface2); border:1px solid #343954; border-radius:16px; padding:12px 14px; box-shadow:0 12px 32px rgba(0,0,0,.45); }
+.gdp .gdp-stat-row, .gdp .gdp-unit-row { min-width:0; }
+.gdp .gdp-stat-row > * { min-width:0; overflow-wrap:anywhere; }
+@media (max-width:900px) { .gdp .gdp-cols { flex-direction:column; } }
+@media (max-width:480px) {
+  .gdp .gdp-stat-row { grid-template-columns:40px 1fr 72px 1fr 40px; font-size:12px; }
+  .gdp .gdp-unit-row { grid-template-columns:1fr 64px 1fr; font-size:12px; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="gdp">
+
+  <div class="gdp-topbar">
+    <div>
+      <a class="gdp-back" href="{{ url_for(schedule_endpoint) }}">← All games</a>
+      <span class="gdp-week">{{ detail.game.league }}{% if week %} · Week {{ week }}{% endif %}</span>
+    </div>
+    <div class="gdp-refresh">
+      {% if odds_last_fetch %}FanDuel odds as of {{ odds_last_fetch | fmt('%-I:%M%p') | lower }}{% endif %}
+      <button type="button" onclick="location.reload()">Refresh</button>
+    </div>
+  </div>
+
+  {# ── Hero ───────────────────────────────────────────────────────────── #}
+  <div class="gdp-card gdp-hero">
+    <div class="gdp-team away">
+      <div class="gdp-badge away">{{ detail.teams.away.abbr }}</div>
+      <div>
+        <div class="gdp-team-name">{{ detail.teams.away.name }}</div>
+        <div class="gdp-team-sub">{{ detail.teams.away.wins }}–{{ detail.teams.away.losses }}{% if detail.teams.away.split_label %} · {{ detail.teams.away.split_w }}–{{ detail.teams.away.split_l }} {{ detail.teams.away.split_label }}{% endif %}</div>
+        <div class="gdp-l5">{% for r in detail.teams.away.form %}<span class="gdp-chip {{ 'w' if r == 'W' else 'l' }}">{{ r }}</span>{% endfor %}</div>
+      </div>
+    </div>
+
+    <div class="gdp-center">
+      <div class="gdp-kickoff game-time" data-utc="{{ detail.game.kickoff_utc }}">—</div>
+      <div class="gdp-venue">{{ detail.game.venue }}{% if detail.game.weather %} · {{ detail.game.weather.temp }}°F{% if detail.game.weather.gust_mph %} · Gust {{ detail.game.weather.gust_mph }}mph{% endif %}{% if detail.game.weather.precip_pct %} · {{ detail.game.weather.precip_pct }}% rain{% endif %}{% endif %}</div>
+      <div class="gdp-pills">
+        {% if detail.fanduel.spread.home.line is not none %}<span class="gdp-pill">{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span>{% endif %}
+        {% if detail.fanduel.total.line is not none %}<span class="gdp-pill">O/U {{ detail.fanduel.total.line }}</span>{% endif %}
+        {% if detail.fanduel.moneyline.away.price is not none %}<span class="gdp-pill">{{ detail.teams.away.abbr }} {{ '+' if detail.fanduel.moneyline.away.price > 0 }}{{ detail.fanduel.moneyline.away.price }} · {{ detail.teams.home.abbr }} {{ detail.fanduel.moneyline.home.price }}</span>{% endif %}
+      </div>
+      {% if detail.model.proj_score %}
+      <div class="gdp-proj">Model projection <b style="color:var(--gdp-text)">{{ detail.teams.away.abbr }} {{ detail.model.proj_score.away }} – {{ detail.teams.home.abbr }} {{ detail.model.proj_score.home }}</b></div>
+      {% endif %}
+    </div>
+
+    <div class="gdp-team home">
+      <div>
+        <div class="gdp-team-name">{{ detail.teams.home.name }}</div>
+        <div class="gdp-team-sub">{{ detail.teams.home.wins }}–{{ detail.teams.home.losses }}{% if detail.teams.home.split_label %} · {{ detail.teams.home.split_w }}–{{ detail.teams.home.split_l }} {{ detail.teams.home.split_label }}{% endif %}</div>
+        <div class="gdp-l5 home">{% for r in detail.teams.home.form %}<span class="gdp-chip {{ 'w' if r == 'W' else 'l' }}">{{ r }}</span>{% endfor %}</div>
+      </div>
+      <div class="gdp-badge home">{{ detail.teams.home.abbr }}</div>
+    </div>
+  </div>
+
+  {# ── Verdict cards ─────────────────────────────────────────────────────── #}
+  {% if detail.verdicts %}
+  <div class="gdp-verdicts">
+    {% for v in detail.verdicts %}
+    <div class="gdp-vcard tag-{{ v.tag | lower }}">
+      <div class="gdp-vhead"><span>{{ v.market }}</span><span class="gdp-tag {{ v.tag | lower }}">{{ v.tag }}</span></div>
+      <div class="gdp-pick">
+        <span class="gdp-pick-val" style="color:{{ '#F5C04E' if v.tag == 'CHECK' else '#CFDDFF' }}">{{ v.pick }}</span>
+        <span class="gdp-pick-price">FanDuel <b>{{ '+' if v.price > 0 }}{{ v.price }}</b></span>
+      </div>
+      <div class="gdp-vgrid">
+        <div><span>MARKET</span><b>{{ v.mkt }}</b></div>
+        <div><span>MODEL</span><b>{{ v.model }}</b></div>
+        <div><span>EDGE</span><b style="color:var(--gdp-good)">{{ v.edge }}</b></div>
+      </div>
+      <div class="gdp-vfoot"><span>EV <b style="color:var(--gdp-text)">{{ v.ev }}</b> · ¼ Kelly <b style="color:var(--gdp-text)">{{ v.kelly }}</b></span></div>
+      <div class="gdp-why">{{ v.why }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Blend strip ───────────────────────────────────────────────────────── #}
+  {% if detail.model.p_team_home is not none and detail.model.p_player_home is not none %}
+  <div class="gdp-card gdp-blend">
+    <span style="font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--gdp-dim)">{{ detail.teams.home.abbr }} WIN PROB</span>
+    <span>Team <b>{{ (detail.model.p_team_home * 100) | round(1) }}%</b></span>
+    <span>Player <b>{{ (detail.model.p_player_home * 100) | round(1) }}%</b></span>
+    <span>→ Blended <b>{{ (detail.model.p_blend_home * 100) | round(1) }}%</b></span>
+    {% if detail.fanduel.novig_home is not none %}<span>FanDuel no-vig <b>{{ detail.fanduel.novig_home }}%</b></span>{% endif %}
+    {% if detail.model.ats_record_when_edge %}<span style="margin-left:auto">ATS when edge ≥ {{ detail.model.ats_record_when_edge.threshold_pts }}: <b>{{ detail.model.ats_record_when_edge.w }}–{{ detail.model.ats_record_when_edge.l }} ({{ detail.model.ats_record_when_edge.pct }}%)</b></span>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="gdp-cols">
+    <div class="gdp-main">
+
+      {# ── Line movement ─────────────────────────────────────────────── #}
+      {% if detail.fanduel.history.ml or detail.fanduel.history.spread or detail.fanduel.history.total %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>LINE MOVEMENT</span></div>
+        <canvas id="lineChart" height="110" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
+      </div>
+      {% endif %}
+
+      {# ── Where the game is won ─────────────────────────────────────── #}
+      {% if detail.matchups %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>WHERE THE GAME IS WON</span><span>League rank of {{ detail.stats[0].n_teams if detail.stats else '' }}</span></div>
+        {% for u in detail.matchups %}
+        <div class="gdp-unit-row">
+          <div>{{ u.off_team }} {{ u.off_unit }} <b>#{{ u.off_rank }}</b><br><span style="color:var(--gdp-dim);font-size:11px">{{ u.off_stat }}</span></div>
+          <div class="edge">{{ u.edge }}</div>
+          <div style="text-align:right">{{ u.def_team }} {{ u.def_unit }} <b>#{{ u.def_rank }}</b><br><span style="color:var(--gdp-dim);font-size:11px">{{ u.def_stat }}</span></div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# ── Team comparison ──────────────────────────────────────────── #}
+      {% if detail.stats %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>TEAM COMPARISON</span><span>of {{ detail.stats[0].n_teams }}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:8px;"><span style="color:#6E9BFF">{{ detail.teams.away.abbr }}</span><span style="color:#FF8A3D">{{ detail.teams.home.abbr }}</span></div>
+        {% for s in detail.stats %}
+        {% set n = s.n_teams %}
+        <div class="gdp-stat-row">
+          <span style="font-weight:{{ 700 if s.away.rank < s.home.rank else 400 }}">{{ s.away.value }}</span>
+          <div class="gdp-stat-bar" style="display:flex;justify-content:flex-end;"><div style="width:{{ ((n + 1 - s.away.rank) / n * 100) | round(1) }}%;background:{{ '#6E9BFF' if s.away.rank < s.home.rank else '#3A3F58' }};"></div></div>
+          <span style="text-align:center;color:var(--gdp-muted);font-size:12px">{{ s.label }}</span>
+          <div class="gdp-stat-bar"><div style="width:{{ ((n + 1 - s.home.rank) / n * 100) | round(1) }}%;background:{{ '#FF8A3D' if s.home.rank < s.away.rank else '#3A3F58' }};"></div></div>
+          <span style="text-align:right;font-weight:{{ 700 if s.home.rank < s.away.rank else 400 }}">{{ s.home.value }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# ── Model factors — reuses the exact same panel the schedule card uses #}
+      {% if ml_panel %}
+      {% set panel = ml_panel %}
+      {% set title = 'Model Factors' %}
+      <div class="gdp-card">
+        {% include "_factor_diverge_panel.html" %}
+      </div>
+      {% endif %}
+
+      {# ── Last 5 games ──────────────────────────────────────────────── #}
+      {% if detail.recent.away or detail.recent.home %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>LAST 5 GAMES</span></div>
+        <div class="gdp-cols">
+          {% for side, rows in [('away', detail.recent.away), ('home', detail.recent.home)] %}
+          <div style="flex:1 1 240px;">
+            <div style="font-weight:700;color:{{ '#6E9BFF' if side == 'away' else '#FF8A3D' }};margin-bottom:6px;">{{ detail.teams[side].abbr }}</div>
+            <div class="gdp-form-games">
+              {% for r in rows %}
+              <div class="gdp-form-row">
+                <span class="gdp-chip {{ 'w' if r.result == 'W' else 'l' }}">{{ r.result }}</span>
+                <span>{{ r.opp }}</span>
+                <span style="text-align:right;color:var(--gdp-muted)">{{ r.score or '' }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+
+    <div class="gdp-rail">
+
+      {# ── FanDuel market (read-only, informational) ───────────────────── #}
+      {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none or detail.fanduel.total.line is not none %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>FANDUEL MARKET</span><span>Model side outlined</span></div>
+
+        {% if detail.fanduel.moneyline.home.price is not none %}
+        <div class="gdp-market">
+          <div style="display:flex;justify-content:space-between;font-size:12px;"><b>Moneyline</b>{% if detail.fanduel.hold_ml is not none %}<span style="color:var(--gdp-dim)">{{ detail.fanduel.hold_ml }}% hold</span>{% endif %}</div>
+          <div class="gdp-market-sides">
+            <div class="gdp-market-side{{ ' model' if detail.verdicts and detail.verdicts[0].market == 'MONEYLINE' and detail.teams.away.abbr in detail.verdicts[0].pick }}">
+              <span>{{ detail.teams.away.abbr }}</span><span class="price">{{ '+' if detail.fanduel.moneyline.away.price > 0 }}{{ detail.fanduel.moneyline.away.price }}</span>
+              <div class="sub">Open {{ detail.fanduel.moneyline.away.open }}{% if detail.fanduel.novig_away is not none %} · no-vig {{ detail.fanduel.novig_away }}%{% endif %}</div>
+            </div>
+            <div class="gdp-market-side{{ ' model' if detail.verdicts and detail.verdicts[0].market == 'MONEYLINE' and detail.teams.home.abbr in detail.verdicts[0].pick }}">
+              <span>{{ detail.teams.home.abbr }}</span><span class="price">{{ '+' if detail.fanduel.moneyline.home.price > 0 }}{{ detail.fanduel.moneyline.home.price }}</span>
+              <div class="sub">Open {{ detail.fanduel.moneyline.home.open }}{% if detail.fanduel.novig_home is not none %} · no-vig {{ detail.fanduel.novig_home }}%{% endif %}</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if detail.fanduel.spread.home.line is not none %}
+        <div class="gdp-market">
+          <div style="font-size:12px;"><b>Spread</b></div>
+          <div class="gdp-market-sides">
+            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','SPREAD')|list and detail.teams.away.abbr in (detail.verdicts|selectattr('market','equalto','SPREAD')|first).pick }}">
+              <span>{{ detail.teams.away.abbr }} {{ '+' if detail.fanduel.spread.away.line > 0 }}{{ detail.fanduel.spread.away.line }}</span><span class="price">{{ detail.fanduel.spread.away.price }}</span>
+            </div>
+            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','SPREAD')|list and detail.teams.home.abbr in (detail.verdicts|selectattr('market','equalto','SPREAD')|first).pick }}">
+              <span>{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span><span class="price">{{ detail.fanduel.spread.home.price }}</span>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if detail.fanduel.total.line is not none %}
+        <div class="gdp-market">
+          <div style="font-size:12px;"><b>Total</b></div>
+          <div class="gdp-market-sides">
+            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','TOTAL')|list and 'OVER' in (detail.verdicts|selectattr('market','equalto','TOTAL')|first).pick }}">
+              <span>Over {{ detail.fanduel.total.line }}</span><span class="price">{{ detail.fanduel.total.over_price }}</span>
+            </div>
+            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','TOTAL')|list and 'UNDER' in (detail.verdicts|selectattr('market','equalto','TOTAL')|first).pick }}">
+              <span>Under {{ detail.fanduel.total.line }}</span><span class="price">{{ detail.fanduel.total.under_price }}</span>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# ── Injuries — real player/position/status only; no fabricated
+           snap-share note or point-impact (not computed anywhere for NFL) #}
+      {% if detail.injuries.away or detail.injuries.home %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>INJURIES</span></div>
+        {% for side in ['away', 'home'] %}
+        {% if detail.injuries[side] %}
+        <div style="font-weight:700;color:{{ '#6E9BFF' if side == 'away' else '#FF8A3D' }};margin:6px 0;">{{ detail.teams[side].abbr }}</div>
+        {% for p in detail.injuries[side] %}
+        <div class="gdp-inj-row">
+          <span class="gdp-inj-status {{ p.status | lower }}">{{ p.status }}</span>
+          <div><b>{{ p.name }}</b> <span style="color:var(--gdp-dim)">{{ p.pos }}</span></div>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# ── Situation ─────────────────────────────────────────────────── #}
+      {% if detail.situation %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>SITUATION</span></div>
+        <div class="gdp-sit-grid">
+          {% if detail.situation.rest %}<div class="gdp-sit-cell"><span>REST</span><b>{{ detail.situation.rest }}</b></div>{% endif %}
+          {% if detail.situation.travel %}<div class="gdp-sit-cell"><span>TRAVEL</span><b>{{ detail.situation.travel }}</b></div>{% endif %}
+          {% if detail.situation.weather %}<div class="gdp-sit-cell"><span>WEATHER</span><b>{{ detail.situation.weather }}</b></div>{% endif %}
+          {% if detail.situation.surface %}<div class="gdp-sit-cell"><span>SURFACE</span><b>{{ detail.situation.surface }}</b></div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Trends / H2H intentionally omitted — no real historical closing-line
+         or referee data exists yet to populate them honestly. See
+         nfl_game_detail.py's module docstring. #}
+
+    </div>
+  </div>
+
+  {# ── Sport-specific extras (e.g. NBA's projected lineups / live
+       per-player box score) — content that lived in the old inline-expand
+       sheet and has no generic equivalent in the sections above #}
+  {% if game %}
+  {% for tmpl in extra_panels or [] %}
+  {% include tmpl %}
+  {% endfor %}
+  {% endif %}
+
+  {# ── Bet panel — reuses the schedule card's exact bet-chip/bet-slip UI,
+       serving as both the "tap a side" affordance and the quick-bet bar #}
+  {% if game %}
+  {% include bet_panel_template %}
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {weekday:'short', hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch (e) {}
+});
+
+{% if detail.fanduel.history.ml or detail.fanduel.history.spread or detail.fanduel.history.total %}
+(function () {
+    var hist = {{ detail.fanduel.history | tojson }};
+    var model = {{ {'ml': (detail.model.p_blend_home * 100) if detail.model.p_blend_home is not none else none,
+                    'spread': detail.model.spread_home, 'total': detail.model.total} | tojson }};
+    var series = hist.total.length ? {key: 'total', label: 'Total', data: hist.total}
+               : hist.spread.length ? {key: 'spread', label: 'Spread', data: hist.spread}
+               : {key: 'ml', label: 'ML no-vig %', data: hist.ml};
+    var labels = series.data.map(function (p) { return new Date(p.t).toLocaleDateString([], {month:'short', day:'numeric'}); });
+    var values = series.data.map(function (p) { return p.value; });
+    var modelVal = model[series.key];
+    var ctx = document.getElementById('lineChart');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {label: series.label, data: values, borderColor: '#F5C04E', backgroundColor: 'transparent', tension: 0.15},
+                ].concat(modelVal != null ? [{label: 'Model', data: values.map(function () { return modelVal; }),
+                    borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : [])
+            },
+            options: {
+                plugins: {legend: {labels: {color: '#A3A8BF'}}},
+                scales: {
+                    x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
+                    y: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}}
+                }
+            }
+        });
+    }
+})();
+{% endif %}
+</script>
+{% endblock %}

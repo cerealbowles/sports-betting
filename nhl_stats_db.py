@@ -132,6 +132,50 @@ def get_season_game_log_db(season, game_type='regular'):
         } for r in rows if r.team_name and r.opponent_name]
 
 
+def get_teams_with_data_db(season, game_type='regular'):
+    """Distinct (team_id, team_name) pairs with at least one stored
+    TeamGameStat row this season — same reasoning as the NFL/NBA/WNBA
+    versions of this helper."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        rows = (TeamGameStat.query
+                .filter_by(sport='NHL', season=season, game_type=game_type)
+                .with_entities(TeamGameStat.team_id, TeamGameStat.team_name)
+                .distinct()
+                .all())
+        return [(r[0], r[1]) for r in rows if r[0]]
+
+
+def get_team_goal_totals_db(team_id, before_date=None, limit=82):
+    """Season-to-date goals-for/against per game for one team, from
+    TeamGameStat.points/points_allowed — all that's reliably stored for
+    NHL (no shots/PP%/faceoff% columns; PlayerGameStat stores NHL's richer
+    per-player lines as opaque stats_json, not flat columns, so a league-
+    wide shots/PP aggregate isn't cheap to build yet). None if nothing
+    stored for this team."""
+    from app import app as flask_app, TeamGameStat
+
+    with flask_app.app_context():
+        q = TeamGameStat.query.filter_by(sport='NHL', team_id=team_id)
+        if before_date:
+            q = q.filter(TeamGameStat.game_date < before_date)
+        q = q.order_by(TeamGameStat.game_date.desc())
+        if limit:
+            q = q.limit(limit)
+        rows = q.all()
+        if not rows:
+            return None
+        games_played = len(rows)
+        gf = sum(r.points or 0 for r in rows)
+        ga = sum(r.points_allowed or 0 for r in rows)
+        return {
+            'games_played': games_played,
+            'gf_pg': round(gf / games_played, 2),
+            'ga_pg': round(ga / games_played, 2),
+        }
+
+
 def get_game_boxscore_db(game_id):
     """{team_id: [{id, name, position, is_goalie, stats}]} for one game —
     DB equivalent of nhl_boxscore_api.get_live_boxscore(). {} if nothing
@@ -265,6 +309,30 @@ def get_latest_injury_status(team_id, as_of_date=None):
         if r.player_id not in latest:
             latest[r.player_id] = r.status
     return latest
+
+
+def get_latest_injury_rows(team_id, as_of_date=None):
+    """Same lookup as get_latest_injury_status() but keeps name/position
+    instead of collapsing to {player_id: status} — the game-detail page's
+    injuries section wants a display row (name/pos/status), not just a
+    status lookup table. Returns [{id, name, pos, status}], newest status
+    per player."""
+    from app import app as flask_app, InjuryStatus
+
+    with flask_app.app_context():
+        q = InjuryStatus.query.filter_by(sport='NHL', team_id=team_id)
+        if as_of_date:
+            q = q.filter(InjuryStatus.date <= as_of_date)
+        rows = q.order_by(InjuryStatus.date.desc()).all()
+
+    seen = set()
+    out = []
+    for r in rows:
+        if r.player_id in seen:
+            continue
+        seen.add(r.player_id)
+        out.append({'id': r.player_id, 'name': r.player_name, 'pos': r.position, 'status': r.status})
+    return out
 
 
 _OUT_STATUSES = {'out', 'injured reserve', 'suspension', 'suspended'}
