@@ -83,7 +83,7 @@
 .gdp .gdp-inj-row { display:grid; grid-template-columns:40px 1fr; gap:10px; background:var(--gdp-surface2); border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:13px; align-items:center; }
 .gdp .gdp-inj-status { font-size:10px; font-weight:700; text-align:center; padding:3px 0; border-radius:6px; }
 .gdp .gdp-inj-status.out { background:#3A1C1C; color:var(--gdp-bad); }
-.gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful { background:#352C14; color:var(--gdp-amber); }
+.gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful, .gdp .gdp-inj-status.day-to-day { background:#352C14; color:var(--gdp-amber); }
 .gdp .gdp-sit-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .gdp .gdp-sit-cell { background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; }
 .gdp .gdp-sit-cell span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
@@ -94,7 +94,17 @@
 .gdp .gdp-market-side.model { border-color:var(--gdp-good); }
 .gdp .gdp-market-side .price { font-size:16px; font-weight:700; float:right; }
 .gdp .gdp-market-side .sub { font-size:11px; color:var(--gdp-dim); }
-.gdp .nfl-bet-panel.game-card-details { position:sticky; bottom:12px; margin-top:16px; background:var(--gdp-surface2); border:1px solid #343954; border-radius:16px; padding:12px 14px; box-shadow:0 12px 32px rgba(0,0,0,.45); }
+.gdp .nfl-bet-panel.game-card-details {
+  position:fixed; left:0; right:0; bottom:0; z-index:40;
+  margin:0 auto; max-width:1360px; width:100%; box-sizing:border-box;
+  background:var(--gdp-surface2); border:1px solid #343954; border-bottom:0;
+  border-radius:16px 16px 0 0; padding:12px 14px;
+  box-shadow:0 -8px 24px rgba(0,0,0,.5);
+}
+/* The fixed bar sits on top of the page rather than in normal flow, so the
+   page needs its own bottom padding or the bar covers the last section
+   (the chart-showing-through-the-bar bug this replaces) — added as an
+   inline style on .gdp only when the bar actually renders, see below. */
 .gdp .gdp-stat-row, .gdp .gdp-unit-row { min-width:0; }
 .gdp .gdp-stat-row > * { min-width:0; overflow-wrap:anywhere; }
 @media (max-width:900px) { .gdp .gdp-cols { flex-direction:column; } }
@@ -106,7 +116,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="gdp">
+<div class="gdp"{% if game and game.status not in ('Final', 'Live') %} style="padding-bottom:140px;"{% endif %}>
 
   <div class="gdp-topbar">
     <div>
@@ -341,9 +351,11 @@
         {% for side in ['away', 'home'] %}
         {% if detail.injuries[side] %}
         <div style="font-weight:700;color:{{ '#6E9BFF' if side == 'away' else '#FF8A3D' }};margin:6px 0;">{{ detail.teams[side].abbr }}</div>
+        {% set inj_abbr = {'day-to-day': 'DTD', 'questionable': 'Q', 'doubtful': 'D', 'out': 'Out', 'suspended': 'Susp'} %}
         {% for p in detail.injuries[side] %}
+        {% set inj_class = p.status | lower | replace(' ', '-') %}
         <div class="gdp-inj-row">
-          <span class="gdp-inj-status {{ p.status | lower }}">{{ p.status }}</span>
+          <span class="gdp-inj-status {{ inj_class }}" title="{{ p.status }}">{{ inj_abbr.get(inj_class, p.status) }}</span>
           <div><b>{{ p.name }}</b> <span style="color:var(--gdp-dim)">{{ p.pos }}</span></div>
         </div>
         {% endfor %}
@@ -383,7 +395,7 @@
 
   {# ── Bet panel — reuses the schedule card's exact bet-chip/bet-slip UI,
        serving as both the "tap a side" affordance and the quick-bet bar #}
-  {% if game %}
+  {% if game and game.status not in ('Final', 'Live') %}
   {% include bet_panel_template %}
   {% endif %}
 
