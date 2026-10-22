@@ -85,6 +85,7 @@
 .gdp .gdp-inj-status { font-size:10px; font-weight:700; text-align:center; padding:3px 0; border-radius:6px; }
 .gdp .gdp-inj-status.out, .gdp .gdp-inj-status.injured-reserve, .gdp .gdp-inj-status.suspended, .gdp .gdp-inj-status.suspension { background:#3A1C1C; color:var(--gdp-bad); }
 .gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful, .gdp .gdp-inj-status.day-to-day, .gdp .gdp-inj-status.probable, .gdp .gdp-inj-status.game-time-decision { background:#352C14; color:var(--gdp-amber); }
+.gdp .gdp-inj-season { color:var(--gdp-dim); font-size:11.5px; margin-top:2px; }
 .gdp .gdp-sit-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .gdp .gdp-sit-cell { background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; }
 .gdp .gdp-sit-cell span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
@@ -360,7 +361,24 @@
         {% set inj_class = p.status | lower | replace(' ', '-') %}
         <div class="gdp-inj-row">
           <span class="gdp-inj-status {{ inj_class }}" title="{{ p.status }}">{{ inj_abbr.get(inj_class, p.status) }}</span>
-          <div><b>{{ p.name }}</b> <span style="color:var(--gdp-dim)">{{ p.pos }}</span></div>
+          <div>
+            <div><b>{{ p.name }}</b> <span style="color:var(--gdp-dim)">{{ p.pos }}</span></div>
+            {# Real season contribution (G/A/P for skaters, W-L-OTL/SV%/GAA for
+               goalies), so an unfamiliar name reads as "leading scorer" vs
+               "healthy scratch" instead of just an opaque status pill. Only
+               populated for NHL today (nhl_game_detail.py); silently absent
+               elsewhere. #}
+            {% if p.season %}
+            <div class="gdp-inj-season">
+              {% if p.season.is_goalie %}
+                {{ p.season.wins }}-{{ p.season.losses }}-{{ p.season.otl }}{% if p.season.games %} ({{ p.season.games }} GP){% endif %}{% if p.season.save_pct %} &middot; {{ '%.3f' % p.season.save_pct }} SV%{% endif %}{% if p.season.gaa %} &middot; {{ p.season.gaa }} GAA{% endif %}
+              {% else %}
+                {{ p.season.games }} GP &middot; {{ p.season.goals }}G {{ p.season.assists }}A {{ p.season.points }}P
+              {% endif %}
+              {% if not p.season.is_current %} <span style="opacity:.65">({{ p.season.label }})</span>{% endif %}
+            </div>
+            {% endif %}
+          </div>
         </div>
         {% endfor %}
         {% endif %}

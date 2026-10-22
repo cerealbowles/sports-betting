@@ -38,6 +38,7 @@ import game_math as gm
 import game_detail_common as gdc
 import nhl_api
 import nhl_stats_db
+import nhl_roster_api
 import spread_model
 import hockey_total_model
 
@@ -261,9 +262,9 @@ def build_game_detail(game_id):
     if home_espn_id and away_espn_id:
         try:
             injuries = {
-                'away': [{'status': r['status'], 'name': r['name'], 'pos': r['pos'] or ''}
+                'away': [{'id': r['id'], 'status': r['status'], 'name': r['name'], 'pos': r['pos'] or ''}
                          for r in nhl_stats_db.get_latest_injury_rows(away_espn_id, date_str)],
-                'home': [{'status': r['status'], 'name': r['name'], 'pos': r['pos'] or ''}
+                'home': [{'id': r['id'], 'status': r['status'], 'name': r['name'], 'pos': r['pos'] or ''}
                          for r in nhl_stats_db.get_latest_injury_rows(home_espn_id, date_str)],
             }
         except Exception:
@@ -271,11 +272,48 @@ def build_game_detail(game_id):
     # The goalie's own injury status is already real and already on the
     # team dict (nhl_api.py's build_schedule_context sets
     # team['goalie']['injury']) — surface it even if the skater-level
-    # lookup above found nothing.
+    # lookup above found nothing. This goalie dict already carries its own
+    # sv_pct/gaa/record (from the NHL API, keyed by abbrev, no ESPN id
+    # available here), so its "season" line is built from that directly
+    # instead of going through _attach_season_stats()'s ESPN gamelog path.
     for side, team in (('away', away), ('home', home)):
         goalie = team.get('goalie')
         if goalie and goalie.get('injury'):
-            injuries[side].insert(0, {'status': goalie['injury'], 'name': goalie.get('name', 'Goalie'), 'pos': 'G'})
+            w, l, otl = (goalie.get('record') or '0-0-0').split('-')[:3] if goalie.get('record') else ('0', '0', '0')
+            injuries[side].insert(0, {
+                'status': goalie['injury'], 'name': goalie.get('name', 'Goalie'), 'pos': 'G',
+                'season': {
+                    'is_goalie': True, 'wins': int(w) if w.isdigit() else 0,
+                    'losses': int(l) if l.isdigit() else 0,
+                    'otl': int(otl) if otl.isdigit() else 0,
+                    'save_pct': float(goalie['sv_pct']) if goalie.get('sv_pct') else None,
+                    'gaa': float(goalie['gaa']) if goalie.get('gaa') else None,
+                    'games': None, 'starts': None, 'label': 'this season', 'is_current': True,
+                },
+            })
+
+    # Real per-player season stats (G/A/P for skaters, record/SV%/GAA for
+    # goalies) from ESPN's gamelog — turns an unfamiliar name into a real
+    # sense of how much the team is missing, then sorts each team's list by
+    # that contribution (points for skaters, starts for goalies) so the
+    # players who matter most surface first instead of alphabetical/feed order.
+    for side in ('away', 'home'):
+        for p in injuries[side]:
+            if 'season' not in p and p.get('id'):
+                try:
+                    p['season'] = nhl_roster_api.get_player_season_summary(p['id'], p['pos'])
+                except Exception:
+                    p['season'] = None
+
+        def _impact(p):
+            s = p.get('season')
+            if not s:
+                return -1
+            if s.get('is_goalie'):
+                return (s.get('starts') or 0) * 3 + (s.get('wins') or 0)
+            return s.get('points', 0)
+
+        injuries[side].sort(key=_impact, reverse=True)
 
     history = gdc.line_movement('nhl', home['name'], away['name'], g['game_time_utc'])
 
