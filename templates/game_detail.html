@@ -60,6 +60,16 @@
 .gdp .gdp-lm-tab { height:32px; padding:0 14px; border:0; border-radius:7px; background:transparent; color:var(--gdp-muted); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
 .gdp .gdp-lm-tab[aria-selected="true"] { background:#2A2E44; color:var(--gdp-text); }
 .gdp .gdp-lm-tab:disabled { opacity:.35; cursor:default; }
+.gdp .gdp-lm-drift { display:flex; align-items:center; justify-content:center; gap:16px; margin:4px 0 16px; }
+.gdp .gdp-lm-drift-team { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; font-weight:700; color:var(--gdp-dim); opacity:.4; transition:opacity .2s; }
+.gdp .gdp-lm-drift-team.gdp-lm-drift-favored { opacity:1; color:var(--gdp-text); }
+.gdp .gdp-lm-drift-team img { width:32px; height:32px; object-fit:contain; border-radius:8px; }
+.gdp .gdp-lm-drift-team.gdp-lm-drift-favored img { box-shadow:0 0 0 2px var(--gdp-good); border-radius:8px; }
+.gdp .gdp-lm-drift-arrow { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.gdp .gdp-lm-drift-arrow #lmDriftArrow { color:var(--gdp-amber); font-size:20px; display:inline-block; }
+.gdp .gdp-lm-drift-arrow #lmDriftArrow.gdp-lm-drift-left { transform:scaleX(-1); }
+.gdp .gdp-lm-drift-arrow #lmDriftArrow.gdp-lm-drift-flat { color:var(--gdp-dim); font-size:16px; transform:none; }
+.gdp .gdp-lm-drift-label { font-size:11px; color:var(--gdp-muted); font-weight:600; }
 .gdp .gdp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
 .gdp .gdp-main { flex:999 1 560px; min-width:0; }
 .gdp .gdp-rail { flex:1 1 320px; min-width:0; }
@@ -188,6 +198,17 @@
           <button type="button" class="gdp-lm-tab" data-lm-key="ml" role="tab" aria-selected="false">Moneyline</button>
           <button type="button" class="gdp-lm-tab" data-lm-key="spread" role="tab" aria-selected="false">Spread</button>
           <button type="button" class="gdp-lm-tab" data-lm-key="total" role="tab" aria-selected="false">Total</button>
+        </div>
+        <div class="gdp-lm-drift" id="lmDrift" hidden>
+          <div class="gdp-lm-drift-team" data-side="away">
+            <img src="{{ detail.teams.away.logo_url }}" alt="{{ detail.teams.away.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            <span>{{ detail.teams.away.abbr }}</span>
+          </div>
+          <div class="gdp-lm-drift-arrow"><span id="lmDriftArrow">→</span><span id="lmDriftLabel" class="gdp-lm-drift-label"></span></div>
+          <div class="gdp-lm-drift-team" data-side="home">
+            <img src="{{ detail.teams.home.logo_url }}" alt="{{ detail.teams.home.abbr }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            <span>{{ detail.teams.home.abbr }}</span>
+          </div>
         </div>
         <canvas id="lineChart" height="110" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
       </div>
@@ -424,6 +445,64 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
                     }
                 }
             });
+        }
+
+        updateDrift(key, values);
+    }
+
+    var driftEl = document.getElementById('lmDrift');
+    var driftArrow = document.getElementById('lmDriftArrow');
+    var driftLabel = document.getElementById('lmDriftLabel');
+    var driftTeamEls = {
+        away: document.querySelector('.gdp-lm-drift-team[data-side="away"]'),
+        home: document.querySelector('.gdp-lm-drift-team[data-side="home"]'),
+    };
+
+    // Moneyline's plotted value is the HOME team's no-vig win% — rising
+    // means the market is moving toward home. Spread's plotted value is
+    // the home-team line (negative = home favored) — a MORE negative line
+    // also means the market is moving toward home, the opposite sign
+    // relationship. Total has no team side to drift toward (it's not a
+    // moneyline/spread on either team), so the team badges stay hidden
+    // for it — just an over/under direction.
+    function driftSide(key, first, last) {
+        if (key === 'ml') return last > first ? 'home' : (last < first ? 'away' : null);
+        if (key === 'spread') return last < first ? 'home' : (last > first ? 'away' : null);
+        return null;
+    }
+
+    function updateDrift(key, values) {
+        if (!driftEl || values.length < 2) { if (driftEl) driftEl.hidden = true; return; }
+        var first = values[0], last = values[values.length - 1];
+        var delta = last - first;
+        var flat = Math.abs(delta) < 0.05;
+
+        if (key === 'total') {
+            driftEl.hidden = false;
+            driftTeamEls.away.classList.remove('gdp-lm-drift-favored');
+            driftTeamEls.home.classList.remove('gdp-lm-drift-favored');
+            driftTeamEls.away.style.visibility = 'hidden';
+            driftTeamEls.home.style.visibility = 'hidden';
+            driftArrow.textContent = flat ? '•' : (delta > 0 ? '↑' : '↓');
+            driftArrow.className = flat ? 'gdp-lm-drift-flat' : '';
+            driftLabel.textContent = flat ? 'Flat' : (delta > 0 ? 'Trending over' : 'Trending under');
+            return;
+        }
+
+        driftTeamEls.away.style.visibility = '';
+        driftTeamEls.home.style.visibility = '';
+        var side = flat ? null : driftSide(key, first, last);
+        driftTeamEls.away.classList.toggle('gdp-lm-drift-favored', side === 'away');
+        driftTeamEls.home.classList.toggle('gdp-lm-drift-favored', side === 'home');
+        driftEl.hidden = false;
+        if (flat || !side) {
+            driftArrow.textContent = '•';
+            driftArrow.className = 'gdp-lm-drift-flat';
+            driftLabel.textContent = 'Flat';
+        } else {
+            driftArrow.textContent = '→';
+            driftArrow.className = side === 'away' ? 'gdp-lm-drift-left' : '';
+            driftLabel.textContent = 'Drifting ' + side;
         }
     }
 
