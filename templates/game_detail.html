@@ -429,23 +429,25 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         ].concat(modelVal != null ? [{label: 'Model', data: values.map(function () { return modelVal; }),
             borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : []);
 
-        if (chart) {
-            chart.data.labels = labels;
-            chart.data.datasets = datasets;
-            chart.update();
-        } else {
-            chart = new Chart(ctx, {
-                type: 'line',
-                data: {labels: labels, datasets: datasets},
-                options: {
-                    plugins: {legend: {labels: {color: '#A3A8BF'}}},
-                    scales: {
-                        x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
-                        y: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}}
-                    }
+        // Spread never moves in anything finer than half-point increments
+        // (−2.5, −3.0, ...) — force the y-axis to step by 0.5 instead of
+        // Chart.js's auto-picked tick spacing (which showed .1s on a tight
+        // range). Other markets keep an auto step.
+        var yTicks = {color: '#8C91AB'};
+        if (key === 'spread') yTicks.stepSize = 0.5;
+
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {labels: labels, datasets: datasets},
+            options: {
+                plugins: {legend: {labels: {color: '#A3A8BF', usePointStyle: true, pointStyle: 'line'}}},
+                scales: {
+                    x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
+                    y: {ticks: yTicks, grid: {color: '#22263A'}}
                 }
-            });
-        }
+            }
+        });
 
         updateDrift(key, values);
     }
