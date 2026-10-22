@@ -56,11 +56,12 @@
 .gdp .gdp-blend { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; font-size:13px; color:var(--gdp-muted); }
 .gdp .gdp-blend b { color:var(--gdp-text); }
 .gdp .gdp-section-head { font-size:12px; font-weight:700; letter-spacing:.07em; color:var(--gdp-muted); text-transform:uppercase; margin-bottom:12px; display:flex; justify-content:space-between; }
-.gdp .gdp-lm-tabs { display:flex; gap:4px; background:var(--gdp-surface2); padding:4px; border-radius:10px; margin-bottom:12px; width:fit-content; }
+.gdp .gdp-lm-tabs { display:flex; gap:4px; background:var(--gdp-surface2); padding:4px; border-radius:10px; margin-bottom:8px; width:fit-content; }
 .gdp .gdp-lm-tab { height:32px; padding:0 14px; border:0; border-radius:7px; background:transparent; color:var(--gdp-muted); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
 .gdp .gdp-lm-tab[aria-selected="true"] { background:#2A2E44; color:var(--gdp-text); }
 .gdp .gdp-lm-tab:disabled { opacity:.35; cursor:default; }
-.gdp .gdp-lm-drift { display:flex; align-items:center; justify-content:center; gap:16px; margin:4px 0 16px; }
+.gdp .gdp-lm-drift { display:flex; align-items:center; justify-content:center; gap:12px; margin:2px 0 10px; }
+.gdp .gdp-lm-model-note { text-align:center; font-size:12px; color:var(--gdp-amber); margin-top:8px; }
 .gdp .gdp-lm-drift-team { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; font-weight:700; color:var(--gdp-dim); opacity:.4; transition:opacity .2s; }
 .gdp .gdp-lm-drift-team.gdp-lm-drift-favored { opacity:1; color:var(--gdp-text); }
 .gdp .gdp-lm-drift-team img { width:32px; height:32px; object-fit:contain; border-radius:8px; }
@@ -221,6 +222,7 @@
           </div>
         </div>
         <canvas id="lineChart" height="110" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
+        <div id="lmModelNote" class="gdp-lm-model-note" hidden></div>
       </div>
       {% endif %}
 
@@ -438,10 +440,37 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         });
         var values = series.map(function (p) { return p.value; });
         var modelVal = model[key];
+
+        // Scale the y-axis to the REAL line-movement data only, not to
+        // wherever the model happens to sit — a model that disagrees a lot
+        // with the market (which is exactly when it's most interesting,
+        // e.g. a CHECK-tagged outlier) used to force the axis to stretch
+        // far past the data, squashing the real movement into a sliver at
+        // the top and leaving most of the chart empty.
+        var dataMin = Math.min.apply(null, values), dataMax = Math.max.apply(null, values);
+        var dataRange = dataMax - dataMin;
+        var pad = Math.max(dataRange * 0.2, key === 'spread' ? 0.5 : key === 'total' ? 1 : 0.5);
+        var yMin = dataMin - pad, yMax = dataMax + pad;
+        // Only draw the model reference line if it actually lands near the
+        // real data's range — otherwise it's a callout instead (below),
+        // so a wildly-off model doesn't blow the chart back open again.
+        var modelInRange = modelVal != null && modelVal >= yMin - pad && modelVal <= yMax + pad;
+        if (modelInRange) { yMin = Math.min(yMin, modelVal - pad * 0.3); yMax = Math.max(yMax, modelVal + pad * 0.3); }
+
         var datasets = [
             {label: VALUE_LABELS[key], data: values, borderColor: '#F5C04E', backgroundColor: 'transparent', tension: 0.15},
-        ].concat(modelVal != null ? [{label: 'Model', data: values.map(function () { return modelVal; }),
+        ].concat(modelInRange ? [{label: 'Model', data: values.map(function () { return modelVal; }),
             borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : []);
+
+        var modelNote = document.getElementById('lmModelNote');
+        if (modelNote) {
+            if (modelVal != null && !modelInRange) {
+                modelNote.hidden = false;
+                modelNote.textContent = 'Model ' + modelVal.toFixed(1) + (modelVal > dataMax ? ' — well above the chart range' : ' — well below the chart range');
+            } else {
+                modelNote.hidden = true;
+            }
+        }
 
         // Spread never moves in anything finer than half-point increments
         // (−2.5, −3.0, ...) — force the y-axis to step by 0.5 instead of
@@ -457,8 +486,8 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
             options: {
                 plugins: {legend: {labels: {color: '#A3A8BF', usePointStyle: true, pointStyle: 'line'}}},
                 scales: {
-                    x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
-                    y: {ticks: yTicks, grid: {color: '#22263A'}}
+                    x: {ticks: {color: '#8C91AB', autoSkip: true, maxTicksLimit: window.innerWidth < 560 ? 4 : 7, maxRotation: 40, minRotation: 0}, grid: {color: '#22263A'}},
+                    y: {min: yMin, max: yMax, ticks: yTicks, grid: {color: '#22263A'}}
                 }
             }
         });
