@@ -56,6 +56,10 @@
 .gdp .gdp-blend { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; font-size:13px; color:var(--gdp-muted); }
 .gdp .gdp-blend b { color:var(--gdp-text); }
 .gdp .gdp-section-head { font-size:12px; font-weight:700; letter-spacing:.07em; color:var(--gdp-muted); text-transform:uppercase; margin-bottom:12px; display:flex; justify-content:space-between; }
+.gdp .gdp-lm-tabs { display:flex; gap:4px; background:var(--gdp-surface2); padding:4px; border-radius:10px; margin-bottom:12px; width:fit-content; }
+.gdp .gdp-lm-tab { height:32px; padding:0 14px; border:0; border-radius:7px; background:transparent; color:var(--gdp-muted); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+.gdp .gdp-lm-tab[aria-selected="true"] { background:#2A2E44; color:var(--gdp-text); }
+.gdp .gdp-lm-tab:disabled { opacity:.35; cursor:default; }
 .gdp .gdp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
 .gdp .gdp-main { flex:999 1 560px; min-width:0; }
 .gdp .gdp-rail { flex:1 1 320px; min-width:0; }
@@ -180,6 +184,11 @@
       {% if detail.fanduel.history.ml or detail.fanduel.history.spread or detail.fanduel.history.total %}
       <div class="gdp-card">
         <div class="gdp-section-head"><span>LINE MOVEMENT</span></div>
+        <div class="gdp-lm-tabs" role="tablist" aria-label="Line movement market">
+          <button type="button" class="gdp-lm-tab" data-lm-key="ml" role="tab" aria-selected="false">Moneyline</button>
+          <button type="button" class="gdp-lm-tab" data-lm-key="spread" role="tab" aria-selected="false">Spread</button>
+          <button type="button" class="gdp-lm-tab" data-lm-key="total" role="tab" aria-selected="false">Total</button>
+        </div>
         <canvas id="lineChart" height="110" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
       </div>
       {% endif %}
@@ -377,31 +386,71 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     var hist = {{ detail.fanduel.history | tojson }};
     var model = {{ {'ml': (detail.model.p_blend_home * 100) if detail.model.p_blend_home is not none else none,
                     'spread': detail.model.spread_home, 'total': detail.model.total} | tojson }};
-    var series = hist.total.length ? {key: 'total', label: 'Total', data: hist.total}
-               : hist.spread.length ? {key: 'spread', label: 'Spread', data: hist.spread}
-               : {key: 'ml', label: 'ML no-vig %', data: hist.ml};
-    var labels = series.data.map(function (p) { return new Date(p.t).toLocaleDateString([], {month:'short', day:'numeric'}); });
-    var values = series.data.map(function (p) { return p.value; });
-    var modelVal = model[series.key];
+    var LABELS = {ml: 'Moneyline', spread: 'Spread', total: 'Total'};
+    var VALUE_LABELS = {ml: 'ML no-vig %', spread: 'Spread', total: 'Total'};
+
     var ctx = document.getElementById('lineChart');
-    if (ctx) {
-        new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {label: series.label, data: values, borderColor: '#F5C04E', backgroundColor: 'transparent', tension: 0.15},
-                ].concat(modelVal != null ? [{label: 'Model', data: values.map(function () { return modelVal; }),
-                    borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : [])
-            },
-            options: {
-                plugins: {legend: {labels: {color: '#A3A8BF'}}},
-                scales: {
-                    x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
-                    y: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}}
-                }
-            }
+    if (!ctx) return;
+    var chart = null;
+
+    function render(key) {
+        var series = hist[key] || [];
+        // Same-day snapshots are common (the hourly odds-fetch cron can log
+        // several in one calendar day) — include the time, not just the
+        // date, so consecutive points on the x-axis aren't indistinguishable.
+        var labels = series.map(function (p) {
+            return new Date(p.t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
         });
+        var values = series.map(function (p) { return p.value; });
+        var modelVal = model[key];
+        var datasets = [
+            {label: VALUE_LABELS[key], data: values, borderColor: '#F5C04E', backgroundColor: 'transparent', tension: 0.15},
+        ].concat(modelVal != null ? [{label: 'Model', data: values.map(function () { return modelVal; }),
+            borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : []);
+
+        if (chart) {
+            chart.data.labels = labels;
+            chart.data.datasets = datasets;
+            chart.update();
+        } else {
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {labels: labels, datasets: datasets},
+                options: {
+                    plugins: {legend: {labels: {color: '#A3A8BF'}}},
+                    scales: {
+                        x: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}},
+                        y: {ticks: {color: '#8C91AB'}, grid: {color: '#22263A'}}
+                    }
+                }
+            });
+        }
+    }
+
+    var tabs = document.querySelectorAll('.gdp-lm-tab');
+    var active = null;
+    tabs.forEach(function (tab) {
+        var key = tab.dataset.lmKey;
+        var hasData = (hist[key] || []).length > 0;
+        if (!hasData) {
+            tab.disabled = true;
+            return;
+        }
+        if (!active) active = key;  // first tab with data, in ml/spread/total DOM order
+        tab.addEventListener('click', function () {
+            tabs.forEach(function (t) { t.setAttribute('aria-selected', 'false'); });
+            tab.setAttribute('aria-selected', 'true');
+            render(key);
+        });
+    });
+    // Default to Total > Spread > ML when all three have data, matching
+    // what used to be hardcoded before tabs existed; falls back to
+    // whichever market is the only one with data.
+    var initial = hist.total.length ? 'total' : hist.spread.length ? 'spread' : active;
+    if (initial) {
+        var initialTab = document.querySelector('.gdp-lm-tab[data-lm-key="' + initial + '"]');
+        if (initialTab) initialTab.setAttribute('aria-selected', 'true');
+        render(initial);
     }
 })();
 {% endif %}
