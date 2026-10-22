@@ -82,8 +82,8 @@
 .gdp .gdp-form-row { display:grid; grid-template-columns:26px 1fr 60px; gap:8px; background:var(--gdp-surface2); border-radius:8px; padding:6px 10px; font-size:13px; }
 .gdp .gdp-inj-row { display:grid; grid-template-columns:40px 1fr; gap:10px; background:var(--gdp-surface2); border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:13px; align-items:center; }
 .gdp .gdp-inj-status { font-size:10px; font-weight:700; text-align:center; padding:3px 0; border-radius:6px; }
-.gdp .gdp-inj-status.out { background:#3A1C1C; color:var(--gdp-bad); }
-.gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful, .gdp .gdp-inj-status.day-to-day { background:#352C14; color:var(--gdp-amber); }
+.gdp .gdp-inj-status.out, .gdp .gdp-inj-status.injured-reserve, .gdp .gdp-inj-status.suspended, .gdp .gdp-inj-status.suspension { background:#3A1C1C; color:var(--gdp-bad); }
+.gdp .gdp-inj-status.questionable, .gdp .gdp-inj-status.doubtful, .gdp .gdp-inj-status.day-to-day, .gdp .gdp-inj-status.probable, .gdp .gdp-inj-status.game-time-decision { background:#352C14; color:var(--gdp-amber); }
 .gdp .gdp-sit-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .gdp .gdp-sit-cell { background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; }
 .gdp .gdp-sit-cell span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
@@ -351,7 +351,9 @@
         {% for side in ['away', 'home'] %}
         {% if detail.injuries[side] %}
         <div style="font-weight:700;color:{{ '#6E9BFF' if side == 'away' else '#FF8A3D' }};margin:6px 0;">{{ detail.teams[side].abbr }}</div>
-        {% set inj_abbr = {'day-to-day': 'DTD', 'questionable': 'Q', 'doubtful': 'D', 'out': 'Out', 'suspended': 'Susp'} %}
+        {% set inj_abbr = {'day-to-day': 'DTD', 'questionable': 'Q', 'doubtful': 'D', 'out': 'Out',
+                            'suspended': 'SSPD', 'suspension': 'SSPD', 'injured-reserve': 'IR',
+                            'probable': 'P', 'game-time-decision': 'GTD'} %}
         {% for p in detail.injuries[side] %}
         {% set inj_class = p.status | lower | replace(' ', '-') %}
         <div class="gdp-inj-row">
