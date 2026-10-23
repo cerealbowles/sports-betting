@@ -11,7 +11,8 @@ load_dotenv()
 
 from flask import Flask, request, redirect, url_for, render_template, abort, jsonify, make_response, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, event
+from sqlalchemy.engine import Engine
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, Counter
 import csv
@@ -127,6 +128,21 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # of failing outright.
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'timeout': 30}}
 db = SQLAlchemy(app)
+
+
+@event.listens_for(Engine, 'connect')
+def _sqlite_wal_mode(dbapi_conn, _record):
+    """WAL instead of sqlite's default rollback-journal mode — a writer no
+    longer blocks concurrent readers (just other writers), which matters now
+    that multiple gunicorn worker processes (see Dockerfile) can have
+    connections open against this same file at once, on top of the cron
+    writes/offline backfills the 30s busy_timeout above already exists for.
+    journal_mode is a persistent, one-time property of the database file
+    itself (sqlite re-reads it from the file header), so this is a no-op on
+    every connection after the first ever."""
+    cur = dbapi_conn.cursor()
+    cur.execute('PRAGMA journal_mode=WAL')
+    cur.close()
 
 _STYLES_MTIME = str(int(os.path.getmtime(os.path.join(app.static_folder, 'styles.css'))))
 
@@ -1181,6 +1197,7 @@ def _recompute_consensus_calibration(sport='MLB'):
 
     with _CONS_CALIB_LOCK:
         _CONS_CALIB[sport] = new_calib
+    _save_calib_snapshot('cons_calib', sport, new_calib)
 
 
 # ── Cross-sport confidence blend + tier calibration ─────────────────────────
@@ -1244,6 +1261,7 @@ def _recompute_prob_calibration(sport):
 
     with _PROB_CALIB_LOCK:
         _PROB_CALIBRATION[sport] = stats
+    _save_calib_snapshot('prob_calibration', sport, stats)
     print(f'[prob-calibration] {sport} recomputed from {len(resolved)} games: {stats}', flush=True)
 
 
@@ -1423,6 +1441,7 @@ def _recompute_confidence_tiers(sport):
     }
     with _CONFIDENCE_TIERS_LOCK:
         _CONFIDENCE_TIERS[sport] = tiers
+    _save_calib_snapshot('confidence_tiers', sport, tiers)
     print(f'[confidence-tiers] {sport} recomputed from {n} games: '
           f'high>={tiers["high"]} medium>={tiers["medium"]}', flush=True)
 
@@ -1518,6 +1537,7 @@ def _recompute_spread_confidence_tiers(sport):
     }
     with _SPREAD_CONFIDENCE_TIERS_LOCK:
         _SPREAD_CONFIDENCE_TIERS[sport] = tiers
+    _save_calib_snapshot('spread_confidence_tiers', sport, tiers)
     print(f'[spread-confidence-tiers] {sport} recomputed from {n} games: '
           f'high>={tiers["high"]}pts medium>={tiers["medium"]}pts', flush=True)
 
@@ -1598,6 +1618,53 @@ def _save_team_bias_snapshot(sport, bias):
             json.dump(payload, f, indent=2)
     except Exception as e:
         print(f'[team-bias] failed to write snapshot: {e}', flush=True)
+
+
+# ── Generic calibration-snapshot persistence ─────────────────────────────────
+# The dozen or so other in-memory-only calibration globals below (_OMEN_
+# WEIGHTS, _MOVEMENT_WEIGHTS, _PROB_CALIBRATION, _CONFIDENCE_TIERS, etc.)
+# used to exist purely in process memory — correct only after
+# _recompute_all_calibration() re-scanned every resolved GamePrediction for
+# every sport, which _start_cache_warmer() ran synchronously at startup so
+# the first page load wouldn't see default/empty values. That scan is what
+# made boot (and therefore the first real requests, sharing the same
+# process/GIL) slow. Same fix as _save_team_bias_snapshot above, generalized:
+# persist each dict's last computed value to its own small JSON file under
+# data/calibration_snapshots/, and load those (plain file reads, milliseconds)
+# at startup instead of recomputing live — _load_all_calibration_snapshots()
+# below. The real recompute still runs, just moved to the background warm
+# cycle/hourly cron, same as it always has for every *subsequent* refresh.
+_CALIB_SNAPSHOT_DIR = os.path.join(os.path.dirname(_DB_PATH), 'calibration_snapshots')
+
+
+def _save_calib_snapshot(name, sport, data):
+    try:
+        os.makedirs(_CALIB_SNAPSHOT_DIR, exist_ok=True)
+        path = os.path.join(_CALIB_SNAPSHOT_DIR, f'{name}.json')
+        payload = {}
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    payload = json.load(f)
+            except Exception:
+                payload = {}
+        payload[sport] = data
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)  # atomic — concurrent workers never see a half-written file
+    except Exception as e:
+        print(f'[calib-snapshot] failed to write {name}/{sport}: {e}', flush=True)
+
+
+def _load_calib_snapshot(name):
+    """{sport: data} previously saved by _save_calib_snapshot(name, ...), or
+    {} if nothing's been persisted yet (first-ever boot)."""
+    try:
+        with open(os.path.join(_CALIB_SNAPSHOT_DIR, f'{name}.json')) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _recompute_team_bias(sport='MLB'):
@@ -1886,6 +1953,7 @@ def _recompute_omen_weights(sport='MLB'):
 
     with _OMEN_LOCK:
         _OMEN_WEIGHTS[sport] = new_weights
+    _save_calib_snapshot('omen_weights', sport, new_weights)
 
     print(f'[omen-weights] recomputed from {n_total} {sport} games '
           f'(baseline ROI {baseline_roi:+.1f}%). '
@@ -2131,6 +2199,7 @@ def _recompute_spread_omen_weights(sport):
 
     with _OMEN_LOCK:
         _SPREAD_OMEN_WEIGHTS[sport] = new_weights
+    _save_calib_snapshot('spread_omen_weights', sport, new_weights)
 
     print(f'[spread-omen-weights] recomputed from {n_total} {sport} spread picks '
           f'(baseline ROI {baseline_roi:+.1f}%).', flush=True)
@@ -2360,6 +2429,7 @@ def _recompute_unified_rank_stats(sport='MLB'):
 
     with _UNIFIED_RANK_LOCK:
         _UNIFIED_RANK_STATS[sport] = stats
+    _save_calib_snapshot('unified_rank_stats', sport, stats)
 
     print(f'[unified-rank-stats] recomputed from {len(games)} {sport} games: {stats}', flush=True)
 
@@ -2551,6 +2621,7 @@ def _recompute_movement_weights(sport='MLB'):
 
     with _MOVEMENT_LOCK:
         _MOVEMENT_WEIGHTS[sport] = new_weights
+    _save_calib_snapshot('movement_weights', sport, new_weights)
 
     print(f'[movement-weights] recomputed from {n_total} classified {sport} games: {new_weights}', flush=True)
 
@@ -2616,6 +2687,7 @@ def _recompute_movement_stats(sport='MLB'):
 
     with _MOVEMENT_LOCK:
         _MOVEMENT_STATS[sport] = new_stats
+    _save_calib_snapshot('movement_stats', sport, new_stats)
 
     _nonzero = {k: v for k, v in new_stats.items() if v['n']}
     print(f'[movement-stats] {sport} recomputed: {_nonzero}', flush=True)
@@ -2727,6 +2799,7 @@ def _recompute_spread_movement_stats(sport='MLB'):
 
     with _MOVEMENT_LOCK:
         _SPREAD_MOVEMENT_STATS[sport] = new_stats
+    _save_calib_snapshot('spread_movement_stats', sport, new_stats)
     _nonzero = {k: v for k, v in new_stats.items() if v['n']}
     print(f'[spread-movement-stats] {sport} recomputed: {_nonzero}', flush=True)
 
@@ -8877,6 +8950,40 @@ def _recompute_all_calibration(sport):
     _recompute_spread_confidence_tiers(sport)
 
 
+def _load_all_calibration_snapshots():
+    """Seeds every in-memory calibration global below from its last
+    persisted snapshot (see _save_calib_snapshot/_load_calib_snapshot) —
+    plain file reads, milliseconds total across every sport. Called
+    synchronously at startup in place of _recompute_all_calibration(), which
+    re-scans every resolved GamePrediction for every sport and used to be
+    what made boot (and the first real requests, sharing the same process)
+    slow. _recompute_all_calibration() still runs — just from the background
+    warm cycle / hourly cron, same as every refresh after the first always
+    has — so values here are "as of the last recompute", not stale forever.
+    A target dict is left untouched (its recompute_* default) for a sport
+    with no snapshot file yet, e.g. the very first boot ever."""
+    targets = [
+        ('cons_calib',              _CONS_CALIB,              _CONS_CALIB_LOCK),
+        ('prob_calibration',        _PROB_CALIBRATION,        _PROB_CALIB_LOCK),
+        ('confidence_tiers',        _CONFIDENCE_TIERS,        _CONFIDENCE_TIERS_LOCK),
+        ('spread_confidence_tiers', _SPREAD_CONFIDENCE_TIERS, _SPREAD_CONFIDENCE_TIERS_LOCK),
+        ('omen_weights',            _OMEN_WEIGHTS,             _OMEN_LOCK),
+        ('spread_omen_weights',     _SPREAD_OMEN_WEIGHTS,      _OMEN_LOCK),
+        ('unified_rank_stats',      _UNIFIED_RANK_STATS,       _UNIFIED_RANK_LOCK),
+        ('movement_weights',        _MOVEMENT_WEIGHTS,         _MOVEMENT_LOCK),
+        ('movement_stats',          _MOVEMENT_STATS,           _MOVEMENT_LOCK),
+        ('spread_movement_stats',   _SPREAD_MOVEMENT_STATS,    _MOVEMENT_LOCK),
+    ]
+    for name, target, lock in targets:
+        snap = _load_calib_snapshot(name)
+        if not snap:
+            continue
+        with lock:
+            target.update(snap)
+    print(f'[calib-snapshot] loaded {sum(1 for _, t, _ in targets if t)} '
+          f'calibration dict(s) from disk', flush=True)
+
+
 def _refit_mlb_platt():
     """Load resolved MLB predictions from DB and refit Platt scaler."""
     with app.app_context():
@@ -9149,11 +9256,16 @@ def _start_cache_warmer():
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
 
-    # Calibrations are fast (DB-only) — run synchronously so the first page load
-    # sees correct Platt scaling, grade adjustments, and Omen Score weights.
-    _refit_mlb_platt()
-    for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
-        _recompute_all_calibration(_sport)
+    # Load each calibration dict's last-persisted snapshot synchronously —
+    # plain file reads, so the first page load already has real (if
+    # slightly stale) Omen Score weights, grade adjustments, and confidence
+    # tiers, without paying for the full re-scan _recompute_all_calibration
+    # does (that used to run right here, synchronously, and was slow enough
+    # to make early page loads after a restart visibly stall). Platt scaling
+    # and the real recompute both still happen — just from the background
+    # _startup() thread below, same as every refresh after the first always
+    # has.
+    _load_all_calibration_snapshots()
 
     # API cache warming and outcome resolution are slow (network calls) — run in background.
     def _startup():
@@ -9168,6 +9280,34 @@ def _start_cache_warmer():
             _recompute_all_calibration(_sport)
     threading.Thread(target=_startup, daemon=True, name='warm-startup').start()
 
+
+_scheduler_lock_fh = None  # module-level so the held flock survives for the process's life
+
+
+def _is_scheduler_leader():
+    """True for exactly one gunicorn worker process in this container,
+    using a non-blocking flock on a file under the shared /data volume —
+    the APScheduler cron jobs and the background _startup() thread above do
+    real network calls (odds fetches, ESPN scoreboards) and DB writes, so
+    running them once per worker instead of once per container would
+    multiply API usage and write contention by the worker count for no
+    benefit (every worker reads the same calibration snapshots either way —
+    see _load_all_calibration_snapshots). The OS releases the lock
+    automatically when the holding process exits/dies, so a killed leader
+    never wedges this permanently; the next restart's workers just race for
+    it again."""
+    import fcntl
+    lock_path = os.path.join(os.path.dirname(_DB_PATH), '.scheduler.lock')
+    try:
+        fh = open(lock_path, 'w')
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    global _scheduler_lock_fh
+    _scheduler_lock_fh = fh  # keep the fd open — closing it drops the lock
+    return True
+
+
 # Only start the warmer in the actual server process, not during testing or
 # when Flask's dev-server reloader spawns a child process, and not when
 # app.py is imported for its models/db by an offline script (e.g.
@@ -9179,7 +9319,15 @@ def _start_cache_warmer():
 # every backfill run" moving-target bug this guard exists to stop.
 if (os.environ.get('WERKZEUG_RUN_MAIN') != 'false'
         and not os.environ.get('DISABLE_STARTUP_TASKS')):
-    _start_cache_warmer()
+    if _is_scheduler_leader():
+        _start_cache_warmer()
+    else:
+        # A sibling worker already owns the scheduler/cache-warmer for this
+        # container — still load the calibration snapshots that worker (or
+        # a previous run) already wrote, so this worker's requests see real
+        # numbers instead of empty defaults.
+        _load_all_calibration_snapshots()
+        print('[startup] scheduler/cache-warmer already owned by another worker — skipping', flush=True)
 
 
 if __name__ == '__main__':
