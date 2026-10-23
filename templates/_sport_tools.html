@@ -23,6 +23,10 @@
         ('simulations', '🎲 Simulations', 'nfl_simulations_page'),
         ('defense', '🛡️ Defense', 'nfl_defense_page'),
     ],
+    'NBA': [
+        ('schedule', '🏀 Schedule', 'nba_schedule'),
+        ('simulations', '🎲 Simulations', 'nba_simulations_page'),
+    ],
 } %}
 {% set _tools = _sport_tools.get(current_sport, []) %}
 {% if _tools|length > 1 %}

@@ -1,6 +1,6 @@
 {# Market-vs-model chips — replaces the old single ML "confidence bobber"
-   (_quick_edge_row.html) with three at-a-glance chips (ML / Spread / Total)
-   plus an expandable table+track view, matching game-card-v2.html.
+   (_quick_edge_row.html) with at-a-glance chips (ML / Spread) plus an
+   expandable table+track view, matching game-card-v2.html.
 
    Deliberately quiet styling: no glow/gradient/"BEST EDGE" tag, small
    regular-weight numbers, thin grey pips. An edge of MC_HOT points or more
@@ -10,24 +10,14 @@
    ML always compares a real model number against the market. Spread's
    model side is a rough proxy (spread_proxy.py) derived from win
    probability — weaker than the market's own line in every sport tested,
-   framed quietly rather than as a sharper number. Total now has a real
-   model in all 6 sports, at very different quality levels — pace-adjusted
-   on NBA/WNBA (bball_total_model.py) and NFL/CFB (football_total_model.py,
-   R² 0.09-0.27), opponent-adjusted scoring-environment on MLB (starter
-   ERA vs team offense, mlb_total_model.py, R²=0.05) and NHL (goals-for/
-   against, hockey_total_model.py, R²=0.032) — the latter two are
-   genuinely weaker fits, shipped anyway on request, not because they
-   cleared the same bar the other four did.
+   framed quietly rather than as a sharper number.
 
    Expects `game` in context, with `game.sport` set by each sport's API
-   module's game-dict builder, and `game.total_model` present whenever
-   that sport's predict_total() found the inputs it needs (pace data for
-   NBA/WNBA/NFL/CFB; team RPG + probable starter ERA for MLB; GF/GA for
-   NHL). #}
+   module's game-dict builder. #}
 {% if game.status == 'Final' and game.graded %}
 <div class="mc-wrap">
     <div class="mc-chips">
-        {% for key, label in [('ml', 'ML'), ('spread', 'SPREAD'), ('total', 'TOTAL')] %}
+        {% for key, label in [('ml', 'ML'), ('spread', 'SPREAD')] %}
         {% set g = game.graded.get(key) %}
         <div class="mc-chip mc-result{{ '' if not g else (' mc-result-push' if g.won is none else (' mc-result-win' if g.won else ' mc-result-loss')) }}">
             <span class="mc-t">{{ label }}</span>
@@ -171,70 +161,19 @@
 {% endif %}
 {% endif %}
 
-{# ---------------- Total ----------------
-   NBA/WNBA have a real model now (bball_total_model.py — pace-adjusted
-   O/U, see its docstring for validation numbers). Every other sport still
-   has zero total signal, so this falls back to the same market-only "no
-   model yet" state it always has. #}
-{% set mc_tot_has = game.odds and game.odds.total_line is not none %}
-{% set mc_tot_model_ok = game.total_model and game.total_model.total_projection is not none %}
-{% if mc_tot_has %}
-{% set mc_tot_vf = vig_free_pair(game.odds.over_odds, game.odds.under_odds) if (game.odds.over_odds is not none and game.odds.under_odds is not none) else (none, none) %}
-{% set mc_tot_over_pct = mc_tot_vf[0] * 100 if mc_tot_vf[0] is not none else none %}
-{% set mc_tot_model_over_raw = total_over_prob(game.sport, game.total_model.total_projection, game.odds.total_line) if game.total_model else none %}
-{% set mc_tot_ok = mc_tot_over_pct is not none and mc_tot_model_over_raw is not none %}
-
-{% if mc_tot_ok %}
-{% set mc_tot_model_over_pct = mc_tot_model_over_raw * 100 %}
-{% set mc_tot_conf = ([mc_tot_model_over_pct, 100 - mc_tot_model_over_pct] | max) %}
-{# Thresholds come from total_confidence_tiers(game.sport) (app.py) — each
-   sport's own percentile cutoffs over its actual total_over_prob history,
-   same idea as the ML/Spread chips. Self-updates as total picks resolve
-   (_recompute_total_confidence_tiers); total-pick grading only started
-   recently so this reliably falls back to the flat 65%/55% default until
-   enough games have gone Final. #}
-{% set mc_tot_ct = total_confidence_tiers(game.sport) %}
-{% set mc_tot_conf_raw = 'high' if mc_tot_conf >= mc_tot_ct.high else ('medium' if mc_tot_conf >= mc_tot_ct.medium else 'low') %}
-{# No in-app graded sample exists yet for totals (see total_confidence_tier's
-   docstring) — this caps the raw number by each model's known pre-ship fit
-   quality instead, same reasoning as spread_validated() above. #}
-{% set mc_tot_conf_level = total_confidence_tier(game.sport, mc_tot_conf_raw) %}
-{% set mc_tot_validated = mc_tot_conf_level != 'unproven' %}
-{% set mc_tot_conf_pips = 6 if mc_tot_conf >= mc_tot_ct.pips[4] else (5 if mc_tot_conf >= mc_tot_ct.pips[3] else (4 if mc_tot_conf >= mc_tot_ct.pips[2] else (3 if mc_tot_conf >= mc_tot_ct.pips[1] else (2 if mc_tot_conf >= mc_tot_ct.pips[0] else 1)))) %}
-{# Side shown is whichever way the market currently leans, not whichever
-   way the model likes better — a model that likes the market's side less
-   shows up as negative points instead of quietly flipping to the other side. #}
-{% if mc_tot_over_pct >= 50 %}
-{% set mc_tot_side_over = true %}
-{% set mc_tot_mkt_pct = mc_tot_over_pct %}
-{% set mc_tot_mdl_pct = mc_tot_model_over_pct %}
-{% else %}
-{% set mc_tot_side_over = false %}
-{% set mc_tot_mkt_pct = 100 - mc_tot_over_pct %}
-{% set mc_tot_mdl_pct = 100 - mc_tot_model_over_pct %}
-{% endif %}
-{% set mc_tot_pts = mc_tot_mdl_pct - mc_tot_mkt_pct %}
-{% else %}
-{# No model for this sport — tap target just follows whichever side the
-   market itself currently favors, same honesty as the "no model yet" label. #}
-{% set mc_tot_side_over = (mc_tot_over_pct is none) or (mc_tot_over_pct >= 50) %}
-{% endif %}
-
-{% endif %}
-
 {# Per-market movement direction, folded into each chip's own header
-   (replaces "ML"/"SPREAD"/"TOTAL" with e.g. "ML ▲ TOWARD" when a pre-game
+   (replaces "ML"/"SPREAD" with e.g. "ML ▲ TOWARD" when a pre-game
    odds-movement classification exists for that market) instead of a
    separate row below the chips. Pulls from odds_history.classify_movement/
-   classify_spread_movement/classify_total_movement via game.movement_profile
-   etc., plus that pattern's real historical win-loss record (movement_stat()/
-   spread_movement_stat()/total_movement_stat(), app.py) — shown in the
-   tooltip rather than inline, same reasoning as before: "toward pick"/
-   "away from pick" is relative to whichever side THIS game's pick is, and
-   the record is a league-wide stat across every {sport} pick that ever
-   showed this exact pattern, not specific to either team in this game.
-   Falls back to the plain label when there's no profile yet, or it's
-   no_data/static/flat (nothing with a direction to show). #}
+   classify_spread_movement via game.movement_profile etc., plus that
+   pattern's real historical win-loss record (movement_stat()/
+   spread_movement_stat(), app.py) — shown in the tooltip rather than
+   inline, same reasoning as before: "toward pick"/"away from pick" is
+   relative to whichever side THIS game's pick is, and the record is a
+   league-wide stat across every {sport} pick that ever showed this exact
+   pattern, not specific to either team in this game. Falls back to the
+   plain label when there's no profile yet, or it's no_data/static/flat
+   (nothing with a direction to show). #}
 {% macro move_header(label, profile, stat) %}
 {% set dir = 'for' if profile and profile.endswith('_for') else ('against' if profile and profile.endswith('_against') else none) %}
 {% if dir and profile not in ('no_data', 'static') %}
@@ -248,14 +187,14 @@
 {% endmacro %}
 
 {% set mc_show_factors_on = mc_show_factors is defined and mc_show_factors %}
-{% set mc_factors_default = ('ml' if ml_factors_panel(game) else ('spread' if spread_factors_panel(game) else ('total' if total_factors_panel(game) else none))) if mc_show_factors_on else none %}
+{% set mc_factors_default = ('ml' if ml_factors_panel(game) else ('spread' if spread_factors_panel(game) else none)) if mc_show_factors_on else none %}
 <div class="mc-wrap">
     <div class="mc-chips">
         {# ML — surfaces the "Model Factors" panel directly below the chips
            instead of jumping straight to the bet slip (the bet is still one
            tap away from there, once you've seen why the model says what it
            says). The clicked chip IS the tab switcher for that panel now —
-           no separate ML/Spread/Total tab row. #}
+           no separate ML/Spread tab row. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}{{ ' mc-chip-active' if mc_factors_default == 'ml' }}" data-mc-kind="ml" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
             {{ move_header('ML', game.movement_profile, movement_stat(game.movement_profile, game.sport)) }}
             {% if mc_ml_has %}
@@ -281,32 +220,6 @@
             {% if mc_sp_fd_label %}
             <span class="mc-foot">{{ mc_sp_fd_label }}</span>
             {% endif %}
-            {% else %}
-            <span class="mc-big mc-dash">—</span>
-            <span class="mc-side mc-side-muted">no line</span>
-            {% endif %}
-        </div>
-        {# Total — real pace-adjusted model on NBA/WNBA (bball_total_model.py);
-           every other sport stays market-only, tap target following
-           whichever side the market itself currently favors. Switches the
-           shared factors panel (_factors_panel.html) to its "Total" tab —
-           totals don't share the ML win-prob model's factor list. #}
-        <div class="mc-chip{{ ' mc-confidence-' ~ mc_tot_conf_level if mc_tot_ok }}{{ ' mc-hot' if mc_tot_ok and mc_tot_validated and mc_tot_pts >= MC_HOT }}{{ '' if mc_tot_ok else ' mc-chip-marketonly' }}{{ ' mc-tappable' if mc_tot_has }}{{ ' mc-chip-active' if mc_factors_default == 'total' }}" data-mc-kind="total" title="{% if mc_tot_ok %}{% if mc_tot_validated %}Model confidence: {{ mc_tot_conf | round(1) }}%{% else %}Unproven for {{ game.sport }}: this total model's pre-ship fit is weak and it has no live-graded track record yet — treat with caution{% endif %}{% elif mc_tot_has %}No total model confidence{% else %}No total line{% endif %}"{% if mc_tot_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'total')"{% endif %}>
-            {{ move_header('TOTAL', game.total_movement_profile, total_movement_stat(game.total_movement_profile, game.sport)) }}
-            {% if mc_tot_model_ok %}
-            <span class="mc-big">{{ game.total_model.total_projection | round | int }}</span>
-            <span class="mc-side">{% if mc_tot_has %}{{ 'OVER' if game.total_model.total_projection > game.odds.total_line else ('UNDER' if game.total_model.total_projection < game.odds.total_line else 'PUSH') }}{% else %}Model proj{% endif %}</span>
-            {% if mc_tot_ok %}
-            <span class="mc-pips">{% for i in range(6) %}<i class="{{ 'on' if i < mc_tot_conf_pips }}"></i>{% endfor %}</span>
-            {% endif %}
-            {% if mc_tot_has %}
-            <span class="mc-foot">{{ game.odds.total_line }}</span>
-            {% endif %}
-            {% elif mc_tot_has %}
-            <span class="mc-big mc-big-plain">{{ game.odds.total_line }}</span>
-            <span class="mc-side">O/U</span>
-            <span class="mc-foot">{% if mc_tot_over_pct is not none %}O {{ mc_tot_over_pct | round(1) }}%{% endif %}</span>
-            <span class="mc-side mc-side-muted mc-nomodel">no model yet</span>
             {% else %}
             <span class="mc-big mc-dash">—</span>
             <span class="mc-side mc-side-muted">no line</span>
@@ -368,35 +281,6 @@
                     <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(mc_sp_mdl_home) }}%"></div>
                 </div>
                 <div class="mc-ends"><span>{{ mc_sp_away_label }}</span><span>{{ mc_sp_home_label }}</span></div>
-            </div>
-            {% endif %}
-
-            {# Total row — real model + edge on NBA/WNBA, market-only elsewhere #}
-            <div class="mc-row">
-                <span class="mc-lbl">TOTAL</span>
-                {% if mc_tot_ok %}
-                <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{{ mc_tot_over_pct | round(1) }}% over</div></div>
-                <div><div class="mc-val mc-mdl">{{ game.total_model.total_projection | round | int }} proj</div><div class="mc-sub{{ ' mc-unproven' if not mc_tot_validated }}">{% if not mc_tot_validated %}model (unproven){% elif game.total_model.pace is defined %}pace {{ game.total_model.pace }}{% else %}model{% endif %}</div></div>
-                <span class="mc-edge{{ ' mc-hot' if mc_tot_validated and mc_tot_pts >= MC_HOT }}">{{ 'O' if mc_tot_side_over else 'U' }} {{ '+' if mc_tot_pts >= 0 }}{{ mc_tot_pts | round(1) }}</span>
-                {% elif mc_tot_has %}
-                <div><div class="mc-val mc-mkt">{{ game.odds.total_line }}</div><div class="mc-sub">{% if mc_tot_over_pct is not none %}{{ mc_tot_over_pct | round(1) }}% over{% endif %}</div></div>
-                <div><div class="mc-val mc-dash">—</div><div class="mc-sub">no model yet</div></div>
-                <span></span>
-                {% else %}
-                <div class="mc-sub" style="grid-column:2/4;">No total posted</div><span></span>
-                {% endif %}
-            </div>
-            {% if mc_tot_has %}
-            <div class="mc-track-wrap">
-                <div class="mc-track"><div class="mc-bar"></div><div class="mc-mid"></div>
-                    {% if mc_tot_over_pct is not none %}
-                    <div class="mc-dot mc-dot-m" style="left:{{ chip_track_pos(mc_tot_over_pct) }}%"></div>
-                    {% endif %}
-                    {% if mc_tot_ok %}
-                    <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(mc_tot_model_over_pct) }}%"></div>
-                    {% endif %}
-                </div>
-                <div class="mc-ends"><span>UNDER</span><span>OVER</span></div>
             </div>
             {% endif %}
 

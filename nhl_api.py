@@ -7,7 +7,6 @@ from dt_fmt import fmt as _fmt
 import odds_api
 import injuries_api
 import nhl_model
-import hockey_total_model
 import nhl_boxscore_api
 import nhl_stats_db
 import nhl_player_model
@@ -777,32 +776,6 @@ def build_schedule_context(target_date=None):
             except Exception:
                 model['blended'] = False
 
-        # Opponent-adjusted goals total — see hockey_total_model.py. No new
-        # fetch needed, GF/GA-per-game are already computed above for the
-        # win-prob model. Uses blend_gf_pg/blend_ga_pg the same way
-        # nhl_model.predict() does (falls back to raw gf_pg/ga_pg once a
-        # team has played EARLY_SEASON_GAMES) — same fix as the other
-        # sports' total_inputs blocks. total_inputs is stashed alongside
-        # the projection so a future total-model recalibration can replay
-        # this exact game.
-        home_gf_pg = home.get('blend_gf_pg', home.get('gf_pg'))
-        home_ga_pg = home.get('blend_ga_pg', home.get('ga_pg'))
-        away_gf_pg = away.get('blend_gf_pg', away.get('gf_pg'))
-        away_ga_pg = away.get('blend_ga_pg', away.get('ga_pg'))
-        total_inputs = {
-            'home_gf_pg': home_gf_pg, 'home_ga_pg': home_ga_pg,
-            'away_gf_pg': away_gf_pg, 'away_ga_pg': away_ga_pg,
-        }
-        try:
-            total_model = hockey_total_model.predict_total(
-                home_gf_pg, home_ga_pg, away_gf_pg, away_ga_pg)
-        except Exception:
-            total_model = None
-        try:
-            total_model_breakdown = hockey_total_model.factor_breakdown(**total_inputs)
-        except Exception:
-            total_model_breakdown = None
-
         # Playoff series context
         series_info = None
         ss = game.get('seriesStatus')
@@ -835,9 +808,6 @@ def build_schedule_context(target_date=None):
             'live_clock':    (live_clocks.get(game.get('id')) or _period_label(game.get('periodDescriptor'))) if status == 'Live' else '',
             'sport':         'NHL',
             'model':         model,
-            'total_model':   total_model,
-            'total_model_breakdown': total_model_breakdown,
-            'total_inputs':  total_inputs,
             'odds':          game_odds,
             'bet_name':      f"{a_ab} @ {h_ab}",
             'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",

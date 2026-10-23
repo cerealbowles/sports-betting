@@ -73,12 +73,12 @@
     {% set eb_schedule_endpoint = 'mlb_schedule' if eb_sport == 'MLB' else ('nba_schedule' if eb_sport == 'NBA' else ('nfl_schedule' if eb_sport == 'NFL' else ('nhl_schedule' if eb_sport == 'NHL' else ('wnba_schedule' if eb_sport == 'WNBA' else ('cfb_schedule' if eb_sport == 'CFB' else none))))) %}
     {% set eb_game_url = (url_for(eb_schedule_endpoint) ~ '#gc-' ~ b.game_key) if eb_schedule_endpoint and b.game_key else none %}
     {% set eb_type = (b.bet_type or 'Moneyline') | lower %}
-    {% set eb_type_class = 'ml' if 'money' in eb_type else ('spread' if 'spread' in eb_type else ('total' if ('over' in eb_type or 'under' in eb_type) else 'other')) %}
-    {% set eb_label = 'ML' if eb_type_class == 'ml' else ('SPREAD' if eb_type_class == 'spread' else ('TOTAL' if eb_type_class == 'total' else 'BET')) %}
+    {% set eb_type_class = 'ml' if 'money' in eb_type else ('spread' if 'spread' in eb_type else 'other') %}
+    {% set eb_label = 'ML' if eb_type_class == 'ml' else ('SPREAD' if eb_type_class == 'spread' else 'BET') %}
     <div class="bet-card game-card" data-sport="{{ b.sport or '' }}" id="gc-bet-{{ b.id }}">
       <div class="bc-head bc-flip" role="button" tabindex="0" aria-label="Flip card to manage this bet">
         <!-- Header bar — same look as the schedule cards: time (or Live/Final) left, CLV / live win% right.
-             The bet-type badge sits right next to the time so ML/Spread/Total reads at a glance without
+             The bet-type badge sits right next to the time so ML/Spread reads at a glance without
              expanding the card — otherwise every open bet just looks like a plain matchup. -->
         <div class="game-header">
             <span class="bc-status" data-bet-id="{{ b.id }}"></span>
@@ -99,7 +99,7 @@
     <div class="bc-front-body bc-flip" role="button" tabindex="0" data-game-url="{{ eb_game_url or '' }}" aria-label="View game card for {{ b.name }}">
 
         {# Market-vs-model: same mc-chip box + mc-fold look as the schedule
-           card's ML/Spread/Total row (_market_chips.html) — a single
+           card's ML/Spread row (_market_chips.html) — a single
            colored chip (border/number tint by confidence tier) for this
            bet's own type, plus the same collapsible track underneath,
            instead of the old flat mc-table row.
@@ -119,17 +119,17 @@
         {% set eb_hi = ([chip_track_pos(eb_mkt_pct), chip_track_pos(eb_mdl_pct)] | max) %}
         {% set eb_hot = eb_edge is not none and eb_edge | abs >= 3.0 %}
         {% set eb_conf = ([eb_mdl_pct, 100 - eb_mdl_pct] | max) %}
-        {# Same per-sport tier calibration the schedule pages use (app.py) instead
-           of a flat 65/55 guess — confidence_tiers() for ML, total_confidence_tiers()
-           for Spread/Total (both read as a 0-100% distance-from-50 the same way
-           total_over_prob does; there's no separate points-based spread tier here
-           since this card's eb_conf is always a probability, never raw margin
-           points — spread_confidence_tiers() is in a different unit and would be
-           a unit-mismatch bug if applied directly to eb_conf). #}
-        {% set eb_ct = confidence_tiers(b.sport) if eb_type_class == 'ml' else total_confidence_tiers(b.sport) %}
+        {# Same per-sport tier calibration the schedule pages use (app.py) —
+           confidence_tiers() reads as a 0-100% distance-from-50 the same way
+           for both ML and Spread here; there's no separate points-based
+           spread tier in this card since eb_conf is always a probability,
+           never raw margin points — spread_confidence_tiers() is in a
+           different unit and would be a unit-mismatch bug if applied
+           directly to eb_conf). #}
+        {% set eb_ct = confidence_tiers(b.sport) %}
         {% set eb_conf_level = 'high' if eb_conf >= eb_ct.high else ('medium' if eb_conf >= eb_ct.medium else 'low') %}
         {% set eb_conf_pips = 6 if eb_conf >= eb_ct.pips[4] else (5 if eb_conf >= eb_ct.pips[3] else (4 if eb_conf >= eb_ct.pips[2] else (3 if eb_conf >= eb_ct.pips[1] else (2 if eb_conf >= eb_ct.pips[0] else 1)))) %}
-        {% set eb_line = b.name | bet_line_value if eb_type_class in ('spread', 'total') else none %}
+        {% set eb_line = b.name | bet_line_value if eb_type_class == 'spread' else none %}
         <div class="mc-wrap eb-typerow">
             <div class="mc-chips" style="grid-template-columns:1fr;">
                 <div class="mc-chip mc-confidence-{{ eb_conf_level }}{{ ' mc-hot' if eb_hot }}">
@@ -158,11 +158,7 @@
                 <div class="mc-table">
                     <div class="mc-row">
                         <span class="mc-lbl">{{ eb_label }}</span>
-                        {% if eb_type_class == 'total' %}
-                        <div><div class="mc-val mc-mkt">{{ eb_pill.split(' ')[-1] }}</div><div class="mc-sub">{{ eb_mkt_pct | round(1) }}% {{ 'over' if eb_pill.startswith('O') else 'under' }}</div></div>
-                        {% else %}
                         <div><div class="mc-val mc-mkt">{% if b.original_american is not none %}{{ '+' if b.original_american > 0 }}{{ b.original_american }}{% else %}{{ eb_pill }}{% endif %}</div><div class="mc-sub">{{ eb_mkt_pct | round(1) }}% implied</div></div>
-                        {% endif %}
                         <div><div class="mc-val mc-mdl">{{ eb_mdl_pct | round(1) }}%</div><div class="mc-sub">{{ 'cover (proxy)' if eb_type_class == 'spread' else 'model' }}</div></div>
                         <span class="mc-edge{{ ' mc-hot' if eb_hot }}">{{ eb_pill.split(' ')[0] }} {{ '+' if eb_edge >= 0 }}{{ eb_edge | round(1) }}</span>
                     </div>
@@ -173,12 +169,8 @@
                             <div class="mc-dot mc-dot-o" style="left:{{ chip_track_pos(eb_mdl_pct) }}%"></div>
                         </div>
                         <div class="mc-ends">
-                            {% if eb_type_class == 'total' %}
-                            <span>UNDER</span><span>OVER</span>
-                            {% else %}
                             <span><span class="bc-away-abbr" data-bet-id="{{ b.id }}"></span></span>
                             <span><span class="bc-home-abbr" data-bet-id="{{ b.id }}"></span></span>
-                            {% endif %}
                         </div>
                     </div>
                     <div class="mc-legend">

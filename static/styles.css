@@ -1184,7 +1184,7 @@ body.embed-mode .container { padding-bottom: 0; }
   --mc-edge-bg: rgba(168,240,122,0.14);
   --mc-neutral-bg: rgba(148,163,184,0.12);
 }
-.mc-chips { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.mc-chips { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; }
 .mc-chip .mc-t-move {
   padding: 1px 7px; border-radius: 999px; letter-spacing: 0.02em;
 }

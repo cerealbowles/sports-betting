@@ -1,7 +1,7 @@
 {# Shared diverging-bar ("bobber") chart — renders whatever `panel` dict
-   ml_factors_panel()/spread_factors_panel()/total_factors_panel() built
-   (app.py). One chart implementation for all three tabs instead of three
-   near-duplicate ones; only the data feeding it differs.
+   ml_factors_panel()/spread_factors_panel() built (app.py). One chart
+   implementation for both tabs instead of two near-duplicate ones; only
+   the data feeding it differs.
    Expects `panel` (the dict) and `title` (str) in context. #}
 <div class="factors-header">
     <span class="fd-side-label fd-side-left">{{ panel.neg_label }}</span>

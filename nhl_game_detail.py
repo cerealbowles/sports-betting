@@ -40,7 +40,6 @@ import nhl_api
 import nhl_stats_db
 import nhl_roster_api
 import spread_model
-import hockey_total_model
 
 
 def find_game(game_id):
@@ -56,10 +55,6 @@ def find_game(game_id):
                 if str(g.get('game_id')) == str(game_id):
                     return g, date_str
     return None, None
-
-
-def _phi(x):
-    return gdc.phi(x)
 
 
 def _espn_ids(home_abbrev, away_abbrev, date_str):
@@ -201,39 +196,7 @@ def build_game_detail(game_id):
                         f"Model line {model_side_abbr} {model_side_line:g} vs market {home_abbrev} {home_spread_line:g}."),
             }
 
-    total_model = g.get('total_model') or {}
-    total_proj = total_model.get('total_projection')
-    sigma_total = hockey_total_model.CALIBRATION.get('NHL', (None, None, None))[2]
-    gap_sd_total = gdc.market_gap_sd('NHL', 'total')
-    total_verdict = None
-    total_line = odds.get('total_line')
-    over_price = odds.get('over_odds')
-    under_price = odds.get('under_odds')
-    if total_proj is not None and total_line is not None and sigma_total and over_price and under_price:
-        over_prob = _phi((total_proj - total_line) / sigma_total)
-        under_prob = 1 - over_prob
-        ev_over = gm.ev(over_prob, gm.net_payout_b(over_price))
-        ev_under = gm.ev(under_prob, gm.net_payout_b(under_price))
-        fav_over = ev_over >= ev_under
-        side_prob = over_prob if fav_over else under_prob
-        side_price = over_price if fav_over else under_price
-        ev = ev_over if fav_over else ev_under
-        is_outlier = gm.outlier_guard(total_proj, total_line, gap_sd_total) if gap_sd_total else False
-        if side_price is not None:
-            units = 0.0 if is_outlier else gm.kelly_units(side_prob, gm.net_payout_b(side_price))
-            tag = gm.tag_for(ev, 3, is_outlier)
-            total_verdict = {
-                'market': 'TOTAL', 'tag': tag,
-                'pick': f"{'OVER' if fav_over else 'UNDER'} {total_line:g}",
-                'price': side_price, 'mkt': f"{total_line:g}", 'model': f"{total_proj:g}",
-                'edge': f"{abs(total_proj - total_line):.1f} pts", 'ev': f"{ev * 100:+.1f}%",
-                'kelly': ('—' if is_outlier else f"{units:.1f}u"),
-                'why': ("Model is well outside its historical total error band — verify inputs before betting."
-                        if is_outlier else
-                        f"Model total {total_proj:g} vs market {total_line:g}."),
-            }
-
-    verdicts = [v for v in (ml_verdict, spread_verdict, total_verdict) if v]
+    verdicts = [v for v in (ml_verdict, spread_verdict) if v]
 
     home_espn_id, away_espn_id = _espn_ids(home_abbrev, away_abbrev, date_str)
 
@@ -332,7 +295,6 @@ def build_game_detail(game_id):
             'spread': {'away': {'line': -home_spread_line if home_spread_line is not None else None,
                                   'price': odds.get('away_spread_price')},
                         'home': {'line': home_spread_line, 'price': odds.get('home_spread_price')}},
-            'total': {'line': total_line, 'over_price': odds.get('over_odds'), 'under_price': odds.get('under_odds')},
             'hold_ml': round(hold_ml * 100, 1) if hold_ml is not None else None,
             'novig_home': round(home_novig * 100, 1) if home_novig is not None else None,
             'novig_away': round(away_novig * 100, 1) if away_novig is not None else None,
@@ -340,11 +302,7 @@ def build_game_detail(game_id):
         },
         'model': {
             'p_team_home': p_team, 'p_player_home': p_player, 'p_blend_home': p_blend,
-            'proj_score': ({'away': round((total_proj - spread_margin) / 2, 1),
-                             'home': round((total_proj + spread_margin) / 2, 1)}
-                            if total_proj is not None and spread_margin is not None else None),
             'spread_home': -spread_margin if spread_margin is not None else None,
-            'total': total_proj,
             'confidence': conf_ml,
             'factors': factors,
             'ats_record_when_edge': gdc.ats_record_when_edge('NHL', 1.5),

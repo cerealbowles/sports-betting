@@ -16,7 +16,6 @@ import weather_api
 import mlb_model
 import statcast_api
 import fangraphs_api
-import mlb_total_model
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 
@@ -986,30 +985,6 @@ def build_schedule_context(target_date=None):
             except Exception:
                 model = None
 
-            # Starter/bullpen-adjusted total — see mlb_total_model.py. The
-            # pitcher and bullpen data were already fetched for the win model.
-            # total_inputs is stashed alongside the projection so a future
-            # total-model recalibration can replay this exact game (see
-            # spread_proxy.py's history-fit for the equivalent on spreads).
-            total_inputs = {
-                'home_runs_pg': home.get('runs_pg'), 'home_pitcher': home.get('pitcher'),
-                'away_runs_pg': away.get('runs_pg'), 'away_pitcher': away.get('pitcher'),
-                'home_bullpen': home.get('bullpen'), 'away_bullpen': away.get('bullpen'),
-                'home_recent_rpg': home.get('recent_rpg'), 'away_recent_rpg': away.get('recent_rpg'),
-            }
-            try:
-                total_model = mlb_total_model.predict_total(
-                    home.get('runs_pg'), home.get('pitcher'),
-                    away.get('runs_pg'), away.get('pitcher'),
-                    home.get('bullpen'), away.get('bullpen'),
-                    home.get('recent_rpg'), away.get('recent_rpg'))
-            except Exception:
-                total_model = None
-            try:
-                total_model_breakdown = mlb_total_model.factor_breakdown(**total_inputs)
-            except Exception:
-                total_model_breakdown = None
-
             # Linescore only for games that have actually started
             linescore = None
             raw_ls = game.get('linescore', {}) if status in ('Live', 'Final') else {}
@@ -1052,9 +1027,6 @@ def build_schedule_context(target_date=None):
                 'linescore':     linescore,
                 'weather':       weather_api.get_game_weather(venue, 'mlb'),
                 'sport':         'MLB',
-                'total_model':   total_model,
-                'total_model_breakdown': total_model_breakdown,
-                'total_inputs':  total_inputs,
                 'odds':          game_odds,
                 'model':         model,
                 'bet_name':      f"{away['abbr']} @ {home['abbr']}",

@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 import odds_api
 import wnba_model
-import bball_total_model
 import wnba_roster_api
 import wnba_player_model
 import wnba_ensemble_model
@@ -588,16 +587,9 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
                                away_opp_factor=away_opp_factor)
                            if home_active and away_active else None)
 
-            # PPG-sum proxy for the team-only total — tracking-only input
-            # for the total blend, same caveat as nba_api.py's identical block.
-            home_ppg = home.get('blend_ppg', home.get('ppg'))
-            away_ppg = away.get('blend_ppg', away.get('ppg'))
-            team_total = (home_ppg + away_ppg) if home_ppg is not None and away_ppg is not None else None
-
             ensemble = (wnba_ensemble_model.predict(
                             team_prob, player_pred['home_prob'],
-                            team_margin, player_pred['margin'],
-                            team_total, player_pred['total'])
+                            team_margin, player_pred['margin'])
                         if player_pred and team_margin is not None else None)
 
             model['team_only_prob'] = team_prob
@@ -607,7 +599,6 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
                 model['home_prob'] = ensemble['home_prob']
                 model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
                 model['ensemble_margin'] = ensemble['margin']
-                model['blended_total']   = ensemble.get('total')
         except Exception:
             model['blended'] = False
 
@@ -637,31 +628,6 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
         except Exception:
             pass
 
-    # Pace-adjusted total (O/U) projection — see bball_total_model.py. Uses
-    # blend_ppg/blend_ppg_allowed the same way wnba_model.predict() does
-    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
-    # same fix as nfl_api.py/cfb_api.py/nba_api.py's total_inputs blocks.
-    # total_inputs is stashed alongside the projection so a future
-    # total-model recalibration can replay this exact game.
-    home_ppg         = home.get('blend_ppg', home.get('ppg'))
-    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
-    away_ppg         = away.get('blend_ppg', away.get('ppg'))
-    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
-    total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
-        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
-    }
-    try:
-        total_model = bball_total_model.predict_total(
-            'WNBA', home.get('id'), home_ppg, home_ppg_allowed,
-            away.get('id'), away_ppg, away_ppg_allowed)
-    except Exception:
-        total_model = None
-    try:
-        total_model_breakdown = bball_total_model.factor_breakdown('WNBA', total_model)
-    except Exception:
-        total_model_breakdown = None
-
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
     over_under = espn_odds.get('overUnder')
@@ -682,9 +648,6 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
         'odds':          game_odds,
         'model':         model,
         'lineups':       lineups,
-        'total_model':   total_model,
-        'total_model_breakdown': total_model_breakdown,
-        'total_inputs':  total_inputs,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'linescore':     _parse_linescores(comp) if status != 'Preview' else None,

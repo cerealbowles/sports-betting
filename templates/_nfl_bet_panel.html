@@ -5,8 +5,8 @@
    that sheet (see game_detail.html). Still wrapped in a div carrying the
    .game-card-details class because main.js's openBetSlip()/closeBetSlip()/
    setStakeQuick() all locate the bet-slip via closest('.game-card-details')
-   — keeping that class here means the existing JS and _spread_bet_row.html/
-   _total_bet_row.html keep working with zero changes.
+   — keeping that class here means the existing JS and _spread_bet_row.html
+   keep working with zero changes.
 
    Expects `game` in context (same dict nfl_api._build_game() produces —
    NOT `detail`, the richer page-specific dict game_detail.html otherwise
@@ -47,7 +47,6 @@
         </div>
     </div>
     {% include '_spread_bet_row.html' %}
-    {% include '_total_bet_row.html' %}
 </div>
 
 <!-- ── Inline Moneyline bet slip — opened by the buttons above

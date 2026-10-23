@@ -157,6 +157,8 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
                 'points':   stats.get('points', 0.0),
                 'rebounds': stats.get('totalRebounds', 0.0),
                 'assists':  stats.get('assists', 0.0),
+                'steals':   stats.get('steals', 0.0),
+                'blocks':   stats.get('blocks', 0.0),
                 'fga':      stats.get('fieldGoalsMade-fieldGoalsAttempted', 0.0),
                 'fta':      stats.get('freeThrowsMade-freeThrowsAttempted', 0.0),
                 'tov':      stats.get('turnovers', 0.0),

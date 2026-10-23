@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 import odds_api
 import nba_model
-import bball_total_model
 import nba_roster_api
 import nba_player_model
 import nba_ensemble_model
@@ -557,40 +556,6 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
     except Exception:
         model = None
 
-    # Pace-adjusted total (O/U) projection — separate from the win-prob
-    # model above, needs its own FGA/OREB/TOV/FTA fetch per team (see
-    # bball_total_model.py for why this can't reuse the win-prob factors).
-    # Uses blend_ppg/blend_ppg_allowed the same way nba_model.predict() does
-    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
-    # without it, early-season totals were built off a handful of raw
-    # games per team, which swings PPG/PPG-allowed and the resulting total
-    # projection more than the market's own line does. Same fix as
-    # nfl_api.py/cfb_api.py's total_inputs blocks.
-    # total_inputs is stashed alongside the projection so a future
-    # total-model recalibration can replay this exact game.
-    # Computed BEFORE the ensemble block below (moved 2026-10-16) so its
-    # total_projection is available to feed nba_ensemble_model.predict()'s
-    # total blend as the team-side input — see that call's comment for why
-    # this replaced the old PPG-sum proxy there.
-    home_ppg         = home.get('blend_ppg', home.get('ppg'))
-    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
-    away_ppg         = away.get('blend_ppg', away.get('ppg'))
-    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
-    total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
-        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
-    }
-    try:
-        total_model = bball_total_model.predict_total(
-            'NBA', home.get('id'), home_ppg, home_ppg_allowed,
-            away.get('id'), away_ppg, away_ppg_allowed)
-    except Exception:
-        total_model = None
-    try:
-        total_model_breakdown = bball_total_model.factor_breakdown('NBA', total_model)
-    except Exception:
-        total_model_breakdown = None
-
     # Blend in the player-level signal (nba_player_model.py) via the fitted
     # weights in nba_ensemble_model.py — see nba_ensemble_bootstrap.py for
     # the backtest behind this (2,453 games: 66.7% blended accuracy / 0.2106
@@ -643,18 +608,9 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                                away_opp_factor=away_opp_factor)
                            if home_active and away_active else None)
 
-            # The real pace-adjusted projection (computed above, before this
-            # block) as the team-side total input — see nba_ensemble_model.
-            # TOTAL_FIT's comment: refit 2026-10-16 once this was swapped in
-            # for the earlier PPG-sum proxy, a genuine accuracy improvement
-            # (R² 0.081 -> 0.095 on the point-in-time backtest), not just a
-            # relabeling.
-            team_total = total_model.get('total_projection') if total_model else None
-
             ensemble = (nba_ensemble_model.predict(
                             team_prob, player_pred['home_prob'],
-                            team_margin, player_pred['margin'],
-                            team_total, player_pred['total'])
+                            team_margin, player_pred['margin'])
                         if player_pred and team_margin is not None else None)
 
             model['team_only_prob'] = team_prob
@@ -664,7 +620,6 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
                 model['home_prob'] = ensemble['home_prob']
                 model['away_prob'] = round(1.0 - ensemble['home_prob'], 4)
                 model['ensemble_margin'] = ensemble['margin']
-                model['blended_total']   = ensemble.get('total')
         except Exception:
             # Leave `model` as the team-only prediction — same fallback
             # philosophy as the try/except around nba_model.predict() above.
@@ -733,9 +688,6 @@ def _build_game(event, team_stats, game_log, nba_odds_map, prior_stats=None):
         'odds':          game_odds,
         'model':         model,
         'lineups':       lineups,
-        'total_model':   total_model,
-        'total_model_breakdown': total_model_breakdown,
-        'total_inputs':  total_inputs,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",
         'linescore':     _parse_linescores(comp) if status != 'Preview' else None,

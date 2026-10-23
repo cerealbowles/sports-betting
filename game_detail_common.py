@@ -60,10 +60,6 @@ def line_movement(short_sport, home_name, away_name, game_time_utc):
     return series
 
 
-def phi(x):
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-
 def odds_history_sport_key(short_sport):
     """odds_history rows are written under the Odds-API sport key (e.g.
     'americanfootball_nfl', 'basketball_nba'), not the short key ('nfl',
@@ -95,23 +91,18 @@ def market_gap_sd(sport, market):
                 .all())
     diffs = []
     for r in rows:
+        if r.spread_pick_line is None:
+            continue
         try:
             factors = json.loads(r.factors_json or '[]')
         except (TypeError, ValueError):
             factors = []
         if not factors:
             continue
-        if market == 'spread':
-            if r.spread_pick_line is None:
-                continue
-            margin = spread_model.predict_margin(sport, factors)
-            if margin is None:
-                continue
-            diffs.append(margin - r.spread_pick_line)
-        else:
-            if r.total_pick_line is None or r.total_proj is None:
-                continue
-            diffs.append(r.total_proj - r.total_pick_line)
+        margin = spread_model.predict_margin(sport, factors)
+        if margin is None:
+            continue
+        diffs.append(margin - r.spread_pick_line)
     if len(diffs) < 5:
         return None
     mean = sum(diffs) / len(diffs)

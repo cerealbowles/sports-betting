@@ -1,12 +1,11 @@
-{# Unified Model Factors / Spread Model / Total Model panel — lives directly
-   under the market chips (_market_chips.html) now, with the chips
-   themselves acting as the tab switcher (openModelFactors() in main.js
-   calls switchFactorsTab() on click) instead of this panel owning its own
+{# Unified Model Factors / Spread Model panel — lives directly under the
+   market chips (_market_chips.html) now, with the chips themselves acting
+   as the tab switcher (openModelFactors() in main.js calls
+   switchFactorsTab() on click) instead of this panel owning its own
    separate collapsible + tab row. Expects `game` in context. #}
 {% set mf_ml = ml_factors_panel(game) %}
 {% set mf_sp = spread_factors_panel(game) %}
-{% set mf_tot = total_factors_panel(game) %}
-{% if mf_ml or mf_sp or mf_tot %}
+{% if mf_ml or mf_sp %}
 <div class="factors-panel" id="factors-{{ game.game_key }}">
     {% if mf_ml %}
     <div class="mf-panel" data-mf-panel="ml">
@@ -17,12 +16,6 @@
     {% if mf_sp %}
     <div class="mf-panel" data-mf-panel="spread"{{ ' hidden' if mf_ml }}>
         {% set panel = mf_sp %}{% set title = 'Spread Model' %}
-        {% include "_factor_diverge_panel.html" %}
-    </div>
-    {% endif %}
-    {% if mf_tot %}
-    <div class="mf-panel" data-mf-panel="total"{{ ' hidden' if (mf_ml or mf_sp) }}>
-        {% set panel = mf_tot %}{% set title = 'Total Model' %}
         {% include "_factor_diverge_panel.html" %}
     </div>
     {% endif %}

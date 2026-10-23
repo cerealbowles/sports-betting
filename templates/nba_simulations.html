@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}NBA Game Simulations — Dead Money{% endblock %}
+
+{% block head %}
+<style>
+.sim-perf-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+}
+@media (max-width: 700px) { .sim-perf-grid { grid-template-columns: 1fr 1fr; } }
+
+.sim-starters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 0 14px 10px; }
+@media (max-width: 420px) { .sim-starters { grid-template-columns: 1fr; } }
+.sim-starters h3 {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); margin-bottom: 6px;
+}
+.sim-starter-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+.sim-starter-row:last-child { border-bottom: none; }
+.sim-starter-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-starter-median { font-weight: 700; font-family: var(--font-mono); }
+.sim-tap-hint { text-align: center; font-size: 0.72rem; color: var(--text-muted); padding: 2px 0 10px; }
+
+.sim-subtables { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 10px 0 0; }
+.sim-subtables h3 {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); margin-bottom: 6px;
+}
+.sim-quarter-table { margin-bottom: 14px; }
+.sim-quarter-table th, .sim-quarter-table td { text-align: center; }
+.sim-quarter-table td:first-child, .sim-quarter-table th:first-child { text-align: left; }
+
+.sim-actual-score { margin-top: 4px; opacity: 0.85; }
+.sim-pick-hit { color: var(--win); font-weight: 700; }
+.sim-pick-miss { color: var(--loss); font-weight: 700; }
+.sim-stat-line { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+.sim-stat-actual { color: var(--text); font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+{% set current_sport = 'NBA' %}
+{% include "_sport_pills.html" %}
+{% set active_tool = 'simulations' %}
+{% include "_sport_tools.html" %}
+<h1>Game Simulations</h1>
+<p class="dfs-subhead">Each card: {{ games[0].summary.n_sims if games and games[0].summary else '—' }} full period-by-period simulated games, resampled from real historical NBA scoring and usage-weighted per player, re-run once a day in the background (not live). Win % is from this simulator's own game outcomes, not this app's real betting model — see the methodology note below for what this simulator does and doesn't model. Once a game is Final, its card also shows the real score and each player's actual stat line next to what was predicted.</p>
+
+<div class="week-nav-header">
+    {% if date %}
+    <div class="week-nav-title">{{ date_display or date }}</div>
+    {% else %}
+    <div class="week-nav-title">No games today</div>
+    {% endif %}
+</div>
+
+{% if slate_accuracy and slate_accuracy.games_final %}
+<div class="sim-perf-grid">
+    <div class="stat-card">
+        <div class="stat-label">Win-Pick Accuracy</div>
+        <div class="stat-value" style="color: {% if slate_accuracy.win_pick_accuracy >= 55 %}var(--win){% elif slate_accuracy.win_pick_accuracy < 50 %}var(--loss){% else %}var(--text){% endif %}">{{ slate_accuracy.win_pick_accuracy }}%</div>
+        <div class="stat-sub">{{ slate_accuracy.win_pick_correct }}/{{ slate_accuracy.games_final }} correct so far</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Brier Score</div>
+        <div class="stat-value" style="color: {% if slate_accuracy.brier < 0.22 %}var(--win){% elif slate_accuracy.brier > 0.25 %}var(--loss){% else %}var(--text){% endif %}">{{ slate_accuracy.brier }}</div>
+        <div class="stat-sub">lower is better · 0.25 = random</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Score Error</div>
+        <div class="stat-value">{{ slate_accuracy.mean_abs_score_error if slate_accuracy.mean_abs_score_error is not none else '—' }}</div>
+        <div class="stat-sub">pts/team vs. real final score</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Games Final</div>
+        <div class="stat-value">{{ slate_accuracy.games_final }}</div>
+        <div class="stat-sub">of {{ games | length }} simulated today</div>
+    </div>
+</div>
+{% endif %}
+
+{% if not games %}
+<div class="card offseason-card">
+    <div class="offseason-icon">🎲</div>
+    <div class="offseason-title">No simulated results stored for this date yet</div>
+    <p class="dfs-subhead">The daily background job hasn't run against today's slate yet — check back after 7:45 AM ET, or see the <a href="{{ url_for('nba_schedule') }}" class="refresh-link">live schedule</a> in the meantime.</p>
+</div>
+{% else %}
+
+{% macro starter_rows(starters) %}
+{% for p in starters %}
+<div class="sim-starter-row">
+    <span class="sim-starter-name">{{ p.player_name }}</span>
+    <span class="sim-starter-median">{{ '%.1f' | format(p.sim_median) }}</span>
+</div>
+{% endfor %}
+{% endmacro %}
+
+{% macro player_rows(players) %}
+<table class="table">
+    <thead><tr><th>Player</th><th>Floor</th><th>Median</th><th>Ceiling</th><th>Actual</th></tr></thead>
+    <tbody>
+    {% for p in players %}
+    <tr>
+        <td>
+            {{ p.player_name }}
+            {% if p.stat_compare %}
+            <div class="sim-stat-line">
+                {% for s in p.stat_compare %}<span class="sim-stat-field">{{ '%g' | format(s.pred) }}{{ s.label }}{% if s.actual is not none %} <span class="sim-stat-actual">({{ '%g' | format(s.actual) }})</span>{% endif %}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+            </div>
+            {% endif %}
+        </td>
+        <td>{{ '%.1f' | format(p.sim_min) }}</td>
+        <td><strong>{{ '%.1f' | format(p.sim_median) }}</strong></td>
+        <td>{{ '%.1f' | format(p.sim_max) }}</td>
+        <td>{% if p.actual is not none %}<strong>{{ '%.1f' | format(p.actual) }}</strong>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}
+
+<div class="games-grid">
+{% for g in games %}
+<div class="card game-card sim-game-card" id="gc-sim-{{ g.game_id }}">
+    <div class="game-card-summary" role="button" tabindex="0" aria-label="View full breakdown for {{ g.away.abbrev }} at {{ g.home.abbrev }}">
+
+        <div class="game-header">
+            <span class="status-final">SIMULATED</span>
+            <div class="game-header-right">
+                {% if g.summary %}<span class="weather-badge">{{ g.summary.n_sims }} sims{% if g.summary.ties %} · {{ g.summary.ties }} tie{{ 's' if g.summary.ties != 1 }}{% endif %}</span>{% endif %}
+            </div>
+        </div>
+
+        <div class="scoreboard">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ g.away.logo_url }}" alt="{{ g.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.away.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.away_win_pct }}% to win</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="sb-center">
+                {% if g.summary %}
+                <div class="sb-score">
+                    <span class="sb-score-away{{ ' sb-score-win' if g.summary.away_avg_score > g.summary.home_avg_score }}">{{ '%.0f' | format(g.summary.away_avg_score) }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home{{ ' sb-score-win' if g.summary.home_avg_score > g.summary.away_avg_score }}">{{ '%.0f' | format(g.summary.home_avg_score) }}</span>
+                </div>
+                <span class="sb-inning">avg score</span>
+                {% endif %}
+                {% if g.actual_home_score is not none and g.actual_away_score is not none %}
+                <div class="sb-score sim-actual-score">
+                    <span class="sb-score-away{{ ' sb-score-win' if g.actual_away_score > g.actual_home_score }}">{{ '%.0f' | format(g.actual_away_score) }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home{{ ' sb-score-win' if g.actual_home_score > g.actual_away_score }}">{{ '%.0f' | format(g.actual_home_score) }}</span>
+                </div>
+                <span class="sb-inning">actual
+                    {% if g.win_pick_correct is not none %}
+                    <span class="{{ 'sim-pick-hit' if g.win_pick_correct else 'sim-pick-miss' }}">{{ '✓ pick' if g.win_pick_correct else '✗ pick' }}</span>
+                    {% endif %}
+                </span>
+                {% endif %}
+            </div>
+
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.home.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.home_win_pct }}% to win</div>{% endif %}
+                </div>
+                <img class="team-logo" src="{{ g.home.logo_url }}" alt="{{ g.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+        </div>
+
+        <div class="sim-starters">
+            <div>
+                <h3>{{ g.away.abbrev }} top 5 (median pts)</h3>
+                {{ starter_rows(g.away_starters) }}
+            </div>
+            <div>
+                <h3>{{ g.home.abbrev }} top 5 (median pts)</h3>
+                {{ starter_rows(g.home_starters) }}
+            </div>
+        </div>
+        <div class="sim-tap-hint">Tap for full game breakdown ▸</div>
+
+    </div>
+
+    <div class="game-card-details" id="gd-sim-{{ g.game_id }}" hidden>
+        <div class="sheet-game-title">{{ g.away.abbrev }} @ {{ g.home.abbrev }}</div>
+
+        <div class="scoreboard" style="margin-bottom:14px;">
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ g.away.logo_url }}" alt="{{ g.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.away.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.away_win_pct }}% to win</div>{% endif %}
+                </div>
+            </div>
+            <div class="sb-center"></div>
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{{ g.home.name }}</div>
+                    {% if g.summary %}<div class="sb-record">{{ g.summary.home_win_pct }}% to win</div>{% endif %}
+                </div>
+                <img class="team-logo" src="{{ g.home.logo_url }}" alt="{{ g.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+        </div>
+
+        {% if g.summary %}
+        <table class="table sim-quarter-table">
+            <thead><tr><th>Avg score by period</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>Final</th></tr></thead>
+            <tbody>
+            <tr>
+                <td>{{ g.away.abbrev }}</td>
+                {% for q in g.summary.away_period_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                <td><strong>{{ '%.1f' | format(g.summary.away_avg_score) }}</strong></td>
+            </tr>
+            <tr>
+                <td>{{ g.home.abbrev }}</td>
+                {% for q in g.summary.home_period_avg %}<td>{{ '%.1f' | format(q) }}</td>{% endfor %}
+                <td><strong>{{ '%.1f' | format(g.summary.home_avg_score) }}</strong></td>
+            </tr>
+            </tbody>
+        </table>
+        <p style="color: var(--text-muted); font-size: 0.75rem; margin: -6px 0 14px;">Real periods, not an approximation — each period's scoring is resampled directly from real NBA period-by-period scoring history (any overtime is folded into the Q4 column). Player-level numbers are each player's own recent averages plus noise, not resampled play-by-play — see this simulator's own documented scope.</p>
+        {% endif %}
+
+        <div class="sim-subtables">
+            <div>
+                <h3>{{ g.away.name }} (away) — full roster</h3>
+                {{ player_rows(g.away_players) }}
+            </div>
+            <div>
+                <h3>{{ g.home.name }} (home) — full roster</h3>
+                {{ player_rows(g.home_players) }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+</div>
+
+{% endif %}
+
+</div>
+{% endblock %}

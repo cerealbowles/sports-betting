@@ -8,7 +8,6 @@ from dt_fmt import fmt as _fmt
 import odds_api
 import odds_history
 import nfl_model
-import football_total_model
 import nfl_stats_db
 import nfl_boxscore_api
 import nfl_player_model
@@ -832,35 +831,6 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         except Exception:
             model['blended'] = False
 
-    # Pace-adjusted total (O/U) projection — separate from the win-prob
-    # model above, needs its own plays-per-game fetch per team (see
-    # football_total_model.py for why this can't reuse the win-prob factors).
-    # Uses blend_ppg/blend_ppg_allowed the same way nfl_model.predict() does
-    # (falls back to raw ppg once a team has played EARLY_SEASON_GAMES) —
-    # without it, early-season totals were built off 2-3 raw games per team,
-    # which swings PPG/PPG-allowed wildly and produces projections 20+
-    # points off the market total.
-    # total_inputs is stashed alongside the projection so a future
-    # total-model recalibration can replay this exact game.
-    home_ppg         = home.get('blend_ppg', home.get('ppg'))
-    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
-    away_ppg         = away.get('blend_ppg', away.get('ppg'))
-    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
-    total_inputs = {
-        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
-        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
-    }
-    try:
-        total_model = football_total_model.predict_total(
-            'NFL', home.get('id'), home_ppg, home_ppg_allowed,
-            away.get('id'), away_ppg, away_ppg_allowed)
-    except Exception:
-        total_model = None
-    try:
-        total_model_breakdown = football_total_model.factor_breakdown('NFL', total_model)
-    except Exception:
-        total_model_breakdown = None
-
     espn_odds  = (comp.get('odds') or [{}])[0]
     odds_line  = espn_odds.get('details', '')
     over_under = espn_odds.get('overUnder')
@@ -933,9 +903,6 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         'sport':         'NFL',
         'odds':          game_odds,
         'model':         model,
-        'total_model':   total_model,
-        'total_model_breakdown': total_model_breakdown,
-        'total_inputs':  total_inputs,
         'weather':       weather,
         'team_stats':    team_stats,
         'bet_name':      f"{a_ab} @ {h_ab}",

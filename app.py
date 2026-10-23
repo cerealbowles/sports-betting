@@ -40,6 +40,8 @@ import cfb_api
 import cfb_model
 import nba_api
 import nba_model
+import nba_fantasy
+import nba_stats_db
 import nba_game_detail
 import wnba_api
 import wnba_model
@@ -48,10 +50,6 @@ import injuries_api
 import market_edge_calibration
 import spread_proxy
 import spread_model
-import bball_total_model
-import football_total_model
-import hockey_total_model
-import mlb_total_model
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
@@ -811,6 +809,74 @@ class NflSimGame(db.Model):
   __table_args__ = (db.UniqueConstraint('season', 'week', 'game_id', name='uq_nfl_sim_game'),)
 
 
+class NbaSimResult(db.Model):
+  """NBA counterpart to NflSimResult — one player's simulated-fantasy-
+  outcome summary for one upcoming NBA game, written by nba_game_
+  simulator.simulate_slate() from a daily background job
+  (_simulate_nba_slate(), see its cron registration below), never
+  computed on a live request. Keyed by (game_date, player_id) rather
+  than (season, week, player_id) — NBA plays nightly, not weekly, so
+  "today's slate" is the natural rolling-estimate unit here (see
+  nba_game_simulator.py's module docstring for what the simulation does
+  and doesn't model, and nba_stats_db.persist_sim_results_db() for the
+  upsert-overwrites-previous-run convention, same as NflSimResult's).
+
+  No `position` column (NBA roster data in this app has no position
+  field at all — see nba_roster_api.get_roster()'s docstring; /nba/
+  simulations shows players ranked by sim_median rather than grouped
+  into position slots the way /nfl/simulations does)."""
+  __tablename__ = 'nba_sim_results'
+  id              = db.Column(db.Integer, primary_key=True)
+  game_date       = db.Column(db.String(10), nullable=False, index=True)
+  game_id         = db.Column(db.String(20), nullable=False, index=True)
+  team_id         = db.Column(db.String(20), nullable=False, index=True)
+  opponent_id     = db.Column(db.String(20))
+  player_id       = db.Column(db.String(20), nullable=False, index=True)
+  player_name     = db.Column(db.String(80))
+  n_draws         = db.Column(db.Integer, nullable=False)
+  sim_min         = db.Column(db.Float, nullable=False)
+  sim_median      = db.Column(db.Float, nullable=False)
+  sim_max         = db.Column(db.Float, nullable=False)
+  sim_mean        = db.Column(db.Float, nullable=False)
+  sim_draws_json  = db.Column(db.Text)
+  # {field: median/mean} across points/rebounds/assists/steals/blocks/
+  # turnovers — see nba_game_simulator.simulate_matchup()'s 'sim_stats'
+  # output. Lets /nba/simulations compare predicted stat lines, not just
+  # fantasy points, against a Final game's real box score.
+  sim_stats_json  = db.Column(db.Text)
+  computed_at     = db.Column(db.DateTime(timezone=True),
+                               default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('game_date', 'player_id', name='uq_nba_sim_result'),)
+
+
+class NbaSimGame(db.Model):
+  """Team-score-level companion to NbaSimResult's per-player rows — NBA
+  counterpart to NflSimGame, one row per (game_date, game_id). Unlike
+  NflSimGame's 'approximate' quarter breakdown (NFL's simulator has no
+  real game-clock model), this simulator's periods ARE the real
+  resampling unit (see nba_stats_db.get_simulator_quarter_pool_db()), so
+  `period_scores_json` reflects actual simulated period-by-period
+  scoring, not an order-based approximation."""
+  __tablename__ = 'nba_sim_games'
+  id                  = db.Column(db.Integer, primary_key=True)
+  game_date           = db.Column(db.String(10), nullable=False, index=True)
+  game_id             = db.Column(db.String(20), nullable=False, index=True)
+  home_team_id        = db.Column(db.String(20), nullable=False)
+  away_team_id        = db.Column(db.String(20), nullable=False)
+  n_sims              = db.Column(db.Integer, nullable=False)
+  home_wins           = db.Column(db.Integer, nullable=False)
+  away_wins           = db.Column(db.Integer, nullable=False)
+  ties                = db.Column(db.Integer, nullable=False, default=0)
+  home_avg_score      = db.Column(db.Float, nullable=False)
+  away_avg_score      = db.Column(db.Float, nullable=False)
+  period_scores_json  = db.Column(db.Text)
+  computed_at         = db.Column(db.DateTime(timezone=True),
+                                   default=lambda: datetime.now(timezone.utc))
+
+  __table_args__ = (db.UniqueConstraint('game_date', 'game_id', name='uq_nba_sim_game'),)
+
+
 class NflRosterSnapshot(db.Model):
   """DB-persisted cache of nfl_roster_api.get_skill_players(team_id) —
   that module already has its own 24h cache, but it's just a module-level
@@ -1230,13 +1296,12 @@ def _stamp_movement(schedule, sport):
     _stamp_confidence_blend so the correction chains onto its blended prob,
     the same order MLB applies consensus-then-movement in _mlb_candidates.
 
-    Spread/Total: called for every sport including MLB (unlike ML, MLB has
-    no separate spread/total pick engine — _best_market_pick handles spread/
-    total for all 6 sports). These have no final_*-style indirection, so
-    this only classifies+stores game['spread_movement_profile']/
-    'total_movement_profile' for display; _best_market_pick applies the
-    actual correction itself, inline, where it computes pick_prob for each
-    market (see _spread_movement_adjusted_prob/_total_movement_adjusted_prob)."""
+    Spread: called for every sport including MLB (unlike ML, MLB has no
+    separate spread pick engine — _best_market_pick handles spread for all
+    6 sports). This has no final_*-style indirection, so it only
+    classifies+stores game['spread_movement_profile'] for display;
+    _best_market_pick applies the actual correction itself, inline, where
+    it computes pick_prob (see _spread_movement_adjusted_prob)."""
     import odds_history as _oh_mv
     import odds_api as _oa
     odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
@@ -1287,17 +1352,6 @@ def _stamp_movement(schedule, sport):
                     odds_sport_key, home_name, away_name, home_cover >= 0.5, game_start)
                 game['spread_movement_profile'] = sp_profile
                 game['spread_movement_pct'] = sp_pct
-
-            total_model = game.get('total_model')
-            total_line  = odds.get('total_line')
-            if total_model and total_line is not None:
-                proj = _effective_total_projection(game)
-                over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
-                if over_prob is not None:
-                    tot_profile, tot_pct = _oh_mv.classify_total_movement(
-                        odds_sport_key, home_name, away_name, over_prob >= 0.5, game_start)
-                    game['total_movement_profile'] = tot_profile
-                    game['total_movement_pct'] = tot_pct
 
 
 def _historical_confidence_values(sport):
@@ -1391,8 +1445,7 @@ def _confidence_pips(sport, market, pick_prob):
     if pick_prob is None:
         return None
     conf = max(pick_prob, 1 - pick_prob) * 100
-    tiers = {'ml': _confidence_tiers, 'spread': _spread_confidence_tiers,
-              'total': _total_confidence_tiers}[market](sport)
+    tiers = {'ml': _confidence_tiers, 'spread': _spread_confidence_tiers}[market](sport)
     pips = tiers.get('pips') or []
     if len(pips) < 5:
         return None
@@ -1475,226 +1528,6 @@ def _spread_confidence_tiers(sport):
 
 app.jinja_env.globals['spread_confidence_tiers'] = _spread_confidence_tiers
 
-
-# ── Total chip confidence tiers ──────────────────────────────────────────────
-# Same idea again, for the Total chip's confidence metric — distance of
-# total_over_prob from 50%, same 0-100% scale as the ML tiers, but computed
-# from each sport's own history (GamePrediction.total_over_prob/
-# total_went_over) rather than shared with ML's distribution. Independent
-# of total_confidence_tier()'s pre-ship-fit-quality cap ('unproven'/'medium'
-# for the weaker total models) — that cap is applied on top of whichever
-# level these thresholds produce, same as today.
-_TOTAL_CONFIDENCE_TIERS = {}
-_TOTAL_CONFIDENCE_TIERS_LOCK = threading.Lock()
-_DEFAULT_TOTAL_CONFIDENCE_TIERS = {'high': 65.0, 'medium': 55.0, 'pips': [54, 58, 62, 68, 75]}
-
-
-def _recompute_total_confidence_tiers(sport):
-    """Percentile-based high/medium/low cutoffs for the Total chip, from
-    this sport's own resolved games' total_over_prob (stored at pick time
-    via the same _total_over_prob() the live chip calls). Total-pick
-    grading only started recently, so this reliably no-ops (falls back to
-    _DEFAULT_TOTAL_CONFIDENCE_TIERS) until enough games have gone Final —
-    by design, same MIN_N gate as every other tier/calibration pass here."""
-    with app.app_context():
-        resolved = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.total_over_prob.isnot(None),
-        ).all()
-
-    vals = [max(p.total_over_prob, 1 - p.total_over_prob) * 100 for p in resolved]
-
-    MIN_N = 40
-    n = len(vals)
-    if n < MIN_N:
-        return
-
-    vals.sort()
-
-    def _pct(p):
-        return vals[min(int(n * p / 100), n - 1)]
-
-    tiers = {
-        'high':   round(_pct(85), 1),
-        'medium': round(_pct(40), 1),
-        'pips':   [round(_pct(p), 1) for p in (35, 55, 70, 83, 95)],
-        'n': n,
-        'computed_at': datetime.now(timezone.utc).isoformat(),
-    }
-    with _TOTAL_CONFIDENCE_TIERS_LOCK:
-        _TOTAL_CONFIDENCE_TIERS[sport] = tiers
-    print(f'[total-confidence-tiers] {sport} recomputed from {n} games: '
-          f'high>={tiers["high"]} medium>={tiers["medium"]}', flush=True)
-
-
-def _total_confidence_tiers(sport):
-    return _TOTAL_CONFIDENCE_TIERS.get(sport) or _DEFAULT_TOTAL_CONFIDENCE_TIERS
-
-
-app.jinja_env.globals['total_confidence_tiers'] = _total_confidence_tiers
-
-
-# ── Total model periodic auto-refit ──────────────────────────────────────────
-# bball_total_model.CALIBRATION / football_total_model.CALIBRATION /
-# hockey_total_model.CALIBRATION / mlb_total_model.CALIBRATION are each a
-# one-time linear fit (intercept, coef, sigma) from a single past season,
-# per their own docstrings ("Refit periodically — these are one-time fits"),
-# and nothing in this codebase ever did. This adds a second, automatically
-# refit affine correction on top of each sport's existing total_projection —
-# actual_total ≈ a + b*total_projection — fit directly against that sport's
-# own graded total picks (GamePrediction.total_proj/total_actual, both
-# already tracked per game).
-#
-# This deliberately does NOT replay each model's raw pace/ERA/GF-GA inputs
-# to refit the *original* CALIBRATION coefficients from scratch — pace in
-# particular is only cached in-memory with a 6h TTL, so a months-old game's
-# actual pace-at-the-time isn't recoverable, only whatever pace happens to
-# be current now. Composing two affine transforms is itself affine, so
-# fitting a correction on top of the model's own (already-calibrated)
-# output is mathematically equivalent to refitting the original intercept/
-# coef against the raw formula output would have been — same result,
-# without needing anything not already stored per game.
-_TOTAL_MODEL_REFIT = {}   # {sport: {'a': float, 'b': float, 'sigma': float, 'n': int, 'computed_at': str}}
-_TOTAL_MODEL_REFIT_LOCK = threading.Lock()
-
-# Confidence shrink for TOTAL picks, mirroring _recompute_market_edge_shrink's
-# philosophy but measured against REALIZED outcomes instead of the market's
-# own price — this app only has a real historical over/under PRICE going
-# forward (the 2025 odds backfill's total_close rows all carry an assumed
-# -110/-110 placeholder, which would make a market-disagreement comparison
-# degenerate at exactly 50/50 for every backfilled game). Realized outcome
-# is the more direct ground truth anyway: does a game actually go over at
-# the rate the model's over_prob claims?
-#
-# Built 2026-10-16 after NBA's first-ever backtested sample (1,577 games,
-# via nba_total_backfill.py/nba_blended_total_backfill.py) showed something
-# worse than "optimistic" — stated confidence is INVERTED above ~55%:
-#   50-55% stated -> 52.3% actual (fine)
-#   55-60% -> 47.3%   60-65% -> 44.5%   65-70% -> 48.4%
-#   70-75% -> 45.2%   75%+   -> 40.0% (worse than a coin flip)
-# i.e. once this model diverges far from 50%, it's reacting to its own
-# noise (R²=0.095, see nba_ensemble_model.TOTAL_FIT's comment), not real
-# signal — the picks the UI was labeling "STRONG" on huge EV% were coming
-# directly from this broken high-confidence region.
-_TOTAL_EDGE_RATE = {}     # {sport: float} — fraction of excess-over-CAP confidence to pull back toward 50%
-_TOTAL_EDGE_CAP = 0.05    # pp threshold, mirrors market-edge's 10pp style but centered on the 50% baseline
-_TOTAL_EDGE_PRIOR = 0.5   # conservative prior for any sport without enough graded picks yet — pull back
-                          # HALF of any confidence beyond 55% until proven otherwise, not the ML side's 25%
-                          # (totals have no equivalent of ML's 50-game MLB study to start from)
-_TOTAL_EDGE_LOCK = threading.Lock()
-
-
-def _recompute_total_edge_shrink(sport):
-    """Refits _TOTAL_EDGE_RATE[sport] from resolved TOTAL picks whose
-    blended (or team-only, if no blend) over_prob put them more than
-    _TOTAL_EDGE_CAP past 50% confidence — solves for the rate that would
-    have made that bucket's average stated confidence match its actual hit
-    rate, blended with _TOTAL_EDGE_PRIOR via the same alpha=min(n/80,1.0)
-    credibility weight _recompute_market_edge_shrink uses. No-ops below
-    MIN_N, same pattern as every other calibration pass here."""
-    with app.app_context():
-        resolved = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.total_went_over.isnot(None),
-        ).all()
-
-    records = []
-    for p in resolved:
-        prob = p.blended_total_over_prob if p.blended_total_over_prob is not None else p.total_over_prob
-        if prob is None:
-            continue
-        picked_over = prob >= 0.5
-        pick_conf = prob if picked_over else 1 - prob
-        hit = (picked_over and p.total_went_over) or (not picked_over and not p.total_went_over)
-        records.append((pick_conf, hit))
-
-    bucket = [(pc, h) for pc, h in records if pc - 0.5 > _TOTAL_EDGE_CAP]
-    n = len(bucket)
-
-    MIN_N = 40
-    if n < MIN_N:
-        print(f'[total-edge] {sport}: only {n} high-confidence total picks (<{MIN_N}), '
-              f'keeping rate={_TOTAL_EDGE_RATE.get(sport, _TOTAL_EDGE_PRIOR):.2f}', flush=True)
-        return
-
-    avg_conf   = sum(pc for pc, _ in bucket) / n
-    actual_wr  = sum(1 for _, h in bucket if h) / n
-    avg_excess = sum(pc - 0.5 - _TOTAL_EDGE_CAP for pc, _ in bucket) / n
-    if avg_excess <= 0:
-        return
-
-    raw_rate = max(0.0, min(1.0, (avg_conf - actual_wr) / avg_excess))
-    alpha    = min(n / 80.0, 1.0)
-    new_rate = round(_TOTAL_EDGE_PRIOR * (1 - alpha) + raw_rate * alpha, 4)
-
-    with _TOTAL_EDGE_LOCK:
-        _TOTAL_EDGE_RATE[sport] = new_rate
-
-    print(f'[total-edge] {sport} recomputed from {n} high-confidence picks: '
-          f'avg_stated_conf={avg_conf:.1%} actual_hit_rate={actual_wr:.1%} '
-          f'raw_rate={raw_rate:.2f} -> applied_rate={new_rate:.2f} (alpha={alpha:.2f})', flush=True)
-
-
-def _total_edge_shrink(sport, over_prob):
-    """Pulls a TOTAL pick's over_prob back toward 50% by _TOTAL_EDGE_RATE
-    (or _TOTAL_EDGE_PRIOR if this sport hasn't been refit yet) for whatever
-    confidence sits beyond _TOTAL_EDGE_CAP past 50% — see
-    _recompute_total_edge_shrink's docstring for why. Applied only at the
-    pick/display layer (_best_market_pick), never written back to the
-    stored total_over_prob/blended_total_over_prob columns, so future
-    refits keep training on the model's true raw output, not an
-    already-shrunk one."""
-    if over_prob is None:
-        return over_prob
-    with _TOTAL_EDGE_LOCK:
-        rate = _TOTAL_EDGE_RATE.get(sport, _TOTAL_EDGE_PRIOR)
-    picked_over = over_prob >= 0.5
-    conf = over_prob if picked_over else 1 - over_prob
-    excess = conf - 0.5 - _TOTAL_EDGE_CAP
-    if excess > 0:
-        conf -= rate * excess
-    return conf if picked_over else 1 - conf
-
-
-def _recompute_total_model_refit(sport):
-    """Refits this sport's total-projection correction layer from resolved
-    games (see module note above). No-ops below MIN_N, same pattern as
-    every other calibration pass in this file — a sport with too few
-    graded total picks just keeps using its raw, unrefit projection."""
-    with app.app_context():
-        resolved = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.total_proj.isnot(None),
-            GamePrediction.total_actual.isnot(None),
-        ).all()
-
-    MIN_N = 40
-    n = len(resolved)
-    if n < MIN_N:
-        return
-
-    xs = [p.total_proj for p in resolved]
-    ys = [float(p.total_actual) for p in resolved]
-    mean_x = sum(xs) / n
-    mean_y = sum(ys) / n
-    var = sum((x - mean_x) ** 2 for x in xs)
-    if var == 0:
-        return
-    b = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / var
-    a = mean_y - b * mean_x
-
-    residuals = [y - (a + b * x) for x, y in zip(xs, ys)]
-    sigma = (sum(r * r for r in residuals) / n) ** 0.5
-    if sigma <= 0:
-        return
-
-    with _TOTAL_MODEL_REFIT_LOCK:
-        _TOTAL_MODEL_REFIT[sport] = {
-            'a': round(a, 4), 'b': round(b, 4), 'sigma': round(sigma, 3),
-            'n': n, 'computed_at': datetime.now(timezone.utc).isoformat(),
-        }
-    print(f'[total-refit] {sport} recomputed from {n} games: '
-          f'total_actual ~= {a:+.2f} + {b:.3f}*total_proj (sigma={sigma:.2f})', flush=True)
 
 
 # ── Omen Score weight cache ──────────────────────────────────────────────────
@@ -2855,42 +2688,7 @@ def _recompute_spread_movement_profiles(sport='MLB'):
           f'(of {len(preds)} missing a profile)', flush=True)
 
 
-def _recompute_total_movement_profiles(sport='MLB'):
-    """Same as _recompute_movement_profiles, for the total market —
-    classifies from odds_snapshot's over_odds/under_odds columns. Only
-    meaningful for games that got a total pick at all (total_over_prob set)."""
-    import odds_history
-    with app.app_context():
-        preds = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.total_over_prob.isnot(None),
-            GamePrediction.total_movement_profile.is_(None),
-        ).all()
-        import odds_api as _oa
-        odds_sport_key = _oa.SPORT_KEYS.get(sport.lower(), sport.lower())
-        n_classified = 0
-        for p in preds:
-            pick_is_over = (p.total_over_prob or 0.5) >= 0.5
-            game_start = None
-            if p.game_time_utc:
-                try:
-                    game_start = datetime.fromisoformat(p.game_time_utc.replace('Z', '+00:00'))
-                except Exception:
-                    game_start = None
-            profile, move_pct = odds_history.classify_total_movement(
-                odds_sport_key, p.home_team, p.away_team, pick_is_over, game_start)
-            if profile:
-                p.total_movement_profile = profile
-                p.total_movement_pct = move_pct
-                n_classified += 1
-        if n_classified:
-            db.session.commit()
-    print(f'[total-movement-profiles] classified {n_classified} new {sport} games '
-          f'(of {len(preds)} missing a profile)', flush=True)
-
-
 _SPREAD_MOVEMENT_STATS = {}
-_TOTAL_MOVEMENT_STATS = {}
 
 
 def _recompute_spread_movement_stats(sport='MLB'):
@@ -2933,63 +2731,12 @@ def _recompute_spread_movement_stats(sport='MLB'):
     print(f'[spread-movement-stats] {sport} recomputed: {_nonzero}', flush=True)
 
 
-def _recompute_total_movement_stats(sport='MLB'):
-    """Same method as _recompute_movement_stats, graded against
-    total_went_over/total_over_prob instead of home_won/home_prob. Pushes
-    (total_went_over is None) are excluded, same as total_pick_roi."""
-    with app.app_context():
-        resolved = GamePrediction.query.filter(
-            GamePrediction.sport == sport,
-            GamePrediction.total_went_over.isnot(None),
-            GamePrediction.total_movement_profile.isnot(None),
-            GamePrediction.total_over_prob.isnot(None),
-        ).all()
-
-    SHRINKAGE = 0.60
-    MIN_N     = 5
-    new_stats = {}
-    for label in _MOVEMENT_PROFILES:
-        bkt = [p for p in resolved if p.total_movement_profile == label]
-        n = len(bkt)
-        if n == 0:
-            new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
-            continue
-        pick_over = [(p.total_over_prob or 0.5) >= 0.5 for p in bkt]
-        wins = sum(1 for p, po in zip(bkt, pick_over) if po == bool(p.total_went_over))
-        win_rate = wins / n
-        if n < MIN_N:
-            new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
-            continue
-        avg_model = sum((p.total_over_prob if po else 1.0 - p.total_over_prob) for p, po in zip(bkt, pick_over)) / n
-        raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
-        alpha      = min(n / 50.0, 1.0)
-        correction = round(raw_corr * SHRINKAGE * alpha, 5)
-        new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
-
-    with _MOVEMENT_LOCK:
-        _TOTAL_MOVEMENT_STATS[sport] = new_stats
-    _nonzero = {k: v for k, v in new_stats.items() if v['n']}
-    print(f'[total-movement-stats] {sport} recomputed: {_nonzero}', flush=True)
-
-
 def _spread_movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
     """Mirrors _movement_adjusted_prob, reading _SPREAD_MOVEMENT_STATS."""
     if not movement_profile:
         return pick_prob
     with _MOVEMENT_LOCK:
         stat = (_SPREAD_MOVEMENT_STATS.get(sport) or {}).get(movement_profile)
-    correction = (stat or {}).get('correction') or 0.0
-    if not correction:
-        return pick_prob
-    return _sigmoid(_safe_logit(pick_prob) + correction)
-
-
-def _total_movement_adjusted_prob(pick_prob, movement_profile, sport='MLB'):
-    """Mirrors _movement_adjusted_prob, reading _TOTAL_MOVEMENT_STATS."""
-    if not movement_profile:
-        return pick_prob
-    with _MOVEMENT_LOCK:
-        stat = (_TOTAL_MOVEMENT_STATS.get(sport) or {}).get(movement_profile)
     correction = (stat or {}).get('correction') or 0.0
     if not correction:
         return pick_prob
@@ -3004,16 +2751,7 @@ def _spread_movement_stat(movement_profile, sport='MLB'):
     return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0)}
 
 
-def _total_movement_stat(movement_profile, sport='MLB'):
-    """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int} for the
-    Total MOVE bar."""
-    with _MOVEMENT_LOCK:
-        stat = (_TOTAL_MOVEMENT_STATS.get(sport) or {}).get(movement_profile) or {}
-    return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0)}
-
-
 app.jinja_env.globals['spread_movement_stat'] = _spread_movement_stat
-app.jinja_env.globals['total_movement_stat'] = _total_movement_stat
 
 
 def _et_date(utc_str):
@@ -3157,29 +2895,6 @@ def _upsert_predictions(schedule, sport='MLB'):
             pred.blended_spread_cover_prob = _margin_cover_prob(
                 sport, model.get('ensemble_margin'), spread_line)
 
-          total_model = game.get('total_model') or {}
-          total_line  = odds.get('total_line')
-          proj        = _effective_total_projection(game)
-          if total_line is not None and proj is not None:
-            pred.total_pick_line  = total_line
-            pred.total_proj       = proj
-            pred.total_over_price  = odds.get('over_odds')
-            pred.total_under_price = odds.get('under_odds')
-            # blended_total_proj/blended_total_over_prob below are now
-            # identical to total_proj/total_over_prob whenever model
-            # ['blended_total'] is set (NBA/WNBA) since _effective_total_
-            # projection() prefers it live too — kept as separate columns
-            # anyway so the parallel-tracking comparison still works for
-            # sports with no blend (NFL/CFB/MLB/NHL stay team-only here).
-            blended_total = model.get('blended_total')
-            if blended_total is not None:
-              pred.blended_total_proj      = blended_total
-              pred.blended_total_over_prob = _total_over_prob(sport, blended_total, total_line)
-            pred.total_over_prob   = _total_over_prob(sport, proj, total_line)
-            try:
-              pred.total_inputs_json = json.dumps(game.get('total_inputs'))
-            except (TypeError, ValueError):
-              pass
         if has_wind and pred.wind_mph is None:
           pred.wind_mph = wx['wind_mph']
           pred.wind_dir = wx.get('wind_dir')
@@ -3199,12 +2914,6 @@ def _upsert_predictions(schedule, sport='MLB'):
         pred.blended_spread_cover_prob = _margin_cover_prob(
             sport, model.get('ensemble_margin'), pred.spread_pick_line)
         if pred.blended_spread_cover_prob is not None:
-          changed = True
-      if model and pred.blended_total_proj is None and pred.total_pick_line is not None:
-        blended_total = model.get('blended_total')
-        if blended_total is not None:
-          pred.blended_total_proj      = blended_total
-          pred.blended_total_over_prob = _total_over_prob(sport, blended_total, pred.total_pick_line)
           changed = True
 
       # Grade the blended fields too, independent of whether pred.home_won
@@ -3229,25 +2938,6 @@ def _upsert_predictions(schedule, sport='MLB'):
               o = int(b_price)
               profit = o / 100.0 if o > 0 else 100.0 / (-o)
               pred.blended_spread_pick_roi = round(profit if b_pick_correct else -1.0, 4)
-            except (TypeError, ValueError):
-              pass
-        changed = True
-
-      if (status == 'Final' and pred.total_actual is not None
-          and pred.blended_total_over_prob is not None and pred.blended_total_went_over is None
-          and pred.total_pick_line is not None):
-        if pred.total_actual == pred.total_pick_line:
-          pred.blended_total_pick_roi = 0.0
-        else:
-          pred.blended_total_went_over = pred.total_actual > pred.total_pick_line
-          b_pick_over    = pred.blended_total_over_prob >= 0.5
-          b_pick_correct = (b_pick_over == pred.blended_total_went_over)
-          b_price = pred.total_over_price if b_pick_over else pred.total_under_price
-          if b_price:
-            try:
-              o = int(b_price)
-              profit = o / 100.0 if o > 0 else 100.0 / (-o)
-              pred.blended_total_pick_roi = round(profit if b_pick_correct else -1.0, 4)
             except (TypeError, ValueError):
               pass
         changed = True
@@ -3327,42 +3017,6 @@ def _upsert_predictions(schedule, sport='MLB'):
                     except (TypeError, ValueError):
                       pass
 
-            if pred.total_pick_line is not None:
-              pred.total_actual = h + a
-              if pred.total_actual == pred.total_pick_line:
-                pred.total_pick_roi = 0.0   # push
-              else:
-                pred.total_went_over = pred.total_actual > pred.total_pick_line
-                pick_over    = (pred.total_over_prob or 0.5) >= 0.5
-                pick_correct = (pick_over == pred.total_went_over)
-                price = pred.total_over_price if pick_over else pred.total_under_price
-                if price:
-                  try:
-                    o = int(price)
-                    profit = o / 100.0 if o > 0 else 100.0 / (-o)
-                    pred.total_pick_roi = round(profit if pick_correct else -1.0, 4)
-                  except (TypeError, ValueError):
-                    pass
-
-              # Blended-ensemble total TRACKING — graded the same way as
-              # above, just off blended_total_over_prob (None for sports/
-              # games where no blended total was projected).
-              if pred.blended_total_over_prob is not None:
-                if pred.total_actual == pred.total_pick_line:
-                  pred.blended_total_pick_roi = 0.0   # push
-                else:
-                  pred.blended_total_went_over = pred.total_actual > pred.total_pick_line
-                  b_pick_over    = pred.blended_total_over_prob >= 0.5
-                  b_pick_correct = (b_pick_over == pred.blended_total_went_over)
-                  b_price = pred.total_over_price if b_pick_over else pred.total_under_price
-                  if b_price:
-                    try:
-                      o = int(b_price)
-                      profit = o / 100.0 if o > 0 else 100.0 / (-o)
-                      pred.blended_total_pick_roi = round(profit if b_pick_correct else -1.0, 4)
-                    except (TypeError, ValueError):
-                      pass
-
             changed = True
         except (TypeError, ValueError):
           pass
@@ -3415,13 +3069,6 @@ def _attach_graded_results(schedule, sport):
         graded['spread'] = {
             'side': f"{home_ab if pick_home else away_ab} {'+' if line_val > 0 else ''}{line_val:g}",
             'won':  None if pred.spread_pick_roi == 0.0 else (pred.spread_pick_roi > 0),
-        }
-
-      if pred.total_pick_line is not None and pred.total_pick_roi is not None:
-        pick_over = (pred.total_over_prob or 0.5) >= 0.5
-        graded['total'] = {
-            'side': f"{'Over' if pick_over else 'Under'} {pred.total_pick_line:g}",
-            'won':  None if pred.total_pick_roi == 0.0 else (pred.total_pick_roi > 0),
         }
 
       game['graded'] = graded
@@ -3754,10 +3401,6 @@ app.jinja_env.globals['spread_model_cover_prob'] = spread_model.cover_prob
 app.jinja_env.globals['spread_model_validated'] = spread_model.is_validated
 app.jinja_env.globals['spread_model_factor_rows'] = spread_model.weighted_factors
 
-_TOTAL_MODEL_CALIBRATION = {**bball_total_model.CALIBRATION, **football_total_model.CALIBRATION,
-                             **hockey_total_model.CALIBRATION, **mlb_total_model.CALIBRATION}
-
-
 def _effective_spread_cover_prob(sport, model, factors, home_spread):
     """P(home covers home_spread) for actual spread picks/grading. Only
     spread_model.py's own fitted factor regression, and only where it's
@@ -3774,21 +3417,6 @@ def _effective_spread_cover_prob(sport, model, factors, home_spread):
     if spread_model.is_validated(sport) and factors and home_spread is not None:
         return spread_model.cover_prob(sport, factors, home_spread)
     return None
-
-
-def _effective_total_projection(game):
-    """The total projection actual picks should be graded/made against —
-    the team-only total_model.total_projection every sport uses (gated by
-    _TOTAL_CONFIDENCE_CAP's pre-ship R² numbers). The blended team+player
-    total (model['blended_total'], NBA/WNBA — see nba_ensemble_model.py/
-    wnba_ensemble_model.py's TOTAL_FIT) was live-wired here 2026-10-06 on a
-    2-game backtest, but that's tracking data, not a validated edge —
-    reverted so it can keep accumulating sample via the parallel
-    blended_total_proj/blended_total_over_prob TRACKING columns
-    (_upsert_predictions, below) without driving live recommendations
-    before it's actually proven out."""
-    total_model = game.get('total_model') or {}
-    return total_model.get('total_projection')
 
 
 def _margin_cover_prob(sport, margin, home_spread_line):
@@ -3815,74 +3443,6 @@ def _margin_cover_prob(sport, margin, home_spread_line):
         return None
     z = (margin - (-home_spread_line)) / sigma
     return 0.5 * (1 + math.erf(z / math.sqrt(2)))
-
-
-def _total_over_prob(sport, total_projection, market_total_line):
-    """P(actual total > market_total_line) per whichever sport's calibrated
-    total model applies (bball_total_model.py or football_total_model.py —
-    same normal-approximation math either way, just a different fitted
-    sigma per sport), via a normal approximation around the projection.
-    Applies _TOTAL_MODEL_REFIT's periodic correction on top of the model's
-    raw projection when this sport has one yet (see that section's module
-    note) — both the projection and the sigma used below shift to the
-    refit's own numbers, since a refit's residual std reflects actual
-    current-season accuracy instead of the static one-time CALIBRATION fit.
-    Returns None if this sport has no total model or inputs are missing."""
-    if total_projection is None or market_total_line is None:
-        return None
-    coeffs = _TOTAL_MODEL_CALIBRATION.get(sport)
-    if not coeffs:
-        return None
-    _, _, sigma = coeffs
-    refit = _TOTAL_MODEL_REFIT.get(sport)
-    if refit:
-        total_projection = refit['a'] + refit['b'] * total_projection
-        sigma = refit['sigma']
-    if sigma <= 0:
-        return None
-    z = (total_projection - market_total_line) / sigma
-    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
-
-
-app.jinja_env.globals['total_over_prob'] = _total_over_prob
-
-
-# Confidence cap for the Total O/U chip. Unlike spread_proxy.VALIDATED_SPORTS
-# (fit from an out-of-sample check against 106-2312 live-graded picks per
-# sport), the total models have zero in-app graded history yet — total
-# tracking (total_went_over/total_pick_roi, see _upsert_predictions below)
-# only started today, so /model?type=total reads n=0 across every sport.
-# This is a stopgap using each model's pre-ship season-level fit instead
-# (see bball_total_model.py / football_total_model.py / mlb_total_model.py /
-# hockey_total_model.py docstrings):
-#   NFL R²=0.23, CFB R²=0.27   — decent fits, no cap.
-#   NBA R²=0.09, WNBA R²=0.16  — modest fits, cap at 'medium'.
-#   MLB R²=0.053, NHL R²=0.032 — weak fits (each flagged "meaningfully
-#     weaker" in its own docstring), flagged 'unproven' like the spread
-#     proxy's worst sports.
-# Revisit once each sport has a few hundred live-graded total picks —
-# swap this out for a real out-of-sample check the same way spread_proxy's
-# VALIDATED_SPORTS was derived.
-_TOTAL_CONFIDENCE_CAP = {
-    'NFL': None, 'CFB': None,
-    'NBA': 'medium', 'WNBA': 'medium',
-    'MLB': 'unproven', 'NHL': 'unproven',
-}
-
-
-def _total_confidence_tier(sport, raw_level):
-    """Caps a total pick's raw distance-from-50% confidence level by the
-    sport's known model quality, so a weak model can't read as 'high'
-    confidence just because one game's number lands far from 50%."""
-    cap = _TOTAL_CONFIDENCE_CAP.get(sport)
-    if cap == 'unproven':
-        return 'unproven'
-    if cap == 'medium' and raw_level == 'high':
-        return 'medium'
-    return raw_level
-
-
-app.jinja_env.globals['total_confidence_tier'] = _total_confidence_tier
 
 
 def _chip_track_pos(pct):
@@ -4023,35 +3583,8 @@ def spread_factors_panel(game):
     )
 
 
-def total_factors_panel(game):
-    """Total Model tab — each sport's *_total_model.factor_breakdown(),
-    which decomposes the projection into signed deviations from a
-    league-average baseline (see those modules' docstrings) so it can use
-    the same diverging-bar chart as ML/Spread despite total not having a
-    natural home/away split — the two sides here are OVER/UNDER instead."""
-    breakdown = game.get('total_model_breakdown')
-    total_model = game.get('total_model')
-    if not breakdown or not breakdown.get('contribs') or not total_model:
-        return None
-    sport = game.get('sport')
-    projection = total_model.get('total_projection')
-    if projection is None:
-        return None
-    line = (game.get('odds') or {}).get('total_line')
-    favors_positive = (projection > line) if line is not None else (projection > breakdown['baseline'])
-    return _diverge_panel(
-        breakdown['contribs'], favors_positive,
-        total_value=projection - breakdown['baseline'], total_label='Projected total',
-        total_display=f'{round(projection)}',
-        total_marker_label='O' if favors_positive else 'U',
-        pos_label='OVER', neg_label='UNDER',
-        unproven=_TOTAL_CONFIDENCE_CAP.get(sport) == 'unproven',
-    )
-
-
 app.jinja_env.globals['ml_factors_panel'] = ml_factors_panel
 app.jinja_env.globals['spread_factors_panel'] = spread_factors_panel
-app.jinja_env.globals['total_factors_panel'] = total_factors_panel
 
 
 _BET_LINE_RE = re.compile(r'([+-]?\d+(?:\.\d+)?)\s*$')
@@ -5407,37 +4940,6 @@ def _best_market_pick(game):
                               # TODO, not done here to avoid shipping a wrong pip count.
                               'pips': None})
 
-  # ── Total ──
-  total_model = game.get('total_model')
-  total_line  = odds.get('total_line')
-  if total_model and total_line is not None and _total_confidence_tier(sport, 'high') != 'unproven':
-    proj = _effective_total_projection(game)
-    over_prob = _total_over_prob(sport, proj, total_line) if proj is not None else None
-    over_price, under_price = odds.get('over_odds'), odds.get('under_odds')
-    if over_prob is not None and over_price is not None and under_price is not None:
-      vf_o, vf_u = _vig_free_implied(over_price, under_price)
-      if vf_o is not None:
-        favors_over = over_prob >= 0.5
-        pick_prob   = over_prob if favors_over else (1 - over_prob)
-        pick_prob   = _total_movement_adjusted_prob(pick_prob, game.get('total_movement_profile'), sport)
-        # Pull high-confidence total picks back toward 50% by how much this
-        # sport's past high-confidence picks have actually missed — see
-        # _total_edge_shrink's docstring. Applied last, after the movement
-        # adjustment, so it's shrinking the final pick_prob the edge/Kelly
-        # math below actually sees.
-        pick_prob   = _total_edge_shrink(sport, pick_prob)
-        mkt_implied = vf_o if favors_over else vf_u
-        amer_odds   = over_price if favors_over else under_price
-        q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
-        if q:
-          edge, kelly, b = q
-          label = f"{'O' if favors_over else 'U'} {total_line:g}"
-          candidates.append({'market': 'total', 'side': 'over' if favors_over else 'under',
-                              'abbr': label, 'label': label, 'edge': edge, 'kelly': kelly,
-                              'amer_odds': amer_odds, 'ev_pct': round((b * pick_prob - (1 - pick_prob)) * 100, 1),
-                              'pick_rank': None,
-                              'pips': _confidence_pips(sport, 'total', pick_prob)})
-
   if not candidates:
     return None
   return max(candidates, key=lambda c: c['edge'])
@@ -5914,27 +5416,7 @@ def _rb_extract_spread(p, sport):
   return prob, mkt, amer, won, pick, opp
 
 
-def _rb_extract_total(p, sport):
-  """Per-row extraction for the total market (_total_over_prob vs the
-  odds_api O/U line captured at prediction time). Only meaningful for sports
-  _total_confidence_tier doesn't flag 'unproven', gated by the caller."""
-  if p.total_over_prob is None or not p.total_over_price or not p.total_under_price or p.total_went_over is None:
-    return None
-  vf_o, vf_u = _vig_free_implied(p.total_over_price, p.total_under_price)
-  if vf_o is None:
-    return None
-  fav_over = p.total_over_prob >= 0.5
-  prob = p.total_over_prob if fav_over else 1.0 - p.total_over_prob
-  amer = p.total_over_price if fav_over else p.total_under_price
-  mkt = vf_o if fav_over else vf_u
-  won = bool(p.total_went_over) == fav_over
-  line = p.total_pick_line
-  pick = f"{'O' if fav_over else 'U'} {line:g}" if line is not None else ('O' if fav_over else 'U')
-  opp = f"{p.away_team} @ {p.home_team}"
-  return prob, mkt, amer, won, pick, opp
-
-
-_RB_EXTRACTORS = {'moneyline': _rb_extract_ml, 'spread': _rb_extract_spread, 'total': _rb_extract_total}
+_RB_EXTRACTORS = {'moneyline': _rb_extract_ml, 'spread': _rb_extract_spread}
 
 
 # Deploy date of the market-edge-shrink/team-bias snapshot persistence fix:
@@ -5992,8 +5474,6 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
   a validated model in that market (mirrors _best_market_pick's restriction),
   same as the live ★ — elsewhere this returns None so the card hides itself."""
   if bet_type == 'spread' and sport not in spread_model.VALIDATED_SPORTS:
-    return None
-  if bet_type == 'total' and _total_confidence_tier(sport, 'high') == 'unproven':
     return None
   extractor = _RB_EXTRACTORS.get(bet_type, _rb_extract_ml)
 
@@ -6172,7 +5652,7 @@ def model_performance():
     sport = 'MLB'
 
   bet_type = request.args.get('type', 'moneyline').lower()
-  if bet_type not in ('moneyline', 'spread', 'total'):
+  if bet_type not in ('moneyline', 'spread'):
     bet_type = 'moneyline'
 
   preds = (GamePrediction.query
@@ -6184,7 +5664,6 @@ def model_performance():
   n = len(resolved)
 
   spread_stats = _bet_type_accuracy_stats(resolved, 'spread_cover_prob', 'spread_covered', 'spread_pick_roi')
-  total_stats  = _bet_type_accuracy_stats(resolved, 'total_over_prob', 'total_went_over', 'total_pick_roi')
 
   brier = accuracy = log_loss_val = None
   if n:
@@ -6971,7 +6450,6 @@ def model_performance():
       ml_pip_stats=ml_pip_stats,
       bet_type=bet_type,
       spread_stats=spread_stats,
-      total_stats=total_stats,
       factor_stats=factor_stats,
       rank_stats=rank_stats,
       score_bucket_stats=score_bucket_stats,
@@ -7554,6 +7032,144 @@ def nfl_simulations_page():
                          week_ctx=week_ctx, season=season, week=actual_week, games=games,
                          week_accuracy=week_accuracy))
   return _set_last_sport_cookie(resp, 'NFL')
+
+# Ordered (field, short label) pairs for the predicted-vs-actual stat line
+# /nba/simulations shows under each player's name — NBA counterpart to
+# NFL_SIM_STAT_LABELS, just the flat FanDuel NBA categories (no
+# passing/rushing/receiving split to order around).
+NBA_SIM_STAT_LABELS = [
+  ('points', 'pts'), ('rebounds', 'reb'), ('assists', 'ast'), ('steals', 'stl'),
+  ('blocks', 'blk'), ('turnovers', 'tov'),
+]
+
+NBA_SIM_CARD_STARTER_COUNT = 5  # no roster position data for NBA (see nba_roster_api.get_roster()'s
+                                # docstring) — show the top N by sim_median instead of position slots
+
+def _nba_sim_card_starters(players):
+  """players: one side's list of per-player sim-result dicts (same shape
+  nba_stats_db.get_sim_results_db() returns). Returns the top
+  NBA_SIM_CARD_STARTER_COUNT players by sim_median — NBA counterpart to
+  _nfl_sim_card_starters(), simpler since there's no position slot to
+  fill (no NBA position data anywhere in this app to slot by)."""
+  ranked = sorted(players, key=lambda p: -p['sim_median'])
+  return ranked[:NBA_SIM_CARD_STARTER_COUNT]
+
+def _nba_sim_stat_compare(row):
+  """Sets row['stat_compare'] — NBA counterpart to _nfl_sim_stat_compare(),
+  see that function's docstring. Every NBA_SIM_STAT_LABELS field is always
+  present in sim_stats here (unlike NFL's position-dependent categories),
+  so no field-presence check is needed."""
+  sim_stats = row.get('sim_stats')
+  if not sim_stats:
+    return
+  actual_stats = row.get('actual_stats') or {}
+  compare = []
+  for field, label in NBA_SIM_STAT_LABELS:
+    if field not in sim_stats:
+      continue
+    actual_value = actual_stats.get(field)
+    compare.append({
+      'label': label,
+      'pred': round(sim_stats[field], 1),
+      'actual': round(nba_fantasy._num(actual_value), 1) if actual_value is not None else None,
+    })
+  row['stat_compare'] = compare
+
+def _attach_actual_to_nba_sim_game(g, home_rows, away_rows):
+  """Mutates `g` and every row in home_rows/away_rows in place — NBA
+  counterpart to _attach_actual_to_nfl_sim_game(), see that function's
+  docstring for the full "only ever shows a real gap, never a false 0"
+  reasoning. No DST-style synthesized entries here (no basketball
+  equivalent — see nba_game_simulator.py's module docstring)."""
+  g['actual_home_score'] = g.get('actual_home_score')
+  g['actual_away_score'] = g.get('actual_away_score')
+  if g.get('status') != 'Final':
+    return
+  score = nba_stats_db.get_actual_game_score_db(g['game_id'])
+  if score:
+    g['actual_home_score'] = score['home_score']
+    g['actual_away_score'] = score['away_score']
+
+  boxscore = nba_stats_db.get_game_boxscore_db(g['game_id'])
+  home_id, away_id = g['home'].get('id'), g['away'].get('id')
+  for team_id, rows in ((home_id, home_rows), (away_id, away_rows)):
+    box_rows = boxscore.get(team_id, [])
+    if not box_rows:
+      continue
+    actual_by_id = {r['player_id']: r for r in box_rows}
+    for row in rows:
+      actual = actual_by_id.get(row['player_id'])
+      if actual is None:
+        row['actual'] = 0.0
+        continue
+      cats = {'points': actual['points'], 'rebounds': actual['rebounds'], 'assists': actual['assists'],
+              'steals': actual['steals'], 'blocks': actual['blocks'], 'turnovers': actual['turnovers']}
+      row['actual'] = nba_fantasy.compute_fantasy_points(cats)
+      row['actual_stats'] = cats
+
+@app.route('/nba/simulations')
+def nba_simulations_page():
+  """Shows this slate date's stored game-simulation results (NbaSimResult/
+  NbaSimGame) — written by a daily background job (_simulate_nba_slate(),
+  see this app's own cron registration below), never computed here.
+  NBA counterpart to /nfl/simulations; see nba_game_simulator.py's module
+  docstring for what the simulation does (resamples real historical
+  period-by-period scoring, team-conditioned by a single points-allowed
+  factor, usage-share player attribution) and doesn't (no play-level
+  resampling or player correlation the way NFL's drive-based simulator
+  has — see that docstring's "Player attribution is usage-share-based"
+  section) — win% here shouldn't be read as a real moneyline estimate,
+  see this app's actual NBA win-probability model, nba_model.py, for
+  that.
+
+  `date` (optional query param, YYYY-MM-DD): defaults to today ET. A date
+  with no stored results yet (background job hasn't run yet today, or no
+  games that date) renders the empty state rather than an error."""
+  target_date = request.args.get('date')
+  schedule = nba_api.build_schedule_context(target_date=target_date)
+  if not schedule:
+    resp = make_response(render_template('nba_simulations.html', subnav_sport='NBA',
+                           date=target_date, date_display=None, games=[], slate_accuracy=None))
+    return _set_last_sport_cookie(resp, 'NBA')
+  day = schedule[0]
+  resolved_date = day['date']
+
+  results_by_game = nba_stats_db.get_sim_results_db(resolved_date)
+  game_summaries = nba_stats_db.get_sim_game_summary_db(resolved_date)
+  slate_accuracy = nba_stats_db.get_sim_slate_accuracy_db(resolved_date)
+  games = []
+  for g in day['games']:
+    teams = results_by_game.get(g['game_id'], {})
+    home_rows = teams.get(g['home'].get('id'), [])
+    away_rows = teams.get(g['away'].get('id'), [])
+    if not home_rows and not away_rows:
+      continue
+    for row in home_rows + away_rows:
+      row.setdefault('actual', None)
+      row.setdefault('actual_stats', None)
+    _attach_actual_to_nba_sim_game(g, home_rows, away_rows)
+    for row in home_rows + away_rows:
+      _nba_sim_stat_compare(row)
+    summary = game_summaries.get(g['game_id'])
+    win_pick_correct = None
+    if (summary and g.get('actual_home_score') is not None
+        and g.get('actual_away_score') is not None):
+      picked_home = summary['home_win_pct'] >= summary['away_win_pct']
+      real_home_won = g['actual_home_score'] > g['actual_away_score']
+      win_pick_correct = picked_home == real_home_won
+    games.append({
+      **g,
+      'home_players': home_rows, 'away_players': away_rows,
+      'home_starters': _nba_sim_card_starters(home_rows),
+      'away_starters': _nba_sim_card_starters(away_rows),
+      'summary': summary,
+      'win_pick_correct': win_pick_correct,
+    })
+
+  resp = make_response(render_template('nba_simulations.html', subnav_sport='NBA',
+                         date=resolved_date, date_display=day.get('date_display'), games=games,
+                         slate_accuracy=slate_accuracy))
+  return _set_last_sport_cookie(resp, 'NBA')
 
 NFL_RECAP_OBJECTIVES = [('recommended', 'Projection'), ('sim_median', 'Sim Median'), ('sim_ceiling', 'Sim Ceiling')]
 
@@ -9128,39 +8744,6 @@ def _warm_all_caches_noon():
     _warm_all_caches(send_daily=True)
 
 
-def _prewarm_total_model_pace():
-    """Lightweight, frequent pre-warm for just the total-model pace-stats
-    cache (bball_total_model/football_total_model's in-memory 6h cache) —
-    decoupled from the heavier _warm_all_caches (full schedule + DB writes
-    + Discord checks, every 2h/6x-day) so a cold or expired pace cache
-    doesn't sit there until the next full cycle.
-
-    Just calls each sport's schedule builder — none of NBA/WNBA/NFL/CFB's
-    build_schedule_context()/build_week_schedule_context() touch the DB,
-    they're pure network-fetch-and-compute, so running this every 20
-    minutes adds no DB load anywhere. Fetching pace as a side effect of
-    building every game's total_model (predict_total) is the whole point;
-    the built schedule itself is thrown away.
-
-    Added directly for the intermittent WNBA "Today page hangs" report —
-    ESPN's WNBA team-stats endpoint measured at ~45s cold for a full
-    slate, worst of the four sports here, so it's first in line. Combined
-    with the negative-caching backoff in bball_total_model._fetch_pace_
-    components (a failed fetch used to never get cached at all, so a
-    slow/erroring team retried the full 15s timeout on every single
-    request), this should make cold-cache page loads rare rather than
-    just faster.
-    """
-    for name, fn in [('NBA', nba_api.build_schedule_context),
-                      ('WNBA', wnba_api.build_schedule_context),
-                      ('NFL', nfl_api.build_week_schedule_context),
-                      ('CFB', cfb_api.build_week_schedule_context)]:
-        try:
-            fn()
-        except Exception:
-            pass
-
-
 def _check_finalized_games():
     """Runs every 20 min across every sport: fetch the current live
     schedule and feed it through _upsert_predictions() so a game that
@@ -9285,8 +8868,6 @@ def _recompute_all_calibration(sport):
     _recompute_movement_stats(sport)
     _recompute_spread_movement_profiles(sport)
     _recompute_spread_movement_stats(sport)
-    _recompute_total_movement_profiles(sport)
-    _recompute_total_movement_stats(sport)
     _recompute_consensus_calibration(sport)
     _recompute_prob_calibration(sport)
     # Must run after _recompute_unified_rank_stats/_recompute_prob_calibration
@@ -9294,13 +8875,6 @@ def _recompute_all_calibration(sport):
     # distribution (see _historical_confidence_values's docstring).
     _recompute_confidence_tiers(sport)
     _recompute_spread_confidence_tiers(sport)
-    _recompute_total_model_refit(sport)
-    _recompute_total_edge_shrink(sport)
-    # After _recompute_total_model_refit — total_confidence_tiers reads
-    # stored historical total_over_prob values (computed at pick time, so
-    # order doesn't change its own output), but conceptually the refit
-    # should settle first each cycle.
-    _recompute_total_confidence_tiers(sport)
 
 
 def _refit_mlb_platt():
@@ -9381,6 +8955,21 @@ def _simulate_nfl_week():
     try:
         import nfl_game_simulator
         nfl_game_simulator.simulate_week()
+    except Exception:
+        pass
+
+
+def _simulate_nba_slate():
+    """Daily background job: runs nba_game_simulator.simulate_slate() for
+    today's NBA slate and persists results to NbaSimResult/NbaSimGame —
+    NBA counterpart to _simulate_nfl_week(), same "can't run on a page
+    request" reasoning (see NbaSimResult's class docstring, app.py). An
+    off-season date or a date with no NBA games naturally produces zero
+    games from nba_api and this is a no-op, same graceful-empty-case
+    handling as every other self-heal job here."""
+    try:
+        import nba_game_simulator
+        nba_game_simulator.simulate_slate()
     except Exception:
         pass
 
@@ -9542,11 +9131,16 @@ def _start_cache_warmer():
                       hour=7, minute=30,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_simulate_week')
+    # NBA game-outcome simulation — 7:45 am ET daily, same reasoning/
+    # placement as the NFL job above (after stats self-heal + news
+    # ingestion, before the cheap pace pre-warm below).
+    scheduler.add_job(_simulate_nba_slate, 'cron',
+                      hour=7, minute=45,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='nba_simulate_slate')
     # Pace-stats-only pre-warm — every 20 min, much more often than the full
     # warmer above since it's cheap (no DB writes) and the whole point is
     # shrinking the window a cold/expired pace cache can sit in.
-    scheduler.add_job(_prewarm_total_model_pace, 'interval',
-                      minutes=20, id='prewarm_pace_cache')
     # App-wide finalized-game check — every 20 min across all 6 sports, so a
     # game that goes Final gets recorded well before the next 2-hourly
     # _warm_all_caches cron tick.

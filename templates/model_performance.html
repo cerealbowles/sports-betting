@@ -205,7 +205,7 @@
 
 {% set _bt_qs = request.args.to_dict() %}
 <div class="bet-type-tabs">
-    {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread'), ('total', 'Total')] %}
+    {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread')] %}
     {% set _ = _bt_qs.update({'type': code}) %}
     <a href="{{ url_for('model_performance', **_bt_qs) }}" class="bet-type-tab{% if bet_type == code %} active{% endif %}">{{ label }}</a>
     {% endfor %}
@@ -221,9 +221,9 @@
 </div>
 {% elif bet_type != 'moneyline' %}
 
-{% set bt_stats = spread_stats if bet_type == 'spread' else total_stats %}
-{% set bt_label = 'Spread' if bet_type == 'spread' else 'Total' %}
-<!-- ══ Spread / Total accuracy ══ -->
+{% set bt_stats = spread_stats %}
+{% set bt_label = 'Spread' %}
+<!-- ══ Spread accuracy ══ -->
 <div class="perf-grid">
     <div class="stat-card">
         <div class="stat-label">Picks Tracked</div>
@@ -258,11 +258,7 @@
     </div>
 </div>
 
-{% if bet_type == 'spread' %}
 <p class="section-note" style="margin-bottom:14px;">Spread picks are backfilled from history where possible: home win probability + the ESPN opening line already stored for past games feed <code>spread_proxy.cover_prob()</code>, graded against the actual final margin. Prices on backfilled rows assume standard -110 juice (ESPN's odds feed doesn't carry per-side pricing); rows tracked going forward use the real price from the sportsbook feed.</p>
-{% else %}
-<p class="section-note" style="margin-bottom:14px;">Total picks can only be tracked going forward — the model's total projection wasn't persisted historically, so there's nothing to backfill (unlike Spread, which reuses the win-probability model against already-stored market lines). This will fill in as new games are tracked.</p>
-{% endif %}
 
 {% if bt_stats.n == 0 %}
 <div class="card" style="padding: 24px; text-align: center;">

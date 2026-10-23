@@ -26,7 +26,6 @@ import game_detail_common as gdc
 import nfl_api
 import nfl_stats_db
 import spread_model
-import football_total_model
 import team_venues
 
 
@@ -54,10 +53,6 @@ def find_game(game_id):
 
 # ── Math helpers specific to this page (wrap game_math with real inputs) ────
 # Sport-generic versions of these now live in game_detail_common.py.
-
-def _phi(x):
-    return gdc.phi(x)
-
 
 def _hist_key(home_name, away_name, game_time_utc):
     return gdc.hist_key(home_name, away_name, game_time_utc)
@@ -267,39 +262,7 @@ def build_game_detail(game_id):
                         f"Model line {model_side_abbr} {model_side_line:g} vs market {home['abbr']} {home_spread_line:g}."),
             }
 
-    total_model = g.get('total_model') or {}
-    total_proj = total_model.get('total_projection')
-    sigma_total = football_total_model.CALIBRATION.get('NFL', (None, None, None))[2]
-    gap_sd_total = _market_gap_sd('total')
-    total_verdict = None
-    total_line = odds.get('total_line')
-    over_price = odds.get('over_odds')
-    under_price = odds.get('under_odds')
-    if total_proj is not None and total_line is not None and sigma_total and over_price and under_price:
-        over_prob = _phi((total_proj - total_line) / sigma_total)
-        under_prob = 1 - over_prob
-        ev_over = gm.ev(over_prob, gm.net_payout_b(over_price))
-        ev_under = gm.ev(under_prob, gm.net_payout_b(under_price))
-        fav_over = ev_over >= ev_under
-        side_prob = over_prob if fav_over else under_prob
-        side_price = over_price if fav_over else under_price
-        ev = ev_over if fav_over else ev_under
-        is_outlier = gm.outlier_guard(total_proj, total_line, gap_sd_total) if gap_sd_total else False
-        if side_price is not None:
-            units = 0.0 if is_outlier else gm.kelly_units(side_prob, gm.net_payout_b(side_price))
-            tag = gm.tag_for(ev, 3, is_outlier)
-            total_verdict = {
-                'market': 'TOTAL', 'tag': tag,
-                'pick': f"{'OVER' if fav_over else 'UNDER'} {total_line:g}",
-                'price': side_price, 'mkt': f"{total_line:g}", 'model': f"{total_proj:g}",
-                'edge': f"{abs(total_proj - total_line):.1f} pts", 'ev': f"{ev * 100:+.1f}%",
-                'kelly': ('—' if is_outlier else f"{units:.1f}u"),
-                'why': ("Model is well outside its historical total error band — verify pace/inputs before betting."
-                        if is_outlier else
-                        f"Model total {total_proj:g} vs market {total_line:g}."),
-            }
-
-    verdicts = [v for v in (ml_verdict, spread_verdict, total_verdict) if v]
+    verdicts = [v for v in (ml_verdict, spread_verdict) if v]
 
     # ── ranks / unit matchups (sections 6-7), real data only ───────────────
     rank_table = _league_rank_table(season, game_date_et)
@@ -387,7 +350,6 @@ def build_game_detail(game_id):
             'spread': {'away': {'line': -home_spread_line if home_spread_line is not None else None,
                                   'price': odds.get('away_spread_price')},
                         'home': {'line': home_spread_line, 'price': odds.get('home_spread_price')}},
-            'total': {'line': total_line, 'over_price': odds.get('over_odds'), 'under_price': odds.get('under_odds')},
             'hold_ml': round(hold_ml * 100, 1) if hold_ml is not None else None,
             'novig_home': round(home_novig * 100, 1) if home_novig is not None else None,
             'novig_away': round(away_novig * 100, 1) if away_novig is not None else None,
@@ -395,16 +357,7 @@ def build_game_detail(game_id):
         },
         'model': {
             'p_team_home': p_team, 'p_player_home': p_player, 'p_blend_home': p_blend,
-            # Derived, not a separate model: splits the total model's own
-            # total_proj using the spread model's own home margin — both
-            # real outputs, just combined algebraically (total_proj +/- margin)/2
-            # into a per-team score, since neither model projects a score split
-            # on its own.
-            'proj_score': ({'away': round((total_proj - spread_margin) / 2, 1),
-                             'home': round((total_proj + spread_margin) / 2, 1)}
-                            if total_proj is not None and spread_margin is not None else None),
             'spread_home': -spread_margin if spread_margin is not None else None,
-            'total': total_proj,
             'confidence': conf_ml,
             'factors': factors,
             'ats_record_when_edge': _ats_record_when_edge(),

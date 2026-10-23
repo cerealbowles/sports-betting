@@ -7,6 +7,8 @@
 
 {% set current_sport = 'NBA' %}
 {% include "_sport_pills.html" %}
+{% set active_tool = 'schedule' %}
+{% include "_sport_tools.html" %}
 <h1>NBA after dark</h1>
 <p style="margin:-8px 0 16px; color:var(--text-muted);">{{ schedule[0].games|length if schedule else 0 }} game{{ 's' if not schedule or schedule[0].games|length != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %}</p>
 

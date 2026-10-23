@@ -147,12 +147,8 @@
       <div class="gdp-venue">{{ detail.game.venue }}{% if detail.game.weather %} · {{ detail.game.weather.temp }}°F{% if detail.game.weather.gust_mph %} · Gust {{ detail.game.weather.gust_mph }}mph{% endif %}{% if detail.game.weather.precip_pct %} · {{ detail.game.weather.precip_pct }}% rain{% endif %}{% endif %}</div>
       <div class="gdp-pills">
         {% if detail.fanduel.spread.home.line is not none %}<span class="gdp-pill">{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span>{% endif %}
-        {% if detail.fanduel.total.line is not none %}<span class="gdp-pill">O/U {{ detail.fanduel.total.line }}</span>{% endif %}
         {% if detail.fanduel.moneyline.away.price is not none %}<span class="gdp-pill">{{ detail.teams.away.abbr }} {{ '+' if detail.fanduel.moneyline.away.price > 0 }}{{ detail.fanduel.moneyline.away.price }} · {{ detail.teams.home.abbr }} {{ detail.fanduel.moneyline.home.price }}</span>{% endif %}
       </div>
-      {% if detail.model.proj_score %}
-      <div class="gdp-proj">Model projection <b style="color:var(--gdp-text)">{{ detail.teams.away.abbr }} {{ detail.model.proj_score.away }} – {{ detail.teams.home.abbr }} {{ detail.model.proj_score.home }}</b></div>
-      {% endif %}
     </div>
 
     <div class="gdp-team home">
@@ -203,13 +199,12 @@
     <div class="gdp-main">
 
       {# ── Line movement ─────────────────────────────────────────────── #}
-      {% if detail.fanduel.history.ml or detail.fanduel.history.spread or detail.fanduel.history.total %}
+      {% if detail.fanduel.history.ml or detail.fanduel.history.spread %}
       <div class="gdp-card">
         <div class="gdp-section-head"><span>LINE MOVEMENT</span></div>
         <div class="gdp-lm-tabs" role="tablist" aria-label="Line movement market">
           <button type="button" class="gdp-lm-tab" data-lm-key="ml" role="tab" aria-selected="false">Moneyline</button>
           <button type="button" class="gdp-lm-tab" data-lm-key="spread" role="tab" aria-selected="false">Spread</button>
-          <button type="button" class="gdp-lm-tab" data-lm-key="total" role="tab" aria-selected="false">Total</button>
         </div>
         <div class="gdp-lm-drift" id="lmDrift" hidden>
           <div class="gdp-lm-drift-team" data-side="away">
@@ -296,7 +291,7 @@
     <div class="gdp-rail">
 
       {# ── FanDuel market (read-only, informational) ───────────────────── #}
-      {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none or detail.fanduel.total.line is not none %}
+      {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none %}
       <div class="gdp-card">
         <div class="gdp-section-head"><span>FANDUEL MARKET</span><span>Model side outlined</span></div>
 
@@ -325,20 +320,6 @@
             </div>
             <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','SPREAD')|list and detail.teams.home.abbr in (detail.verdicts|selectattr('market','equalto','SPREAD')|first).pick }}">
               <span>{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span><span class="price">{{ detail.fanduel.spread.home.price }}</span>
-            </div>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if detail.fanduel.total.line is not none %}
-        <div class="gdp-market">
-          <div style="font-size:12px;"><b>Total</b></div>
-          <div class="gdp-market-sides">
-            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','TOTAL')|list and 'OVER' in (detail.verdicts|selectattr('market','equalto','TOTAL')|first).pick }}">
-              <span>Over {{ detail.fanduel.total.line }}</span><span class="price">{{ detail.fanduel.total.over_price }}</span>
-            </div>
-            <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','TOTAL')|list and 'UNDER' in (detail.verdicts|selectattr('market','equalto','TOTAL')|first).pick }}">
-              <span>Under {{ detail.fanduel.total.line }}</span><span class="price">{{ detail.fanduel.total.under_price }}</span>
             </div>
           </div>
         </div>
@@ -436,13 +417,13 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     } catch (e) {}
 });
 
-{% if detail.fanduel.history.ml or detail.fanduel.history.spread or detail.fanduel.history.total %}
+{% if detail.fanduel.history.ml or detail.fanduel.history.spread %}
 (function () {
     var hist = {{ detail.fanduel.history | tojson }};
     var model = {{ {'ml': (detail.model.p_blend_home * 100) if detail.model.p_blend_home is not none else none,
-                    'spread': detail.model.spread_home, 'total': detail.model.total} | tojson }};
-    var LABELS = {ml: 'Moneyline', spread: 'Spread', total: 'Total'};
-    var VALUE_LABELS = {ml: 'ML no-vig %', spread: 'Spread', total: 'Total'};
+                    'spread': detail.model.spread_home} | tojson }};
+    var LABELS = {ml: 'Moneyline', spread: 'Spread'};
+    var VALUE_LABELS = {ml: 'ML no-vig %', spread: 'Spread'};
 
     var ctx = document.getElementById('lineChart');
     if (!ctx) return;
@@ -467,7 +448,7 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         // the top and leaving most of the chart empty.
         var dataMin = Math.min.apply(null, values), dataMax = Math.max.apply(null, values);
         var dataRange = dataMax - dataMin;
-        var pad = Math.max(dataRange * 0.2, key === 'spread' ? 0.5 : key === 'total' ? 1 : 0.5);
+        var pad = Math.max(dataRange * 0.2, key === 'spread' ? 0.5 : 0.5);
         var yMin = dataMin - pad, yMax = dataMax + pad;
         // Only draw the model reference line if it actually lands near the
         // real data's range — otherwise it's a callout instead (below),
@@ -525,9 +506,7 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     // means the market is moving toward home. Spread's plotted value is
     // the home-team line (negative = home favored) — a MORE negative line
     // also means the market is moving toward home, the opposite sign
-    // relationship. Total has no team side to drift toward (it's not a
-    // moneyline/spread on either team), so the team badges stay hidden
-    // for it — just an over/under direction.
+    // relationship.
     function driftSide(key, first, last) {
         if (key === 'ml') return last > first ? 'home' : (last < first ? 'away' : null);
         if (key === 'spread') return last < first ? 'home' : (last > first ? 'away' : null);
@@ -539,18 +518,6 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         var first = values[0], last = values[values.length - 1];
         var delta = last - first;
         var flat = Math.abs(delta) < 0.05;
-
-        if (key === 'total') {
-            driftEl.hidden = false;
-            driftTeamEls.away.classList.remove('gdp-lm-drift-favored');
-            driftTeamEls.home.classList.remove('gdp-lm-drift-favored');
-            driftTeamEls.away.style.visibility = 'hidden';
-            driftTeamEls.home.style.visibility = 'hidden';
-            driftArrow.textContent = flat ? '•' : (delta > 0 ? '↑' : '↓');
-            driftArrow.className = flat ? 'gdp-lm-drift-flat' : '';
-            driftLabel.textContent = flat ? 'Flat' : (delta > 0 ? 'Trending over' : 'Trending under');
-            return;
-        }
 
         driftTeamEls.away.style.visibility = '';
         driftTeamEls.home.style.visibility = '';
@@ -578,17 +545,17 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
             tab.disabled = true;
             return;
         }
-        if (!active) active = key;  // first tab with data, in ml/spread/total DOM order
+        if (!active) active = key;  // first tab with data, in ml/spread DOM order
         tab.addEventListener('click', function () {
             tabs.forEach(function (t) { t.setAttribute('aria-selected', 'false'); });
             tab.setAttribute('aria-selected', 'true');
             render(key);
         });
     });
-    // Default to Total > Spread > ML when all three have data, matching
-    // what used to be hardcoded before tabs existed; falls back to
-    // whichever market is the only one with data.
-    var initial = hist.total.length ? 'total' : hist.spread.length ? 'spread' : active;
+    // Default to Spread > ML when both have data, matching what used to
+    // be hardcoded before tabs existed; falls back to whichever market
+    // is the only one with data.
+    var initial = hist.spread.length ? 'spread' : active;
     if (initial) {
         var initialTab = document.querySelector('.gdp-lm-tab[data-lm-key="' + initial + '"]');
         if (initialTab) initialTab.setAttribute('aria-selected', 'true');
