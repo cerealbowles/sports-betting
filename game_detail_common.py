@@ -76,67 +76,82 @@ def hist_key(home_name, away_name, game_time_utc):
     return f"{_normalize(home_name)}_{_normalize(away_name)}_{event_hour}"
 
 
+_RESOLVED_STATS_TTL = 900  # resolved predictions only change when a game finishes
+
+
 def market_gap_sd(sport, market):
     """Real stdev of (model line - market line) across this app's own
     resolved predictions (GamePrediction) for `sport` — the outlier guard's
     'market_gap_sd'. None (guard never trips) if fewer than 5 resolved games
     have both a stored market line and factors to recompute the model's
-    line from — honest under-data behavior rather than a guessed constant."""
-    from app import app as flask_app, GamePrediction
+    line from — honest under-data behavior rather than a guessed constant.
 
-    with flask_app.app_context():
-        rows = (GamePrediction.query
-                .filter_by(sport=sport)
-                .filter(GamePrediction.home_won.isnot(None))
-                .all())
-    diffs = []
-    for r in rows:
-        if r.spread_pick_line is None:
-            continue
-        try:
-            factors = json.loads(r.factors_json or '[]')
-        except (TypeError, ValueError):
-            factors = []
-        if not factors:
-            continue
-        margin = spread_model.predict_margin(sport, factors)
-        if margin is None:
-            continue
-        diffs.append(margin - r.spread_pick_line)
-    if len(diffs) < 5:
-        return None
-    mean = sum(diffs) / len(diffs)
-    var = sum((d - mean) ** 2 for d in diffs) / len(diffs)
-    return math.sqrt(var) or None
+    Walks every resolved prediction for the sport and re-runs
+    spread_model.predict_margin() on each one, so it's cached (same TTL
+    idea as _league_rank_table in nfl_game_detail.py): results only change
+    when a new game resolves, not on every game-detail page load."""
+    def _compute():
+        from app import app as flask_app, GamePrediction
+
+        with flask_app.app_context():
+            rows = (GamePrediction.query
+                    .filter_by(sport=sport)
+                    .filter(GamePrediction.home_won.isnot(None))
+                    .all())
+        diffs = []
+        for r in rows:
+            if r.spread_pick_line is None:
+                continue
+            try:
+                factors = json.loads(r.factors_json or '[]')
+            except (TypeError, ValueError):
+                factors = []
+            if not factors:
+                continue
+            margin = spread_model.predict_margin(sport, factors)
+            if margin is None:
+                continue
+            diffs.append(margin - r.spread_pick_line)
+        if len(diffs) < 5:
+            return None
+        mean = sum(diffs) / len(diffs)
+        var = sum((d - mean) ** 2 for d in diffs) / len(diffs)
+        return math.sqrt(var) or None
+
+    return cached_compute(f'market_gap_sd_{sport}_{market}', _RESOLVED_STATS_TTL, _compute)
 
 
 def ats_record_when_edge(sport, threshold_pts):
     """Real season-to-date ATS record in resolved predictions for `sport`
     where the model's spread edge was at least `threshold_pts`. None if
-    fewer than 5 qualifying resolved games."""
-    from app import app as flask_app, GamePrediction
+    fewer than 5 qualifying resolved games. Cached for the same reason as
+    market_gap_sd() above — same underlying query+loop, same TTL."""
+    def _compute():
+        from app import app as flask_app, GamePrediction
 
-    with flask_app.app_context():
-        rows = (GamePrediction.query
-                .filter_by(sport=sport)
-                .filter(GamePrediction.spread_covered.isnot(None))
-                .all())
-    w = l = 0
-    for r in rows:
-        try:
-            factors = json.loads(r.factors_json or '[]')
-        except (TypeError, ValueError):
-            factors = []
-        if not factors or r.spread_pick_line is None:
-            continue
-        margin = spread_model.predict_margin(sport, factors)
-        if margin is None:
-            continue
-        if abs(margin - r.spread_pick_line) >= threshold_pts:
-            if r.spread_covered:
-                w += 1
-            else:
-                l += 1
-    if w + l < 5:
-        return None
-    return {'threshold_pts': threshold_pts, 'w': w, 'l': l, 'pct': round(100 * w / (w + l), 1)}
+        with flask_app.app_context():
+            rows = (GamePrediction.query
+                    .filter_by(sport=sport)
+                    .filter(GamePrediction.spread_covered.isnot(None))
+                    .all())
+        w = l = 0
+        for r in rows:
+            try:
+                factors = json.loads(r.factors_json or '[]')
+            except (TypeError, ValueError):
+                factors = []
+            if not factors or r.spread_pick_line is None:
+                continue
+            margin = spread_model.predict_margin(sport, factors)
+            if margin is None:
+                continue
+            if abs(margin - r.spread_pick_line) >= threshold_pts:
+                if r.spread_covered:
+                    w += 1
+                else:
+                    l += 1
+        if w + l < 5:
+            return None
+        return {'threshold_pts': threshold_pts, 'w': w, 'l': l, 'pct': round(100 * w / (w + l), 1)}
+
+    return cached_compute(f'ats_record_{sport}_{threshold_pts}', _RESOLVED_STATS_TTL, _compute)

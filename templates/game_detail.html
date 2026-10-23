@@ -21,6 +21,11 @@
 .gdp .gdp-badge { width:56px; height:56px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:22px; flex:none; }
 .gdp .gdp-badge.away { background:#1E2A4A; border:2px solid #6E9BFF; color:#CFDDFF; }
 .gdp .gdp-badge.home { background:#3A2214; border:2px solid #FF8A3D; color:#FFD3B5; }
+.gdp .gdp-badge img { width:36px; height:36px; object-fit:contain; }
+.gdp .gdp-badge img.gdp-badge-hidden { display:none; }
+.gdp .gdp-badge span { display:none; }
+.gdp .gdp-badge img.gdp-badge-hidden ~ span { display:inline; }
+.gdp .gdp-badge:not(:has(img)) span { display:inline; }
 .gdp .gdp-team-name { font-size:17px; font-weight:700; }
 .gdp .gdp-team-sub { font-size:13px; color:var(--gdp-muted); }
 .gdp .gdp-l5 { display:flex; gap:4px; margin-top:4px; }
@@ -134,7 +139,7 @@
   {# ── Hero ───────────────────────────────────────────────────────────── #}
   <div class="gdp-card gdp-hero">
     <div class="gdp-team away">
-      <div class="gdp-badge away">{{ detail.teams.away.abbr }}</div>
+      <div class="gdp-badge away">{% if detail.teams.away.logo_url %}<img src="{{ detail.teams.away.logo_url }}" alt="{{ detail.teams.away.abbr }}" loading="lazy" onerror="this.classList.add('gdp-badge-hidden')">{% endif %}<span>{{ detail.teams.away.abbr }}</span></div>
       <div>
         <div class="gdp-team-name">{{ detail.teams.away.name }}</div>
         <div class="gdp-team-sub">{{ detail.teams.away.wins }}–{{ detail.teams.away.losses }}{% if detail.teams.away.split_label %} · {{ detail.teams.away.split_w }}–{{ detail.teams.away.split_l }} {{ detail.teams.away.split_label }}{% endif %}</div>
@@ -157,7 +162,7 @@
         <div class="gdp-team-sub">{{ detail.teams.home.wins }}–{{ detail.teams.home.losses }}{% if detail.teams.home.split_label %} · {{ detail.teams.home.split_w }}–{{ detail.teams.home.split_l }} {{ detail.teams.home.split_label }}{% endif %}</div>
         <div class="gdp-l5 home">{% for r in detail.teams.home.form %}<span class="gdp-chip {{ 'w' if r == 'W' else 'l' }}">{{ r }}</span>{% endfor %}</div>
       </div>
-      <div class="gdp-badge home">{{ detail.teams.home.abbr }}</div>
+      <div class="gdp-badge home">{% if detail.teams.home.logo_url %}<img src="{{ detail.teams.home.logo_url }}" alt="{{ detail.teams.home.abbr }}" loading="lazy" onerror="this.classList.add('gdp-badge-hidden')">{% endif %}<span>{{ detail.teams.home.abbr }}</span></div>
     </div>
   </div>
 
