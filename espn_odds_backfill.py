@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-espn_odds_backfill.py — Fill in spread_open/close and total_open/close on
-existing game_predictions rows, pulled from ESPN's pickcenter odds block.
-Prep work for a future spread/O-U prediction model — moneyline is already
-tracked separately via odds_api.py, this fills the gap nothing else covers.
+espn_odds_backfill.py — Fill in spread_open/close, total_open/close, and
+home_odds/away_odds on existing game_predictions rows, pulled from ESPN's
+pickcenter odds block. Mainly useful for rows backfilled from historical
+game logs (e.g. nba_backfill.py, nhl_backfill.py) that have a model
+probability but never got a market price attached, which keeps them out of
+the Recommended Bets history on /model (it needs a price to compute
+edge/Kelly). Live-tracked rows already get odds from odds_api.py/The Odds
+API and won't need this.
 
 Usage:
     python3 espn_odds_backfill.py                       # all sports, all rows missing data
@@ -13,8 +17,8 @@ Usage:
 Walks each sport's distinct game_date values in game_predictions, pulls
 that date's ESPN scoreboard once, matches events to rows by exact
 (home_team, away_team) displayName, then fetches pickcenter per matched
-event. Safe to re-run: skips rows that already have spread_close and
-total_close set.
+event. Safe to re-run: skips rows that already have spread_close,
+total_close, and home_odds all set.
 
 Only considers COMPLETED games (home_won is set) from the last
 RETENTION_FLOOR_DAYS — ESPN's pickcenter odds block empirically disappears
@@ -62,13 +66,18 @@ def run(sports=None, dry_run=False, since=None):
 
     with flask_app.app_context():
         for sport in sports:
+            missing_filter = db.or_(
+                GamePrediction.spread_close.is_(None),
+                GamePrediction.total_close.is_(None),
+                GamePrediction.home_odds.is_(None),
+            )
             all_missing = GamePrediction.query.filter(
                 GamePrediction.sport == sport,
-                db.or_(GamePrediction.spread_close.is_(None), GamePrediction.total_close.is_(None)),
+                missing_filter,
             ).count()
             rows = GamePrediction.query.filter(
                 GamePrediction.sport == sport,
-                db.or_(GamePrediction.spread_close.is_(None), GamePrediction.total_close.is_(None)),
+                missing_filter,
                 GamePrediction.home_won.isnot(None),
                 GamePrediction.game_date >= floor_date,
             ).all()
@@ -119,13 +128,18 @@ def run(sports=None, dry_run=False, since=None):
                     totals['matched'] += 1
                     print(f'  ✓ {r.away_team} @ {r.home_team}: '
                           f'spread {pc["spread_open"]}→{pc["spread_close"]}  '
-                          f'total {pc["total_open"]}→{pc["total_close"]}')
+                          f'total {pc["total_open"]}→{pc["total_close"]}  '
+                          f'ml {pc["away_moneyline"]}/{pc["home_moneyline"]}')
                     continue
 
                 r.spread_open  = pc['spread_open']
                 r.spread_close = pc['spread_close']
                 r.total_open   = pc['total_open']
                 r.total_close  = pc['total_close']
+                if r.home_odds is None and pc['home_moneyline'] is not None:
+                    r.home_odds = int(pc['home_moneyline'])
+                if r.away_odds is None and pc['away_moneyline'] is not None:
+                    r.away_odds = int(pc['away_moneyline'])
                 totals['matched'] += 1
 
             if not dry_run:

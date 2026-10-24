@@ -2076,6 +2076,66 @@ _SPREAD_OMEN_WEIGHTS = {}
 # it's fit from NHL's bucket boundaries, not re-derived per sport.
 _SPREAD_OMEN_FLOOR = 28
 
+# NHL moneyline-specific gate, on top of _market_qualifies' sport-agnostic
+# edge>=4/Kelly>0/b>=0.25 bar. Backtest on 789 resolved NHL games with real
+# market odds (2026-01-07 through 2026-10-23, via espn_odds_backfill.py)
+# found the generic 4pt floor was anti-selective for NHL specifically: the
+# qualifying subset ran -21.2% ROI (n=46) while just flat-betting every
+# model-favored game ran -3.0% (n=789) — vig-free MARKET implied probability
+# tracked actual outcomes almost exactly, so a model/market disagreement is
+# usually the model being wrong, not a real edge. Two things held up across
+# cuts: (1) edge>=8 alone moved the subset to -0.9% ROI (n=14) with a clean
+# monotonic trend as the floor rises further; (2) near-coin-flip pricing
+# (-110 to +110) was the single worst bucket even unfiltered (34.8% WR,
+# n=23) and every edge>=4 qualifier priced in that band lost (4-for-4).
+# Combined: n=12, 66.7% WR, +15.6% ROI. NOT cross-validated — a chronological
+# split has ~0 games at edge>=8 in the first half of the sample, so this is
+# fit and checked on the same ~12-20 games, not confirmed on a held-out
+# period. Revisit (and ideally loosen) once a full season accumulates.
+_NHL_ML_EDGE_FLOOR = 8
+_NHL_ML_COINFLIP_BAND = (-110, 110)  # [lo, hi) American odds to exclude
+
+
+def _nhl_ml_gate_passes(edge, amer_odds):
+    """True unless this NHL moneyline pick fails the extra edge-floor/
+    coin-flip-pricing checks above. No-op for every other sport/market."""
+    try:
+        amer_odds = float(amer_odds)
+    except (TypeError, ValueError):
+        return True
+    if edge < _NHL_ML_EDGE_FLOOR:
+        return False
+    lo, hi = _NHL_ML_COINFLIP_BAND
+    if lo <= amer_odds < hi:
+        return False
+    return True
+
+
+# NBA moneyline-specific gate — same spirit as the NHL one above, different
+# mechanism. Backtest on 726 resolved NBA games with real market odds found
+# edge size wasn't the problem (raising the floor made ROI monotonically
+# WORSE: edge>=4 ran -4.6% ROI n=146, edge>=10 ran -19.1% n=72 — the opposite
+# direction from NHL). The actual culprit is price range: picks priced -180
+# to -110 (short/moderate favorites) ran 45-51% WR / -16% to -20% ROI among
+# edge>=4 qualifiers, while heavier favorites (-250 or shorter) were solidly
+# profitable (70-88% WR, +1.6% to +15.1% ROI). Excluding that band: n=71,
+# 80.3% WR, +12.3% ROI — and unlike the NHL gate, this DOES hold up on a
+# chronological train/test split: first half n=40 +4.9% ROI, second half
+# n=31 +21.9% ROI, both positive independently. Edge floor stays at the
+# generic 4pt bar; only the price band is excluded.
+_NBA_ML_WEAK_PRICE_BAND = (-180, -110)  # [lo, hi) American odds to exclude
+
+
+def _nba_ml_gate_passes(amer_odds):
+    """True unless this NBA moneyline pick falls in the weak price band
+    above. No-op for every other sport/market."""
+    try:
+        amer_odds = float(amer_odds)
+    except (TypeError, ValueError):
+        return True
+    lo, hi = _NBA_ML_WEAK_PRICE_BAND
+    return not (lo <= amer_odds < hi)
+
 
 def _default_spread_omen_weights():
     return _default_omen_weights()
@@ -4959,6 +5019,10 @@ def _best_market_pick(game):
     mkt_implied = h_imp if favors_home else a_imp
     amer_odds   = odds.get('home_best') if favors_home else odds.get('away_best')
     q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
+    if q and sport == 'NHL' and not _nhl_ml_gate_passes(q[0], amer_odds):
+      q = None
+    if q and sport == 'NBA' and not _nba_ml_gate_passes(amer_odds):
+      q = None
     if q:
       edge, kelly, b = q
       abbr = home_abbr if favors_home else away_abbr
@@ -5566,6 +5630,10 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
                                  p.spread_home_price, p.spread_away_price)
       if sts < _SPREAD_OMEN_FLOOR:
         continue
+    if bet_type == 'moneyline' and sport == 'NHL' and not _nhl_ml_gate_passes(edge, amer):
+      continue
+    if bet_type == 'moneyline' and sport == 'NBA' and not _nba_ml_gate_passes(amer):
+      continue
     rows.append({
         'date': p.game_date,
         'pick': pick,

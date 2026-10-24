@@ -1,9 +1,9 @@
 """
-espn_pickcenter.py — Shared helpers for pulling spread/total (O/U) lines from
-ESPN's site API, across all six sports we track. Used by espn_odds_backfill.py
-to fill in game_predictions.spread_open/close and total_open/close, which
-nothing else currently populates (moneyline is already tracked separately via
-odds_api.py/The Odds API).
+espn_pickcenter.py — Shared helpers for pulling spread/total (O/U) lines and
+moneyline prices from ESPN's site API, across all six sports we track. Used
+by espn_odds_backfill.py to fill in game_predictions.spread_open/close,
+total_open/close, and home_odds/away_odds for historical rows that predate
+live tracking via odds_api.py/The Odds API.
 
 ESPN only keeps the per-event `pickcenter` odds block for roughly the last
 ~300 days — a completed game older than that will return no odds data at
@@ -90,9 +90,14 @@ def _open_close(side):
 
 
 def fetch_pickcenter(sport, event_id):
-    """Returns {spread_open, spread_close, total_open, total_close} (home-team
-    spread; negative = home favored) or None if ESPN has no odds for this
-    event (outside the retention window, or never had a market)."""
+    """Returns {spread_open, spread_close, total_open, total_close,
+    home_moneyline, away_moneyline} (home-team spread; negative = home
+    favored) or None if ESPN has no odds for this event (outside the
+    retention window, or never had a market).
+
+    moneyLine only ever reflects whatever ESPN's primary book shows at
+    fetch time — for a completed game that's the last line taken before
+    tip, i.e. the closing price, same as spread_close/total_close."""
     slug = SPORT_SLUGS[sport]
     data = _get(f'{_BASE}/{slug}/summary', {'event': event_id}, f'{sport} summary {event_id}')
     if not data:
@@ -103,11 +108,16 @@ def fetch_pickcenter(sport, event_id):
     entry = pc[0]  # primary/consensus book ESPN surfaces first
     spread_open, spread_close = _open_close(entry.get('pointSpread', {}).get('home'))
     total_open, total_close   = _open_close(entry.get('total', {}).get('over'))
-    if spread_open is None and spread_close is None and total_open is None and total_close is None:
+    home_moneyline = entry.get('homeTeamOdds', {}).get('moneyLine')
+    away_moneyline = entry.get('awayTeamOdds', {}).get('moneyLine')
+    if (spread_open is None and spread_close is None and total_open is None
+            and total_close is None and home_moneyline is None and away_moneyline is None):
         return None
     return {
-        'spread_open':  spread_open,
-        'spread_close': spread_close,
-        'total_open':   total_open,
-        'total_close':  total_close,
+        'spread_open':    spread_open,
+        'spread_close':   spread_close,
+        'total_open':     total_open,
+        'total_close':    total_close,
+        'home_moneyline': home_moneyline,
+        'away_moneyline': away_moneyline,
     }
