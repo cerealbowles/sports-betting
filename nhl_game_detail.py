@@ -195,7 +195,7 @@ def build_game_detail(game_id):
                 'why': ("Model is an outlier vs. its historical spread error — verify inputs before betting."
                         if is_outlier else
                         f"Model line {model_side_abbr} {model_side_line:g} vs market {home_abbrev} {home_spread_line:g}."),
-                'gate_note': gdc.recommendation_gate_note('NHL', 'SPREAD', tag),
+                'gate_note': gdc.recommendation_gate_note('NHL', 'SPREAD', tag, amer_odds=side_price),
             }
 
     verdicts = [v for v in (ml_verdict, spread_verdict) if v]

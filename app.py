@@ -2145,6 +2145,35 @@ def _nba_ml_gate_passes(amer_odds):
     return not (lo <= amer_odds < hi)
 
 
+# NHL spread-specific gate, on top of the generic _market_qualifies bar and
+# the _SPREAD_OMEN_FLOOR check above. Backtest on 1,020 resolved NHL spread
+# picks (game_predictions.spread_pick_roi, through 2026-10-25) found picks
+# priced -180 to -110 on the picked side ran 50.0% win rate / -17.0% ROI
+# (n=46), while every other NHL spread pick combined ran 61.6% WR / +14.3%
+# ROI (n=974) — the same price-band shape as the NBA ML gate above, just a
+# different sport/market. NOT cross-validated on a chronological split: all
+# 46 qualifying picks fall in the most recent ~3.5 weeks of a sample that
+# otherwise goes back to 2025-12-07, so there's no earlier stretch to check
+# this against yet — revisit once more of the season accumulates. Sport-
+# specific and NOT applied anywhere else: the same band tested as this
+# sport's STRONGEST bucket for CFB/NFL spread (+14.9%/+22.2% ROI) and
+# NBA's spread model is weak in every band, not just this one (already
+# excluded entirely — see spread_model.VALIDATED_SPORTS) — so this is
+# deliberately NHL-only, not a generic rule.
+_NHL_SPREAD_WEAK_PRICE_BAND = (-180, -110)  # [lo, hi) American odds to exclude
+
+
+def _nhl_spread_gate_passes(amer_odds):
+    """True unless this NHL spread pick falls in the weak price band
+    above. No-op for every other sport/market."""
+    try:
+        amer_odds = float(amer_odds)
+    except (TypeError, ValueError):
+        return True
+    lo, hi = _NHL_SPREAD_WEAK_PRICE_BAND
+    return not (lo <= amer_odds < hi)
+
+
 def _default_spread_omen_weights():
     return _default_omen_weights()
 
@@ -5066,6 +5095,8 @@ def _best_market_pick(game):
           sts = _spread_omen_score(sport, factors, home_spread, hp_price, ap_price)
           if sts < _SPREAD_OMEN_FLOOR:
             q = None
+        if q and sport == 'NHL' and not _nhl_spread_gate_passes(amer_odds):
+          q = None
         if q:
           edge, kelly, b = q
           abbr = home_abbr if favors_home else away_abbr
@@ -5643,6 +5674,8 @@ def _recommended_bets_history(resolved, sport, bet_type='moneyline'):
     if bet_type == 'moneyline' and sport == 'NHL' and not _nhl_ml_gate_passes(edge, amer):
       continue
     if bet_type == 'moneyline' and sport == 'NBA' and not _nba_ml_gate_passes(amer):
+      continue
+    if bet_type == 'spread' and sport == 'NHL' and not _nhl_spread_gate_passes(amer):
       continue
     rows.append({
         'date': p.game_date,

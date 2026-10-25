@@ -80,6 +80,11 @@ def recommendation_gate_note(sport, market, tag, amer_odds=None, edge_pts=None):
             return (f"Not one of this site's real picks: {sport}'s spread model isn't validated "
                     f"yet (only MLB and NHL are — see spread_model.VALIDATED_SPORTS) — this "
                     f"edge never reaches the site's live picks.")
+        if sport == 'NHL' and amer_odds is not None and not _app._nhl_spread_gate_passes(amer_odds):
+            lo, hi = _app._NHL_SPREAD_WEAK_PRICE_BAND
+            return (f"Not one of this site's real picks: NHL spreads priced {lo} to {hi} "
+                    f"backtested a 50.0% win rate (-17.0% ROI) on 46 resolved picks, while every "
+                    f"other NHL spread pick ran +14.3% — excluded by price alone.")
     return None
 
 
