@@ -76,6 +76,8 @@
 .gdp .gdp-lm-drift-arrow #lmDriftArrow.gdp-lm-drift-left { transform:scaleX(-1); }
 .gdp .gdp-lm-drift-arrow #lmDriftArrow.gdp-lm-drift-flat { color:var(--gdp-dim); font-size:16px; transform:none; }
 .gdp .gdp-lm-drift-label { font-size:11px; color:var(--gdp-muted); font-weight:600; }
+.gdp .gdp-lm-chart-wrap { position:relative; height:150px; }
+@media (max-width:480px) { .gdp .gdp-lm-chart-wrap { height:170px; } }
 .gdp .gdp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
 .gdp .gdp-main { flex:999 1 560px; min-width:0; }
 .gdp .gdp-rail { flex:1 1 320px; min-width:0; }
@@ -112,13 +114,20 @@
    (z-index:100) pinned to the same bottom:0 edge — without this, that bar
    paints over the lower half of this panel (the moneyline/spread chips
    become untappable, which is exactly the "bottom isn't showing up on
-   mobile" bug this fixes). Lift the panel clear of the tab bar and above
-   its stacking order, using the same 84px reservation base.html's own
-   .container padding-bottom uses for that bar. */
+   mobile" bug this fixes). Stay pinned to that SAME bottom:0 edge (rather
+   than lifting the panel to sit above the tab bar with a guessed gap —
+   that left a visible dead strip of bare page background between the two
+   fixed elements, since the guess didn't match the tab bar's real
+   rendered height) and sit BELOW the tab bar's stacking order instead, so
+   the tab bar simply paints over this panel's own bottom padding — any
+   mismatch there is invisible (it's this panel's own background both
+   sides of the seam), not a gap. The extra bottom padding is sized to
+   clear the tab bar's content (badge icon + label + its own padding),
+   comfortably more than its ~58px measured height. */
 @media (max-width:768px) {
   .gdp .nfl-bet-panel.game-card-details {
-    bottom: calc(84px + env(safe-area-inset-bottom));
-    z-index: 150;
+    z-index: 90;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
   }
 }
 /* The fixed bar sits on top of the page rather than in normal flow, so the
@@ -130,9 +139,10 @@
 .gdp .gdp-stat-row > * { min-width:0; overflow-wrap:anywhere; }
 @media (max-width:900px) { .gdp .gdp-cols { flex-direction:column; } }
 @media (max-width:768px) {
-  /* Panel moved up to clear .bottom-tab-bar (above) — match it here so the
-     page's last section still ends above the panel instead of under it. */
-  .gdp.gdp-has-bet-panel { padding-bottom: calc(140px + 84px + env(safe-area-inset-bottom)); }
+  /* Panel grew by its own extra bottom padding (above) rather than being
+     lifted — match that same growth here so the page's last section still
+     ends above the panel instead of under it. */
+  .gdp.gdp-has-bet-panel { padding-bottom: calc(140px + 64px + env(safe-area-inset-bottom)); }
 }
 @media (max-width:480px) {
   .gdp .gdp-stat-row { grid-template-columns:40px 1fr 72px 1fr 40px; font-size:12px; }
@@ -241,7 +251,7 @@
             <span>{{ detail.teams.home.abbr }}</span>
           </div>
         </div>
-        <canvas id="lineChart" height="110" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
+        <div class="gdp-lm-chart-wrap"><canvas id="lineChart" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas></div>
         <div id="lmModelNote" class="gdp-lm-model-note" hidden></div>
       </div>
       {% endif %}
@@ -474,8 +484,16 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         // Same-day snapshots are common (the hourly odds-fetch cron can log
         // several in one calendar day) — include the time, not just the
         // date, so consecutive points on the x-axis aren't indistinguishable.
+        // Kept deliberately short (e.g. "10/24 7a") rather than "Oct 24,
+        // 7:00 AM" — the long form only fit a few per screen and needed a
+        // steep rotation to avoid overlapping, which is what made this
+        // chart hard to read on a phone; the short form fits more ticks
+        // flat/horizontal instead.
         var labels = series.map(function (p) {
-            return new Date(p.t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+            var d = new Date(p.t);
+            var date = d.toLocaleDateString([], {month: 'numeric', day: 'numeric'});
+            var time = d.toLocaleTimeString([], {hour: 'numeric'}).replace(' ', '').replace('AM', 'a').replace('PM', 'p');
+            return date + ' ' + time;
         });
         var values = series.map(function (p) { return p.value; });
         var modelVal = model[key];
@@ -497,15 +515,18 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         if (modelInRange) { yMin = Math.min(yMin, modelVal - pad * 0.3); yMax = Math.max(yMax, modelVal + pad * 0.3); }
 
         var datasets = [
-            {label: VALUE_LABELS[key], data: values, borderColor: '#F5C04E', backgroundColor: 'transparent', tension: 0.15},
+            {label: VALUE_LABELS[key], data: values, borderColor: '#F5C04E', borderWidth: 2.5,
+             backgroundColor: 'rgba(245,192,78,.12)', fill: true, tension: 0.15,
+             pointRadius: 3, pointBackgroundColor: '#F5C04E', pointBorderColor: '#11131E', pointBorderWidth: 1.5,
+             pointHoverRadius: 5},
         ].concat(modelInRange ? [{label: 'Model', data: values.map(function () { return modelVal; }),
-            borderColor: '#8EE07A', borderDash: [6, 6], pointRadius: 0}] : []);
+            borderColor: '#8EE07A', borderWidth: 2, borderDash: [6, 6], pointRadius: 0}] : []);
 
         var modelNote = document.getElementById('lmModelNote');
         if (modelNote) {
             if (modelVal != null && !modelInRange) {
                 modelNote.hidden = false;
-                modelNote.textContent = 'Model ' + modelVal.toFixed(1) + (modelVal > dataMax ? ' — well above the chart range' : ' — well below the chart range');
+                modelNote.textContent = LABELS[key] + ' model: ' + (modelVal > 0 ? '+' : '') + modelVal.toFixed(1) + (modelVal > dataMax ? ' — well above FanDuel\'s range' : ' — well below FanDuel\'s range');
             } else {
                 modelNote.hidden = true;
             }
@@ -523,9 +544,13 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
             type: 'line',
             data: {labels: labels, datasets: datasets},
             options: {
+                maintainAspectRatio: false,
+                interaction: {mode: 'index', intersect: false},
                 plugins: {legend: {labels: {color: '#A3A8BF', usePointStyle: true, pointStyle: 'line'}}},
                 scales: {
-                    x: {ticks: {color: '#8C91AB', autoSkip: true, maxTicksLimit: window.innerWidth < 560 ? 4 : 7, maxRotation: 40, minRotation: 0}, grid: {color: '#22263A'}},
+                    // Short labels (see above) fit flat, so no rotation needed —
+                    // that's what was making this chart hard to read.
+                    x: {ticks: {color: '#8C91AB', autoSkip: true, maxTicksLimit: window.innerWidth < 560 ? 5 : 8, maxRotation: 0, minRotation: 0}, grid: {display: false}},
                     y: {min: yMin, max: yMax, ticks: yTicks, grid: {color: '#22263A'}}
                 }
             }
