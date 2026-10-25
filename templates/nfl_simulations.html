@@ -39,6 +39,7 @@
 .sim-pick-miss { color: var(--loss); font-weight: 700; }
 .sim-stat-line { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
 .sim-stat-actual { color: var(--text); font-weight: 600; }
+.sim-detail-link { display: block; text-align: center; padding: 10px 14px; font-size: 0.82rem; border-top: 1px solid var(--border); }
 </style>
 {% endblock %}
 
@@ -205,9 +206,13 @@
                 {{ starter_rows(g.home_starters) }}
             </div>
         </div>
-        <div class="sim-tap-hint">Tap for full game breakdown ▸</div>
+        <div class="sim-tap-hint">Tap for full roster ▸</div>
 
     </div>
+
+    {% if g.summary %}
+    <a class="refresh-link sim-detail-link" href="{{ url_for('nfl_sim_detail_page', game_id=g.game_id) }}" onclick="event.stopPropagation()">Full sim breakdown — win %, margin histogram, player ranges →</a>
+    {% endif %}
 
     <div class="game-card-details" id="gd-sim-{{ g.game_id }}" hidden>
         <div class="sheet-game-title">{{ g.away.abbrev }} @ {{ g.home.abbrev }}</div>

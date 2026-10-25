@@ -1789,6 +1789,7 @@ def persist_sim_game_summary_db(season, week, game_id, home_team_id, away_team_i
         row.quarter_scores_json = _json.dumps({
             'home': summary['home_quarter_avg'], 'away': summary['away_quarter_avg'],
         })
+        row.margins_json = _json.dumps(summary['margins']) if summary.get('margins') else None
         db.session.commit()
 
 
@@ -1796,11 +1797,13 @@ def get_sim_game_summary_db(season, week):
     """{game_id: {...}} — every stored NflSimGame row for one week. Each
     value: {'n_sims', 'home_wins', 'away_wins', 'ties', 'home_win_pct',
     'away_win_pct', 'home_avg_score', 'away_avg_score',
-    'home_quarter_avg', 'away_quarter_avg'} (the last two: [Q1, Q2, Q3,
-    Q4] average points, approximate — see persist_sim_game_summary_db()'s
-    docstring). Win percentages are computed here from the stored counts
-    rather than also stored as their own columns, so they can never drift
-    from n_sims/home_wins/away_wins."""
+    'home_quarter_avg', 'away_quarter_avg', 'margins', 'computed_at'} (the
+    quarter_avg fields: [Q1, Q2, Q3, Q4] average points, approximate — see
+    persist_sim_game_summary_db()'s docstring; 'margins' is the raw
+    per-run home-minus-away list, [] if this row predates that column).
+    Win percentages are computed here from the stored counts rather than
+    also stored as their own columns, so they can never drift from
+    n_sims/home_wins/away_wins."""
     import json as _json
     from app import app as flask_app, NflSimGame
 
@@ -1816,6 +1819,8 @@ def get_sim_game_summary_db(season, week):
                 'away_win_pct': round(100 * r.away_wins / r.n_sims, 1) if r.n_sims else 0.0,
                 'home_avg_score': r.home_avg_score, 'away_avg_score': r.away_avg_score,
                 'home_quarter_avg': qs.get('home', [0, 0, 0, 0]), 'away_quarter_avg': qs.get('away', [0, 0, 0, 0]),
+                'margins': _json.loads(r.margins_json) if r.margins_json else [],
+                'computed_at': r.computed_at,
             }
         return out
 

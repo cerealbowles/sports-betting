@@ -37,6 +37,7 @@ import nfl_fantasy
 import nfl_recap
 import nfl_stats_db
 import nfl_game_detail
+import nfl_sim_detail
 import cfb_api
 import cfb_model
 import nba_api
@@ -819,6 +820,12 @@ class NflSimGame(db.Model):
   home_avg_score      = db.Column(db.Float, nullable=False)
   away_avg_score      = db.Column(db.Float, nullable=False)
   quarter_scores_json = db.Column(db.Text)
+  # Raw per-run (home_score - away_score) list — lets /nfl/simulations/
+  # <game_id> draw a real margin histogram and compute an empirical
+  # spread-cover probability (sim_math.cover_prob_empirical()) instead of
+  # a normal approximation, same "store the raw data" reasoning as
+  # NflSimResult.sim_draws_json.
+  margins_json        = db.Column(db.Text)
   computed_at         = db.Column(db.DateTime(timezone=True),
                                    default=lambda: datetime.now(timezone.utc))
 
@@ -1021,6 +1028,7 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'top_players_by_position_json', 'TEXT DEFAULT NULL')
     _add('nfl_recap_weeks', 'comparison_lineup_scores_json', 'TEXT DEFAULT NULL')
     _add('nfl_sim_results', 'sim_stats_json', 'TEXT DEFAULT NULL')
+    _add('nfl_sim_games', 'margins_json', 'TEXT DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -3533,6 +3541,8 @@ app.jinja_env.globals['spread_model_margin'] = spread_model.predict_margin
 app.jinja_env.globals['spread_model_cover_prob'] = spread_model.cover_prob
 app.jinja_env.globals['spread_model_validated'] = spread_model.is_validated
 app.jinja_env.globals['spread_model_factor_rows'] = spread_model.weighted_factors
+app.jinja_env.globals['spread_best_margin'] = spread_model.best_margin
+app.jinja_env.globals['spread_best_source'] = spread_model.best_source
 
 def _effective_spread_cover_prob(sport, model, factors, home_spread):
     """P(home covers home_spread) for actual spread picks/grading. Only
@@ -7173,6 +7183,52 @@ def nfl_simulations_page():
                          week_ctx=week_ctx, season=season, week=actual_week, games=games,
                          week_accuracy=week_accuracy))
   return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/simulations/<game_id>')
+def nfl_sim_detail_page(game_id):
+  """Per-game companion to /nfl/simulations (SIM-HANDOFF.md): outcome
+  hero, an agreement table against the real betting model (nfl_model.py)
+  and FanDuel, player fantasy-range projections, player-pair correlations,
+  and the margin histogram / quarter breakdown — all assembled by
+  nfl_sim_detail.build_sim_detail() from whatever the daily sim job
+  (NflSimResult/NflSimGame) and nfl_game_detail.py already have real data
+  for. Redirects to the list page if this game hasn't been simulated yet
+  (same "a real gap beats a wrong guess" convention as the rest of this
+  app — no point rendering an empty detail page)."""
+  detail = nfl_sim_detail.build_sim_detail(game_id)
+  if not detail:
+    return redirect(url_for('nfl_simulations_page'))
+  return render_template('sim_detail.html', detail=detail, game_id=game_id, subnav_sport='NFL')
+
+@app.route('/nfl/simulations/<game_id>/rerun', methods=['POST'])
+def nfl_sim_rerun(game_id):
+  """Re-runs just this one matchup's simulation synchronously (the "Re-run
+  sim" button) and overwrites its stored NflSimResult/NflSimGame rows,
+  rather than the full-week background job — a single matchup at the
+  default draw count is a web-request-sized wait, not the minutes a whole
+  slate takes (see NflSimResult's class docstring), so this is safe to run
+  on a live request instead of needing its own cron job."""
+  import nfl_game_simulator
+  g, season, week = nfl_game_detail.find_game(game_id)
+  if not g:
+    return redirect(url_for('nfl_simulations_page'))
+  home_id, away_id = g['home'].get('id'), g['away'].get('id')
+  sim = nfl_game_simulator.simulate_matchup(home_id, away_id)
+  for side, team_id, opponent_id in (('home', home_id, away_id), ('away', away_id, home_id)):
+    roster = {p['id']: p for p in nfl_stats_db.get_or_fetch_roster_db(team_id)}
+    team_name = g[side].get('name', '')
+    results = []
+    for player_id, outcome in sim['players'][side].items():
+      if player_id.startswith('DST_'):
+        name, position = f"{team_name} D/ST", 'DST'
+      else:
+        info = roster.get(player_id, {})
+        name, position = info.get('name'), info.get('position')
+      results.append({'player_id': player_id, 'player_name': name, 'position': position,
+                       'n_draws': len(outcome['sim']), **outcome})
+    nfl_stats_db.persist_sim_results_db(season, week, game_id, team_id, opponent_id, results)
+  nfl_stats_db.persist_sim_game_summary_db(season, week, game_id, home_id, away_id, sim['game'])
+  return redirect(url_for('nfl_sim_detail_page', game_id=game_id))
 
 # Ordered (field, short label) pairs for the predicted-vs-actual stat line
 # /nba/simulations shows under each player's name — NBA counterpart to

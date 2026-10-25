@@ -1,0 +1,342 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.teams.away.abbr }} @ {{ detail.teams.home.abbr }} — Sim — Dead Money{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.gsp { --gsp-bg:#0D0E16; --gsp-surface:#151724; --gsp-surface2:#1B1E2E; --gsp-surface3:#11131E;
+       --gsp-border:#272B3F; --gsp-text:#EEF0F6; --gsp-muted:#A3A8BF; --gsp-dim:#8C91AB;
+       --gsp-good:#8EE07A; --gsp-amber:#F5C04E; --gsp-bad:#FF7A7A;
+       background:var(--gsp-bg); color:var(--gsp-text); font-variant-numeric:tabular-nums;
+       margin:0; padding:16px; box-sizing:border-box; }
+.gsp a { color:var(--gsp-muted); text-decoration:none; }
+.gsp .gsp-topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.gsp .gsp-back { display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:14px; }
+.gsp .gsp-runinfo { color:var(--gsp-dim); font-size:13px; margin-left:12px; }
+.gsp .gsp-rerun { height:34px; padding:0 14px; border-radius:10px; border:1px solid var(--gsp-border); background:var(--gsp-surface); color:var(--gsp-text); font-weight:600; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
+.gsp .gsp-rerun:disabled { opacity:.5; cursor:default; }
+.gsp .gsp-card { background:var(--gsp-surface); border:1px solid var(--gsp-border); border-radius:18px; padding:20px; margin-bottom:16px; }
+.gsp .gsp-section-head { font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--gsp-muted); text-transform:uppercase; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+.gsp .gsp-section-head .sub { font-size:12px; color:var(--gsp-dim); text-transform:none; letter-spacing:normal; font-weight:400; }
+
+.gsp .gsp-outcome-score { display:flex; align-items:baseline; justify-content:center; gap:14px; font-family:'Barlow Condensed',sans-serif; font-weight:700; }
+.gsp .gsp-outcome-score .away { color:#CFDDFF; }
+.gsp .gsp-outcome-score .home { color:#FFD3B5; }
+.gsp .gsp-outcome-score .num { font-size:40px; }
+.gsp .gsp-outcome-score .at { font-size:20px; color:var(--gsp-dim); }
+.gsp .gsp-outcome-sub { text-align:center; color:var(--gsp-muted); font-size:13px; margin-top:4px; }
+.gsp .gsp-winpct-row { display:flex; justify-content:space-between; font-size:13px; font-weight:700; margin:16px 0 6px; }
+.gsp .gsp-winpct-row .away { color:#6E9BFF; } .gsp .gsp-winpct-row .home { color:#FF8A3D; }
+.gsp .gsp-stackbar { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--gsp-surface2); }
+.gsp .gsp-stackbar > div:nth-child(1) { background:#6E9BFF; }
+.gsp .gsp-stackbar > div:nth-child(2) { background:var(--gsp-amber); }
+.gsp .gsp-stackbar > div:nth-child(3) { background:#FF8A3D; }
+.gsp .gsp-tiewarn { margin-top:10px; padding:8px 12px; border-radius:10px; background:#352C14; color:var(--gsp-amber); font-size:12.5px; }
+
+.gsp .gsp-agree-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:14px; }
+.gsp .gsp-agree-table th { text-align:left; font-size:11px; color:var(--gsp-dim); letter-spacing:.05em; padding:6px 8px; border-bottom:1px solid var(--gsp-border); }
+.gsp .gsp-agree-table td { padding:8px 8px; border-bottom:1px solid var(--gsp-border); vertical-align:top; }
+.gsp .gsp-agree-table td.note { color:var(--gsp-muted); font-size:12px; }
+.gsp .gsp-pill { display:inline-flex; font-size:11px; font-weight:700; letter-spacing:.05em; padding:3px 9px; border-radius:999px; }
+.gsp .gsp-pill.agree { background:#183222; color:var(--gsp-good); }
+.gsp .gsp-pill.split { background:#352C14; color:var(--gsp-amber); }
+
+.gsp .gsp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+.gsp .gsp-main { flex:999 1 620px; min-width:0; }
+.gsp .gsp-rail { flex:1 1 320px; min-width:0; }
+
+.gsp .gsp-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.gsp .gsp-toolbar select { height:32px; padding:0 8px; border-radius:8px; border:1px solid var(--gsp-border); background:var(--gsp-surface2); color:var(--gsp-text); font-size:12.5px; }
+.gsp .gsp-player-row { background:var(--gsp-surface2); border:1px solid var(--gsp-border); border-radius:12px; margin-bottom:8px; overflow:hidden; }
+.gsp .gsp-player-row summary { list-style:none; cursor:pointer; padding:10px 12px; display:grid; grid-template-columns:150px 1fr 150px 56px; gap:10px; align-items:center; }
+.gsp .gsp-player-row summary::-webkit-details-marker { display:none; }
+.gsp .gsp-player-name { font-weight:700; font-size:13.5px; }
+.gsp .gsp-player-sub { font-size:11px; color:var(--gsp-dim); }
+.gsp .gsp-chips { display:flex; flex-wrap:wrap; gap:5px; }
+.gsp .gsp-chip { font-size:11px; background:var(--gsp-surface3); border:1px solid var(--gsp-border); border-radius:999px; padding:2px 8px; color:var(--gsp-muted); }
+.gsp .gsp-chip b { color:var(--gsp-text); }
+.gsp .gsp-fantasy-bar-wrap { font-size:11px; color:var(--gsp-dim); }
+.gsp .gsp-fantasy-bar { position:relative; height:8px; background:var(--gsp-surface3); border-radius:4px; margin:4px 0 2px; }
+.gsp .gsp-fantasy-bar .range { position:absolute; top:0; bottom:0; border-radius:4px; background:rgba(110,155,255,.35); }
+.gsp .gsp-fantasy-bar .median-dot { position:absolute; top:-2px; width:12px; height:12px; border-radius:50%; background:#6E9BFF; border:2px solid var(--gsp-surface); transform:translateX(-50%); }
+.gsp .gsp-fantasy-nums { display:flex; justify-content:space-between; font-size:10.5px; }
+.gsp .gsp-actual-col { text-align:right; font-weight:700; }
+.gsp .gsp-expand-body { padding:0 12px 14px; border-top:1px solid var(--gsp-border); }
+.gsp .gsp-expand-body canvas { max-height:140px; }
+.gsp .gsp-hide-zero { }
+.gsp .gsp-empty-note { color:var(--gsp-dim); font-size:12.5px; padding:10px 0; }
+
+.gsp .gsp-corr-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:12.5px; }
+.gsp .gsp-corr-label { flex:1 1 auto; color:var(--gsp-muted); }
+.gsp .gsp-corr-label b { color:var(--gsp-text); }
+.gsp .gsp-corr-bar-wrap { flex:0 0 110px; height:8px; background:var(--gsp-surface2); border-radius:4px; position:relative; }
+.gsp .gsp-corr-bar { position:absolute; top:0; bottom:0; height:100%; border-radius:4px; }
+.gsp .gsp-corr-bar.pos { background:var(--gsp-good); left:50%; }
+.gsp .gsp-corr-bar.neg { background:var(--gsp-bad); right:50%; }
+.gsp .gsp-corr-r { width:40px; text-align:right; font-weight:700; }
+.gsp .gsp-corr-note { color:var(--gsp-dim); font-size:11px; }
+
+.gsp .gsp-quarter-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
+.gsp .gsp-quarter-table th, .gsp .gsp-quarter-table td { text-align:center; padding:6px 4px; border-bottom:1px solid var(--gsp-border); }
+.gsp .gsp-quarter-table th:first-child, .gsp .gsp-quarter-table td:first-child { text-align:left; }
+.gsp .gsp-quarter-footnote { font-size:11px; color:var(--gsp-dim); margin-top:8px; }
+.gsp .gsp-margin-legend { display:flex; gap:14px; font-size:11.5px; color:var(--gsp-muted); margin-top:8px; flex-wrap:wrap; }
+.gsp .gsp-margin-legend span { display:inline-flex; align-items:center; gap:5px; }
+.gsp .gsp-margin-legend i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+
+@media (max-width:900px) { .gsp .gsp-cols { flex-direction:column; } }
+@media (max-width:640px) {
+  .gsp .gsp-player-row summary { grid-template-columns:1fr 40px; grid-template-areas:"name chev" "chips chips" "fantasy fantasy"; }
+  .gsp .gsp-player-row summary .gsp-player-id { grid-area:name; }
+  .gsp .gsp-player-row summary .gsp-chips { grid-area:chips; }
+  .gsp .gsp-player-row summary .gsp-fantasy-bar-wrap { grid-area:fantasy; }
+  .gsp .gsp-player-row summary .gsp-actual-col { grid-area:chev; text-align:right; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="gsp">
+
+  <div class="gsp-topbar">
+    <div>
+      <a class="gsp-back" href="{{ url_for('nfl_game_detail_page', game_id=game_id) }}">← Game page</a>
+      <span class="gsp-runinfo">{{ detail.run.n_sims }} sims{% if detail.run.ran_at %} · ran {{ detail.run.ran_at | fmt('%-m/%-d %-I:%M%p') | lower }}{% endif %}</span>
+    </div>
+    <form method="post" action="{{ url_for('nfl_sim_rerun', game_id=game_id) }}" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Running…';">
+      <button type="submit" class="gsp-rerun">⟳ Re-run sim</button>
+    </form>
+  </div>
+
+  {# ── Outcome hero ──────────────────────────────────────────────────────── #}
+  <div class="gsp-card">
+    <div class="gsp-outcome-score">
+      <span class="away">{{ detail.teams.away.abbr }} <span class="num">{{ detail.outcome.away_avg_score }}</span></span>
+      <span class="at">–</span>
+      <span class="home"><span class="num">{{ detail.outcome.home_avg_score }}</span> {{ detail.teams.home.abbr }}</span>
+    </div>
+    <div class="gsp-outcome-sub">Margin {{ '%+.1f' | format(detail.outcome.margin) }} ({{ detail.teams.home.abbr }}) · Total {{ detail.outcome.total }}</div>
+
+    <div class="gsp-winpct-row">
+      <span class="away">{{ detail.teams.away.abbr }} {{ detail.outcome.away_win_pct }}%</span>
+      {% if detail.outcome.tie_pct %}<span style="color:var(--gsp-dim)">Tie {{ detail.outcome.tie_pct }}%</span>{% endif %}
+      <span class="home">{{ detail.teams.home.abbr }} {{ detail.outcome.home_win_pct }}%</span>
+    </div>
+    <div class="gsp-stackbar">
+      <div style="width:{{ detail.outcome.away_win_pct }}%"></div>
+      <div style="width:{{ detail.outcome.tie_pct }}%"></div>
+      <div style="width:{{ detail.outcome.home_win_pct }}%"></div>
+    </div>
+    {% if detail.outcome.tie_warning %}
+    <div class="gsp-tiewarn">⚠ {{ detail.outcome.tie_pct }}% of simulated runs ended tied — real NFL games essentially never do (well under 1%). Read the win/loss split with that in mind.</div>
+    {% endif %}
+
+    {% if detail.agreement %}
+    <table class="gsp-agree-table">
+      <thead><tr><th>Market</th><th>Sim</th><th>Blend</th><th>FanDuel</th><th>Read</th></tr></thead>
+      <tbody>
+        {% for row in detail.agreement %}
+        <tr>
+          <td>{{ row.market }}</td>
+          <td>{{ row.sim }}</td>
+          <td>{{ row.blend }}</td>
+          <td>{{ row.fanduel }}</td>
+          <td><span class="gsp-pill {{ 'agree' if row.read == 'AGREE' else 'split' }}">{{ row.read }}</span></td>
+        </tr>
+        <tr><td colspan="5" class="note" style="border-top:0;padding-top:0;">{{ row.note }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="gsp-cols">
+    <div class="gsp-main">
+
+      {# ── Player projections ────────────────────────────────────────────── #}
+      <div class="gsp-card">
+        <div class="gsp-section-head"><span>Player Projections</span></div>
+        <div class="gsp-toolbar">
+          <select id="simTeamFilter">
+            <option value="">Both teams</option>
+            <option value="{{ detail.teams.away.abbr }}">{{ detail.teams.away.abbr }}</option>
+            <option value="{{ detail.teams.home.abbr }}">{{ detail.teams.home.abbr }}</option>
+          </select>
+          <select id="simPosFilter">
+            <option value="">All positions</option>
+            <option value="QB">QB</option><option value="RB">RB</option><option value="WR">WR</option><option value="TE">TE</option>
+          </select>
+          <select id="simSort">
+            <option value="median">Sort: Median</option>
+            <option value="ceiling">Sort: Ceiling</option>
+          </select>
+        </div>
+
+        <div id="simPlayerList">
+        {% for side in ['away', 'home'] %}
+        {% for p in detail.players[side] %}
+        {% if p.fantasy %}
+        <details class="gsp-player-row" data-team="{{ p.team }}" data-pos="{{ p.position }}"
+                  data-median="{{ p.fantasy.median }}" data-ceiling="{{ p.fantasy.ceiling }}"
+                  data-draws="{{ p.sim_draws | tojson | e }}">
+          <summary>
+            <div class="gsp-player-id">
+              <div class="gsp-player-name" style="color:{{ '#CFDDFF' if side == 'away' else '#FFD3B5' }}">{{ p.team }} · {{ p.name }}</div>
+              <div class="gsp-player-sub">{{ p.position }}</div>
+            </div>
+            <div class="gsp-fantasy-bar-wrap">
+              <div class="gsp-chips">
+                {% for c in p.stat_chips %}<span class="gsp-chip"><b>{{ c.pred }}</b> {{ c.label }}</span>{% endfor %}
+              </div>
+              <div class="gsp-fantasy-bar">
+                {% set axis_lo = -5 %}{% set axis_hi = 50 %}{% set span = axis_hi - axis_lo %}
+                <div class="range" style="left:{{ ((p.fantasy.floor - axis_lo) / span * 100) | round(1) }}%; width:{{ ((p.fantasy.ceiling - p.fantasy.floor) / span * 100) | round(1) }}%;"></div>
+                <div class="median-dot" style="left:{{ ((p.fantasy.median - axis_lo) / span * 100) | round(1) }}%;"></div>
+              </div>
+              <div class="gsp-fantasy-nums"><span>{{ p.fantasy.floor }}</span><span>{{ p.fantasy.median }} med</span><span>{{ p.fantasy.ceiling }}</span></div>
+            </div>
+            <div class="gsp-actual-col">{% if p.actual is not none %}{{ '%.1f' | format(p.actual) }}{% else %}—{% endif %}</div>
+          </summary>
+          <div class="gsp-expand-body"><canvas></canvas></div>
+        </details>
+        {% endif %}
+        {% endfor %}
+        {% endfor %}
+        </div>
+        <div class="gsp-empty-note" id="simPlayerEmpty" hidden>No players match this filter.</div>
+      </div>
+
+      {# ── Game sim row ──────────────────────────────────────────────────── #}
+      {% if detail.margin_hist %}
+      <div class="gsp-card">
+        <div class="gsp-section-head"><span>Margin (home − away)</span>{% if detail.spread_line is not none %}<span class="sub">FanDuel {{ detail.teams.home.abbr }} {{ '%+g' | format(detail.spread_line) }}</span>{% endif %}</div>
+        <canvas id="marginChart" height="90" role="img" aria-label="Simulated margin distribution for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
+        {% if detail.margin_cover %}
+        <div class="gsp-margin-legend">
+          <span><i style="background:#6E9BFF"></i>{{ detail.teams.away.abbr }} covers {{ (detail.margin_cover.away_covers * 100) | round(1) }}%</span>
+          <span><i style="background:#3A3F58"></i>Push {{ (detail.margin_cover.push * 100) | round(1) }}%</span>
+          <span><i style="background:#FF8A3D"></i>{{ detail.teams.home.abbr }} covers {{ (detail.margin_cover.home_covers * 100) | round(1) }}%</span>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="gsp-card">
+        <div class="gsp-section-head"><span>Scoring by quarter*</span></div>
+        <table class="gsp-quarter-table">
+          <thead><tr><th></th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th><th>1H</th><th>2H</th></tr></thead>
+          <tbody>
+            <tr><td>{{ detail.teams.away.abbr }}</td>{% for q in detail.quarters.away %}<td>{{ q }}</td>{% endfor %}<td>{{ detail.quarters.away_1h }}</td><td>{{ detail.quarters.away_2h }}</td></tr>
+            <tr><td>{{ detail.teams.home.abbr }}</td>{% for q in detail.quarters.home %}<td>{{ q }}</td>{% endfor %}<td>{{ detail.quarters.home_1h }}</td><td>{{ detail.quarters.home_2h }}</td></tr>
+          </tbody>
+        </table>
+        <div class="gsp-quarter-footnote">*Approximate — drive order, not a real game clock. See the simulator's own documented scope.</div>
+      </div>
+
+    </div>
+
+    <div class="gsp-rail">
+      {% if detail.correlations %}
+      <div class="gsp-card">
+        <div class="gsp-section-head"><span>Sim correlations</span><span class="sub">Fantasy pts, same simulated game</span></div>
+        {% for c in detail.correlations %}
+        <div class="gsp-corr-row">
+          <div class="gsp-corr-label"><b>{{ c.a }}</b> ↔ {{ c.b }}<div class="gsp-corr-note">{{ c.note }}</div></div>
+          <div class="gsp-corr-bar-wrap"><div class="gsp-corr-bar {{ 'pos' if c.r > 0 else 'neg' }}" style="width:{{ (c.r | abs * 100) | round(1) }}%"></div></div>
+          <div class="gsp-corr-r" style="color:{{ 'var(--gsp-good)' if c.r > 0 else 'var(--gsp-bad)' }}">{{ '%+.2f' | format(c.r) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var CHART_DEFAULTS = { plugins: { legend: { display: false } },
+    scales: { x: { ticks: { color: '#8C91AB' }, grid: { color: '#22263A' } },
+              y: { ticks: { color: '#8C91AB' }, grid: { color: '#22263A' } } } };
+
+  {% if detail.margin_hist %}
+  (function () {
+    var bins = {{ detail.margin_hist | tojson }};
+    var line = {{ detail.spread_line | tojson }};
+    var ctx = document.getElementById('marginChart');
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: bins.map(function (b) { return b.lo + 'to' + b.hi; }),
+        datasets: [{
+          data: bins.map(function (b) { return b.count; }),
+          backgroundColor: bins.map(function (b) {
+            if (line == null) return '#6E9BFF';
+            var mid = (b.lo + b.hi) / 2;
+            var implied = -line;  // home expected to win by -line
+            if (Math.abs(mid - implied) < 2) return '#8C91AB';
+            return mid > implied ? '#FF8A3D' : '#6E9BFF';
+          }),
+        }],
+      },
+      options: Object.assign({}, CHART_DEFAULTS, { plugins: { legend: { display: false },
+        tooltip: { callbacks: { title: function (items) { var b = bins[items[0].dataIndex]; return b.lo + ' to ' + b.hi; } } } } }),
+    });
+  })();
+  {% endif %}
+
+  // Per-player fantasy-point histogram, built lazily on first expand so a
+  // page with 30+ players doesn't construct 30+ charts nobody ever opens.
+  document.querySelectorAll('.gsp-player-row').forEach(function (row) {
+    row.addEventListener('toggle', function () {
+      if (!row.open || row.dataset.chartBuilt) return;
+      row.dataset.chartBuilt = '1';
+      var draws = JSON.parse(row.dataset.draws || '[]');
+      if (!draws.length) return;
+      var canvas = row.querySelector('canvas');
+      var min = Math.min.apply(null, draws), max = Math.max.apply(null, draws);
+      var binWidth = Math.max(1, Math.round((max - min) / 20));
+      var lo = Math.floor(min / binWidth) * binWidth, hi = Math.ceil(max / binWidth) * binWidth;
+      var nBins = Math.max(1, Math.round((hi - lo) / binWidth));
+      var counts = new Array(nBins).fill(0);
+      draws.forEach(function (v) {
+        var idx = Math.min(nBins - 1, Math.max(0, Math.floor((v - lo) / binWidth)));
+        counts[idx]++;
+      });
+      var labels = counts.map(function (_, i) { return Math.round(lo + i * binWidth); });
+      new Chart(canvas, {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ data: counts, backgroundColor: '#6E9BFF' }] },
+        options: Object.assign({}, CHART_DEFAULTS, { plugins: { legend: { display: false },
+          title: { display: true, text: 'Simulated fantasy points', color: '#8C91AB', font: { size: 11 } } } }),
+      });
+    });
+  });
+
+  // Filters/sort for the player list — client-side only, the dataset is
+  // small (one game's skill players).
+  var teamFilter = document.getElementById('simTeamFilter');
+  var posFilter = document.getElementById('simPosFilter');
+  var sortSel = document.getElementById('simSort');
+  var list = document.getElementById('simPlayerList');
+  var emptyNote = document.getElementById('simPlayerEmpty');
+
+  function apply() {
+    var rows = Array.prototype.slice.call(list.children);
+    var team = teamFilter.value, pos = posFilter.value, sortKey = sortSel.value;
+    var visible = 0;
+    rows.forEach(function (r) {
+      var match = (!team || r.dataset.team === team) && (!pos || r.dataset.pos === pos);
+      r.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    emptyNote.hidden = visible > 0;
+    rows.sort(function (a, b) { return parseFloat(b.dataset[sortKey]) - parseFloat(a.dataset[sortKey]); });
+    rows.forEach(function (r) { list.appendChild(r); });
+  }
+  [teamFilter, posFilter, sortSel].forEach(function (el) { el.addEventListener('change', apply); });
+})();
+</script>
+{% endblock %}

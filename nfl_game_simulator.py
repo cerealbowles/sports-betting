@@ -839,7 +839,10 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     summarize),
     'game': {'n', 'home_wins', 'away_wins', 'ties', 'home_win_pct',
     'away_win_pct', 'home_avg_score', 'away_avg_score',
-    'home_quarter_avg', 'away_quarter_avg'}} — 'game' is the team-score-
+    'home_quarter_avg', 'away_quarter_avg', 'margins'}} — 'margins' is the
+    raw per-run (home_score - away_score) list, for a caller that wants a
+    real margin histogram or an empirical spread-cover probability instead
+    of a normal approximation (see nfl_sim_detail.py). 'game' is the team-score-
     level summary (see DRIVE_POINTS/_approx_quarter()'s "no real clock"
     caveat, module docstring). player_id only, no name/position
     resolution here (that needs a roster lookup, a separate concern —
@@ -884,6 +887,10 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
     stat_draws = {'home': defaultdict(lambda: defaultdict(list)), 'away': defaultdict(lambda: defaultdict(list))}
     home_wins = away_wins = ties = 0
     scores = {'home': [], 'away': []}
+    margins = []  # per-run (home_score - away_score), for the sim page's
+                   # margin histogram/spread-cover agreement row — the only
+                   # thing missing from this loop that a caller (see
+                   # nfl_sim_detail.py) needs beyond scores/quarter_points
     quarter_points = {'home': [0, 0, 0, 0], 'away': [0, 0, 0, 0]}
     for _ in range(n):
         game = simulate_game(pools, rng, drives_per_team=drives_per_team,
@@ -903,6 +910,7 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
                 for group in categories.values():
                     for field, value in group.items():
                         stat_draws[side][player_id][field].append(value)
+        margins.append(side_score['home'] - side_score['away'])
         if side_score['home'] > side_score['away']:
             home_wins += 1
         elif side_score['away'] > side_score['home']:
@@ -969,6 +977,7 @@ def simulate_matchup(home_team_id, away_team_id, n=DEFAULT_SIM_DRAWS, before_dat
         'home_quarter_avg': [round(q / n, 1) for q in quarter_points['home']],
         'away_quarter_avg': [round(q / n, 1) for q in quarter_points['away']],
         'home_tilt': round(home_tilt, 3), 'away_tilt': round(away_tilt, 3),
+        'margins': margins,
     }
     return {'players': players, 'game': game_summary}
 
