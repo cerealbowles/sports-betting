@@ -108,13 +108,32 @@
   border-radius:16px 16px 0 0; padding:12px 14px;
   box-shadow:0 -8px 24px rgba(0,0,0,.5);
 }
+/* Below 768px, base.html swaps the top nav for a fixed .bottom-tab-bar
+   (z-index:100) pinned to the same bottom:0 edge — without this, that bar
+   paints over the lower half of this panel (the moneyline/spread chips
+   become untappable, which is exactly the "bottom isn't showing up on
+   mobile" bug this fixes). Lift the panel clear of the tab bar and above
+   its stacking order, using the same 84px reservation base.html's own
+   .container padding-bottom uses for that bar. */
+@media (max-width:768px) {
+  .gdp .nfl-bet-panel.game-card-details {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+    z-index: 150;
+  }
+}
 /* The fixed bar sits on top of the page rather than in normal flow, so the
    page needs its own bottom padding or the bar covers the last section
-   (the chart-showing-through-the-bar bug this replaces) — added as an
-   inline style on .gdp only when the bar actually renders, see below. */
+   (the chart-showing-through-the-bar bug this replaces) — applied only
+   when the bar actually renders (game.status not Final/Live), see below. */
+.gdp.gdp-has-bet-panel { padding-bottom: 140px; }
 .gdp .gdp-stat-row, .gdp .gdp-unit-row { min-width:0; }
 .gdp .gdp-stat-row > * { min-width:0; overflow-wrap:anywhere; }
 @media (max-width:900px) { .gdp .gdp-cols { flex-direction:column; } }
+@media (max-width:768px) {
+  /* Panel moved up to clear .bottom-tab-bar (above) — match it here so the
+     page's last section still ends above the panel instead of under it. */
+  .gdp.gdp-has-bet-panel { padding-bottom: calc(140px + 84px + env(safe-area-inset-bottom)); }
+}
 @media (max-width:480px) {
   .gdp .gdp-stat-row { grid-template-columns:40px 1fr 72px 1fr 40px; font-size:12px; }
   .gdp .gdp-unit-row { grid-template-columns:1fr 64px 1fr; font-size:12px; }
@@ -123,7 +142,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="gdp"{% if game and game.status not in ('Final', 'Live') %} style="padding-bottom:140px;"{% endif %}>
+<div class="gdp{% if game and game.status not in ('Final', 'Live') %} gdp-has-bet-panel{% endif %}">
 
   <div class="gdp-topbar">
     <div>
@@ -412,6 +431,22 @@
 
 {% block scripts %}
 <script>
+// Recommendations-table "Bet" buttons on the schedule page (openRecommendedBet
+// in main.js) land here with ?bet=<side>&bet_type=<type> for sports that have
+// no inline bottom sheet — auto-open the matching chip's bet slip so the tap
+// still goes straight to placing the bet, same as it does on CFB/MLB.
+(function () {
+    var params = new URLSearchParams(window.location.search);
+    var side = params.get('bet');
+    if (!side) return;
+    var type = params.get('bet_type') || 'Moneyline';
+    var btn = document.querySelector('.btn-bet-team[data-bet-side="' + side + '"][data-bet-type="' + type + '"]');
+    if (btn && btn.tagName === 'BUTTON') {
+        btn.click();
+        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+})();
+
 document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     var utc = el.getAttribute('data-utc');
     if (!utc) return;

@@ -114,11 +114,24 @@ if (e.target === e.currentTarget) closeGameDetails();
    'over'/'under' instead. */
 function openRecommendedBet(gameKey, betSide, betType) {
 betType = betType || 'Moneyline';
-openGameDetails(gameKey);
 var details = document.getElementById('gd-' + gameKey);
-if (!details) return;
-var btn = details.querySelector('.btn-bet-team[data-bet-side="' + betSide + '"][data-bet-type="' + betType + '"]');
-if (btn && btn.tagName === 'BUTTON') btn.click();
+if (details) {
+    openGameDetails(gameKey);
+    var btn = details.querySelector('.btn-bet-team[data-bet-side="' + betSide + '"][data-bet-type="' + betType + '"]');
+    if (btn && btn.tagName === 'BUTTON') btn.click();
+    return;
+}
+// NFL/NBA/WNBA/NHL have no inline sheet on the schedule page (their cards
+// navigate straight to a full game-detail page instead — see the
+// data-detail-href click handler above) — so there's no 'gd-<key>' node to
+// find a chip inside. Navigate to that game's detail page instead, flagging
+// which side/type to auto-open there (see the game_detail.html script that
+// reads these params on load).
+var card = document.getElementById('gc-' + gameKey);
+var href = card && card.dataset.detailHref;
+if (!href) return;
+var sep = href.indexOf('?') === -1 ? '?' : '&';
+window.location.href = href + sep + 'bet=' + encodeURIComponent(betSide) + '&bet_type=' + encodeURIComponent(betType);
 }
 
 /* Switches which of ML/Spread/Total is visible inside the single shared
