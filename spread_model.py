@@ -265,3 +265,45 @@ def is_validated(sport):
     out-of-sample, vs. just being fit-and-graded on the same historical
     data — see spread_proxy.is_validated, same reasoning applies here."""
     return sport in VALIDATED_SPORTS
+
+
+# Out-of-sample ATS% for this module vs. spread_proxy's, per sport, taken
+# directly from the two out-of-sample tables above and in spread_proxy.py's
+# own docstring (checked 2026-09-24/25 against instance/bets.db). MLB/NHL
+# are identical picks either way (see this module's docstring) so the
+# source doesn't matter there; for the four unvalidated sports the two
+# fits disagree on which side they favor, and one of them tests better
+# than the other even though neither clears break-even. Picking the
+# better of the two is not the same as validating it — is_validated()/
+# spread_proxy.is_validated() are still the only "trust this" signal.
+_ATS_PCT = {
+    'MLB':  {'model': 58.6, 'proxy': 58.5},
+    'NHL':  {'model': 64.8, 'proxy': 62.4},
+    'CFB':  {'model': 44.1, 'proxy': 51.4},
+    'NFL':  {'model': 46.2, 'proxy': 43.8},
+    'NBA':  {'model': 46.5, 'proxy': 43.3},
+    'WNBA': {'model': 51.9, 'proxy': 46.4},
+}
+
+
+def best_source(sport):
+    """Which fit ('model' or 'proxy') actually tests better out-of-sample
+    for this sport. Defaults to 'model' for an unlisted sport."""
+    pct = _ATS_PCT.get(sport)
+    if not pct:
+        return 'model'
+    return 'model' if pct['model'] >= pct['proxy'] else 'proxy'
+
+
+def best_margin(sport, factors, home_prob):
+    """Home-team margin from whichever of spread_model/spread_proxy tests
+    better out-of-sample for this sport (see best_source), so the UI shows
+    the less-bad of the two instead of always falling back to the proxy.
+    Import spread_proxy locally to avoid a module-level circular import
+    (spread_proxy has no dependency on this module, but keeping the import
+    here mirrors how app.py already treats the two as siblings rather than
+    one depending on the other)."""
+    import spread_proxy
+    if best_source(sport) == 'proxy':
+        return spread_proxy.implied_margin(sport, home_prob)
+    return predict_margin(sport, factors)
