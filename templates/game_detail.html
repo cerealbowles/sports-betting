@@ -58,6 +58,7 @@
 .gdp .gdp-vgrid b { font-size:14px; font-weight:700; }
 .gdp .gdp-vfoot { display:flex; justify-content:space-between; font-size:12px; color:var(--gdp-muted); }
 .gdp .gdp-why { font-size:12.5px; line-height:1.4; color:var(--gdp-muted); border-top:1px solid var(--gdp-border); padding-top:10px; }
+.gdp .gdp-gate-note { font-size:12px; line-height:1.4; color:var(--gdp-amber); background:#352C14; border-radius:8px; padding:8px 10px; }
 .gdp .gdp-blend { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; font-size:13px; color:var(--gdp-muted); }
 .gdp .gdp-blend b { color:var(--gdp-text); }
 .gdp .gdp-section-head { font-size:12px; font-weight:700; letter-spacing:.07em; color:var(--gdp-muted); text-transform:uppercase; margin-bottom:12px; display:flex; justify-content:space-between; }
@@ -212,6 +213,7 @@
       </div>
       <div class="gdp-vfoot"><span>EV <b style="color:var(--gdp-text)">{{ v.ev }}</b> · ¼ Kelly <b style="color:var(--gdp-text)">{{ v.kelly }}</b></span></div>
       <div class="gdp-why">{{ v.why }}</div>
+      {% if v.gate_note %}<div class="gdp-gate-note">⚠ {{ v.gate_note }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>

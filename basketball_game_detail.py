@@ -125,6 +125,7 @@ def build(sport, short_sport, g, season, before_date, stats_db, boxscore_api, ro
             'why': (f"Blended model has {'home' if fav_home else 'away'} side at "
                     f"{(p_blend if fav_home else 1 - p_blend) * 100:.1f}% vs FanDuel's "
                     f"{(home_novig if fav_home else away_novig) * 100:.1f}% no-vig."),
+            'gate_note': gdc.recommendation_gate_note(sport, 'MONEYLINE', tag, amer_odds=side_price, edge_pts=edge_pts),
         }
 
     spread_margin = spread_model.predict_margin(sport, factors)
@@ -160,6 +161,7 @@ def build(sport, short_sport, g, season, before_date, stats_db, boxscore_api, ro
                 'why': ("Model is an outlier vs. its historical spread error — verify inputs before betting."
                         if is_outlier else
                         f"Model line {model_side_abbr} {model_side_line:g} vs market {home['abbr']} {home_spread_line:g}."),
+                'gate_note': gdc.recommendation_gate_note(sport, 'SPREAD', tag),
             }
 
     verdicts = [v for v in (ml_verdict, spread_verdict) if v]

@@ -34,6 +34,55 @@ def cached_compute(key, ttl, compute_fn):
     return data
 
 
+def recommendation_gate_note(sport, market, tag, amer_odds=None, edge_pts=None):
+    """None, or a short explanation of why a PLAY/LEAN-tagged verdict here
+    still wouldn't earn this site's own real recommendation (the ★ on a
+    schedule card / the Tonight page's picks list — app.py's
+    _best_market_pick). This page's verdict cards only run the generic
+    EV/Kelly/confidence math (game_math.py) — they have no idea about the
+    extra, backtest-derived gates layered on top of the real picks list
+    (a specific sport's price band, an edge floor, or a model that's never
+    been validated out-of-sample for this market at all), so a card can
+    show PLAY here while that exact pick would never surface there. That
+    mismatch is confusing on its own (a user can't tell "the site trusts
+    this" from "the site computed this number but doesn't trust it yet"),
+    so this surfaces it instead of leaving it silent.
+
+    Lazy-imports the actual gate functions/constants from app.py and
+    spread_model.py rather than re-deriving their thresholds here — so
+    this can never silently drift out of sync with the real gates (if one
+    changes, this note reflects it automatically). None if `tag` isn't
+    PLAY/LEAN (nothing to explain — the card already reads as "not a real
+    pick") or no known gate actually applies."""
+    if tag not in ('PLAY', 'LEAN'):
+        return None
+    import app as _app
+
+    if market == 'MONEYLINE':
+        if sport == 'NBA' and amer_odds is not None and not _app._nba_ml_gate_passes(amer_odds):
+            lo, hi = _app._NBA_ML_WEAK_PRICE_BAND
+            return (f"Not one of this site's real picks: NBA moneylines priced {lo} to {hi} "
+                    f"backtested a 45-51% win rate (-16% to -20% ROI) on 726 resolved games, "
+                    f"even among edges this size — excluded by price alone, regardless of edge.")
+        if sport == 'NHL' and amer_odds is not None and edge_pts is not None:
+            if not _app._nhl_ml_gate_passes(edge_pts, amer_odds):
+                if edge_pts < _app._NHL_ML_EDGE_FLOOR:
+                    return (f"Not one of this site's real picks: NHL moneylines need at least "
+                            f"{_app._NHL_ML_EDGE_FLOOR}pt edge to clear this site's own floor "
+                            f"(sub-floor picks backtested -21.2% ROI on 789 games) — this one "
+                            f"is {edge_pts:.1f}pt.")
+                lo, hi = _app._NHL_ML_COINFLIP_BAND
+                return (f"Not one of this site's real picks: NHL moneylines priced {lo} to {hi} "
+                        f"(near coin-flip) were the single worst price band even unfiltered "
+                        f"(34.8% win rate) — excluded regardless of edge.")
+    elif market == 'SPREAD':
+        if not spread_model.is_validated(sport):
+            return (f"Not one of this site's real picks: {sport}'s spread model isn't validated "
+                    f"yet (only MLB and NHL are — see spread_model.VALIDATED_SPORTS) — this "
+                    f"edge never reaches the site's live picks.")
+    return None
+
+
 def line_movement(short_sport, home_name, away_name, game_time_utc):
     """Line-movement series (ML no-vig %, spread, total) for one game, read
     from odds_history.get_snapshot_series() under the real Odds-API sport
