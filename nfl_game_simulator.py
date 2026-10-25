@@ -611,10 +611,13 @@ def simulate_drive(pools, rng, start_yards_to_endzone=None, tilt=0.0):
 def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
     """Alternates possession between 'home' and 'away' for `drives_per_team`
     drives each (10 is this app's own stored-data average — 20.3 distinct
-    drive_ids/game across the warehouse, roughly half per side). Field
-    position now carries over continuously from one drive to the next real
-    kickoff/punt/turnover result (see simulate_drive()) instead of
-    resetting to a fixed spot every time. Returns {'home': {'plays': [...],
+    drive_ids/game across the warehouse, roughly half per side), then —
+    since a real NFL game is never allowed to actually end tied — keeps
+    alternating single sudden-death drives past regulation until the score
+    splits (see the OT loop below). Field position now carries over
+    continuously from one drive to the next real kickoff/punt/turnover
+    result (see simulate_drive()) instead of resetting to a fixed spot
+    every time. Returns {'home': {'plays': [...],
     'drives': [...], 'bonus_points': [...]}, 'away': {...}} per side —
     'plays' is every play from all of that side's drives, flattened
     (including any 4th-down Punt/Field Goal plays), for
@@ -641,6 +644,7 @@ def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
            'away': {'plays': [], 'drives': [], 'bonus_points': []}}
     side_drive_idx = {'home': 0, 'away': 0}
     tilt_by_side = {'home': home_tilt, 'away': away_tilt}
+    score = {'home': 0, 'away': 0}
     next_start = _resolve_kickoff_start(pools, rng)  # opening kickoff of the game
     for i in range(drives_per_team * 2):
         side = 'home' if i % 2 == 0 else 'away'
@@ -651,13 +655,41 @@ def simulate_game(pools, rng, drives_per_team=10, home_tilt=0.0, away_tilt=0.0):
         if outcome == 'defensive_touchdown':
             out[side]['drives'].append({'outcome': outcome, 'points': 0, 'quarter': quarter})
             out[OPPOSITE_SIDE[side]]['bonus_points'].append({'points': DRIVE_POINTS['touchdown'], 'quarter': quarter})
+            score[OPPOSITE_SIDE[side]] += DRIVE_POINTS['touchdown']
         else:
-            out[side]['drives'].append({
-                'outcome': outcome,
-                'points': DRIVE_POINTS.get(outcome, 0),
-                'quarter': quarter,
-            })
+            pts = DRIVE_POINTS.get(outcome, 0)
+            out[side]['drives'].append({'outcome': outcome, 'points': pts, 'quarter': quarter})
+            score[side] += pts
         side_drive_idx[side] += 1
+
+    # Real NFL games don't end regulation tied — they go to sudden-death
+    # overtime. Keep alternating single drives (same home/away order as
+    # regulation) past drives_per_team*2 until the score splits; each
+    # extra drive is appended into the same out[side]['drives']/
+    # bonus_points lists simulate_matchup() already sums, so no caller
+    # change is needed for the tie to disappear from the final score.
+    # Lumped into quarter 4 (_approx_quarter has no OT bucket — this
+    # module's quarters are already an approximation, not a real clock).
+    # Capped defensively: a single OT drive ending 0-0 (punt, turnover on
+    # downs) is common, but the cap itself — many scoreless or exactly-
+    # matched drives from BOTH sides in a row — is never actually hit in
+    # practice.
+    i = drives_per_team * 2
+    ot_cap = i + 40
+    while score['home'] == score['away'] and i < ot_cap:
+        side = 'home' if i % 2 == 0 else 'away'
+        plays, outcome, next_start = simulate_drive(pools, rng, start_yards_to_endzone=next_start,
+                                                      tilt=tilt_by_side[side])
+        out[side]['plays'].extend(plays)
+        if outcome == 'defensive_touchdown':
+            out[side]['drives'].append({'outcome': outcome, 'points': 0, 'quarter': 4})
+            out[OPPOSITE_SIDE[side]]['bonus_points'].append({'points': DRIVE_POINTS['touchdown'], 'quarter': 4})
+            score[OPPOSITE_SIDE[side]] += DRIVE_POINTS['touchdown']
+        else:
+            pts = DRIVE_POINTS.get(outcome, 0)
+            out[side]['drives'].append({'outcome': outcome, 'points': pts, 'quarter': 4})
+            score[side] += pts
+        i += 1
     return out
 
 
