@@ -1014,10 +1014,12 @@
                 <th>ROI%</th>
                 <th>Lift</th>
                 <th>Win%</th>
+                <th>Live Correction</th>
             </tr>
         </thead>
         <tbody>
         {% for d in dow_stats %}
+        {% set dow_live = spread_dow_stat(d.label, sport) if bet_type == 'spread' else dow_stat(d.label, sport) %}
         <tr>
             <td style="font-weight:700;font-size:0.82rem;">{{ d.label }}</td>
             <td>{{ d.count }}</td>
@@ -1034,12 +1036,17 @@
             <td>
                 <span class="{{ 'calib-err-ok' if d.win_rate >= 55 else ('calib-err-pos' if d.win_rate >= 50 else 'calib-err-neg') }}">{{ d.win_rate }}%</span>
             </td>
+            <td>
+                {% if dow_live.correction %}
+                <span class="lift-badge {{ 'lift-pos' if dow_live.correction > 0 else 'lift-neg' }}" title="Full prediction history (n={{ dow_live.n }}), not just the window shown in the columns to the left — this is what's actually nudging live picks.">{{ '+' if dow_live.correction > 0 }}{{ (dow_live.correction * 25) | round(1) }}pp*</span>
+                {% else %}<span class="small" style="color:var(--text-muted);">neutral</span>{% endif %}
+            </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
     </div>
-    <p class="section-note">Weekday the game was played (ET calendar date), not kickoff/first-pitch local time. Small per-day samples — treat as a lead to dig into, not a standalone edge.</p>
+    <p class="section-note">Weekday the game was played (ET calendar date), not kickoff/first-pitch local time. Small per-day samples (left columns, current odds-tracked window) — treat as a lead to dig into, not a standalone edge. <strong>Live Correction</strong> is the actual, sample-size-gated nudge wired into the model's own confidence (full history, "neutral" = hasn't cleared n≥5 or washes out once compared against what the model already believed for those games) — *approximate pp shift at a 50/50 reference point, the real effect varies by how confident the pick already is.</p>
     {% endif %}
 
     {% if travel_stats %}

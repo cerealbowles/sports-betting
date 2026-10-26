@@ -189,6 +189,19 @@
 {% endif %}
 {% endmacro %}
 
+{# Day-of-week tag — small, quiet badge next to the chip label, shown only
+   once that weekday has cleared the same MIN_N=5 the server-side logit
+   correction requires (app.py _recompute_dow_stats/_recompute_spread_dow_
+   stats), so an untested weekday shows nothing rather than a hollow badge.
+   League-wide record across every {sport} pick on that weekday, not
+   specific to either team in this game — same framing as move_header's
+   tooltip above. #}
+{% macro dow_tag(day, stat) %}
+{% if day and stat.n and stat.n >= 5 %}
+<span class="mc-t" style="opacity:0.6; font-size:0.68em; margin-left:4px;" title="{{ day }}: league-wide {{ game.sport }} record for this weekday — {{ stat.wins }}-{{ stat.n - stat.wins }} ({{ stat.win_rate }}%). Feeds a small, sample-size-gated correction into the model's own confidence; not specific to either team here.">{{ day.upper() }}</span>
+{% endif %}
+{% endmacro %}
+
 {% set mc_show_factors_on = mc_show_factors is defined and mc_show_factors %}
 {% set mc_factors_default = ('ml' if ml_factors_panel(game) else ('spread' if spread_factors_panel(game) else none)) if mc_show_factors_on else none %}
 <div class="mc-wrap">
@@ -200,6 +213,7 @@
            no separate ML/Spread tab row. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_ml_conf_level if mc_ml_has }}{{ ' mc-hot' if mc_ml_has and mc_ml_pts >= MC_HOT }}{{ ' mc-tappable' if mc_ml_has }}{{ ' mc-chip-active' if mc_factors_default == 'ml' }}" data-mc-kind="ml" title="{% if mc_ml_has %}Model confidence: {{ mc_ml_conf | round(1) }}%{% else %}No model confidence{% endif %}"{% if mc_ml_has %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'ml')"{% endif %}>
             {{ move_header('ML', game.movement_profile, movement_stat(game.movement_profile, game.sport)) }}
+            {{ dow_tag(game.dow, dow_stat(game.dow, game.sport)) }}
             {% if mc_ml_has %}
             <span class="mc-big">{{ mc_ml_model_side }}</span>
             <span class="mc-side">{{ mc_ml_side }} {{ mc_ml_amer_disp }}</span>
@@ -216,6 +230,7 @@
            logit like the old spread_proxy.py was. #}
         <div class="mc-chip{{ ' mc-confidence-' ~ mc_sp_conf_level if mc_sp_model_ok }}{{ ' mc-hot' if mc_sp_model_ok and mc_sp_has and mc_sp_ok and mc_sp_validated and mc_sp_pts >= MC_HOT }}{{ ' mc-tappable' if mc_sp_model_ok }}{{ ' mc-chip-active' if mc_factors_default == 'spread' }}" data-mc-kind="spread" title="{% if mc_sp_model_ok %}{% if mc_sp_validated %}Model predicted spread{% else %}Unproven for {{ game.sport }}: this model hasn't beaten break-even out-of-sample here — treat with caution{% endif %}{% else %}No model spread{% endif %}"{% if mc_sp_model_ok %} onclick="event.stopPropagation(); openModelFactors('{{ game.game_key }}', 'spread')"{% endif %}>
             {{ move_header('SPREAD', game.spread_movement_profile, spread_movement_stat(game.spread_movement_profile, game.sport)) }}
+            {{ dow_tag(game.dow, spread_dow_stat(game.dow, game.sport)) }}
             {% if mc_sp_model_ok %}
             <span class="mc-big">{{ mc_sp_model_fav_val | round(1) }}</span>
             <span class="mc-side">{{ mc_sp_model_fav_team }}</span>

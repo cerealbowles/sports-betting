@@ -1384,6 +1384,45 @@ def _stamp_movement(schedule, sport):
                 game['spread_movement_pct'] = sp_pct
 
 
+_DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+def _dow_label(date_str):
+  """'Mon'..'Sun' for a 'YYYY-MM-DD' date string, or None if unparseable."""
+  try:
+    return _DOW_LABELS[datetime.strptime(date_str, '%Y-%m-%d').weekday()]
+  except (TypeError, ValueError):
+    return None
+
+
+def _stamp_dow(schedule, sport):
+  """Day-of-week ML correction — same idea and same chain position as
+  _stamp_movement (runs after it, so it corrects whatever final_home_prob
+  movement already produced), but no classification step is needed: unlike
+  movement profile, the weekday is just read off the game's own date, not
+  derived from accumulating odds-snapshot history. See _dow_adjusted_prob
+  for the correction itself; game['dow'] is also stamped here for display
+  and for _best_market_pick's spread section to read."""
+  for day in (schedule or []):
+    wd = _dow_label(day.get('date'))
+    if not wd:
+      continue
+    for game in day.get('games', []):
+      if game.get('status') == 'Final':
+        continue
+      game['dow'] = wd
+      model = game.get('model')
+      if not model or model.get('home_prob') is None:
+        continue
+      hp = model['final_home_prob'] if 'final_home_prob' in model else model['home_prob']
+      fav_home = hp >= 0.5
+      pick_prob = hp if fav_home else 1.0 - hp
+      adj_prob = _dow_adjusted_prob(pick_prob, wd, sport)
+      if adj_prob != pick_prob:
+        model['final_home_prob'] = round(adj_prob if fav_home else 1.0 - adj_prob, 4)
+        model['final_away_prob'] = round(adj_prob if not fav_home else 1.0 - adj_prob, 4)
+
+
 def _historical_confidence_values(sport):
     """Every resolved game's blended confidence value (0-100), using
     whichever blend that sport's schedule route actually applies at render
@@ -2821,6 +2860,85 @@ def _movement_stat(movement_profile, sport='MLB'):
 app.jinja_env.globals['movement_stat'] = _movement_stat
 
 
+# ── Day-of-week ML correction — same credibility-blended logit-correction
+# method as _recompute_movement_stats (compare actual win rate to the
+# model's OWN average predicted probability for that bucket, in logit
+# space, shrunk by sample size), bucketed by weekday instead of movement
+# shape. No classification/snapshot-history step needed — the weekday is
+# just read off game_date. Namespaced separately from _MOVEMENT_STATS
+# (shares its lock) so this addition can't perturb the already-shipped
+# movement correction. ──────────────────────────────────────────────────
+_DOW_STATS = {}
+
+
+def _recompute_dow_stats(sport='MLB'):
+  """Real per-weekday win-rate + N, and the logit correction derived from
+  it, from resolved GamePrediction rows — pooled across all history (not
+  just the current season) same as every other *_STATS recompute here, so
+  an in-season hot/cold stretch can't look like a permanent weekday effect.
+  n < MIN_N still shows a win-rate (for the chip) but keeps correction at 0."""
+  with app.app_context():
+    resolved = GamePrediction.query.filter(
+        GamePrediction.sport == sport,
+        GamePrediction.home_won.isnot(None),
+        GamePrediction.home_prob.isnot(None),
+    ).all()
+
+  SHRINKAGE = 0.60
+  MIN_N     = 5
+  new_stats = {}
+  for label in _DOW_LABELS:
+    bkt = [p for p in resolved if _dow_label(p.game_date) == label]
+    n = len(bkt)
+    if n == 0:
+      new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
+      continue
+    fav_home = [(p.home_prob or 0.5) >= 0.5 for p in bkt]
+    wins = sum(1 for p, fh in zip(bkt, fav_home) if fh == bool(p.home_won))
+    win_rate = wins / n
+    if n < MIN_N:
+      new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
+      continue
+    avg_model = sum((p.home_prob if fh else 1.0 - p.home_prob) for p, fh in zip(bkt, fav_home)) / n
+    raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
+    alpha      = min(n / 50.0, 1.0)
+    correction = round(raw_corr * SHRINKAGE * alpha, 5)
+    new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
+
+  with _MOVEMENT_LOCK:
+    _DOW_STATS[sport] = new_stats
+  _save_calib_snapshot('dow_stats', sport, new_stats)
+
+  _nonzero = {k: v for k, v in new_stats.items() if v['n']}
+  print(f'[dow-stats] {sport} recomputed: {_nonzero}', flush=True)
+
+
+def _dow_adjusted_prob(pick_prob, weekday, sport='MLB'):
+  """Applies the weekday's logit correction to a pick probability —
+  no-op if the sport has no stats yet or this weekday hasn't cleared
+  MIN_N. Mirrors _movement_adjusted_prob's shape exactly."""
+  if not weekday:
+    return pick_prob
+  with _MOVEMENT_LOCK:
+    stat = (_DOW_STATS.get(sport) or {}).get(weekday)
+  correction = (stat or {}).get('correction') or 0.0
+  if not correction:
+    return pick_prob
+  return _sigmoid(_safe_logit(pick_prob) + correction)
+
+
+def _dow_stat(weekday, sport='MLB'):
+  """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int,
+  'correction': logit delta} for the DOW chip and the Model page."""
+  with _MOVEMENT_LOCK:
+    stat = (_DOW_STATS.get(sport) or {}).get(weekday) or {}
+  return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0),
+          'correction': stat.get('correction', 0.0)}
+
+
+app.jinja_env.globals['dow_stat'] = _dow_stat
+
+
 # ── Spread/Total movement — same taxonomy and machinery as ML movement
 # above, kept in separate namespaced dicts/functions rather than
 # generalizing the ML ones, so the already-shipped ML path can't be
@@ -2926,6 +3044,72 @@ def _spread_movement_stat(movement_profile, sport='MLB'):
 
 
 app.jinja_env.globals['spread_movement_stat'] = _spread_movement_stat
+
+
+# ── Day-of-week spread correction — mirrors _recompute_dow_stats, graded
+# against spread_covered/spread_cover_prob instead of home_won/home_prob,
+# same as _recompute_spread_movement_stats mirrors _recompute_movement_stats.
+_SPREAD_DOW_STATS = {}
+
+
+def _recompute_spread_dow_stats(sport='MLB'):
+  with app.app_context():
+    resolved = GamePrediction.query.filter(
+        GamePrediction.sport == sport,
+        GamePrediction.spread_covered.isnot(None),
+        GamePrediction.spread_cover_prob.isnot(None),
+    ).all()
+
+  SHRINKAGE = 0.60
+  MIN_N     = 5
+  new_stats = {}
+  for label in _DOW_LABELS:
+    bkt = [p for p in resolved if _dow_label(p.game_date) == label]
+    n = len(bkt)
+    if n == 0:
+      new_stats[label] = {'win_rate': None, 'n': 0, 'wins': 0, 'correction': 0.0}
+      continue
+    pick_home = [(p.spread_cover_prob or 0.5) >= 0.5 for p in bkt]
+    wins = sum(1 for p, ph in zip(bkt, pick_home) if ph == bool(p.spread_covered))
+    win_rate = wins / n
+    if n < MIN_N:
+      new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': 0.0}
+      continue
+    avg_model = sum((p.spread_cover_prob if ph else 1.0 - p.spread_cover_prob) for p, ph in zip(bkt, pick_home)) / n
+    raw_corr   = _safe_logit(win_rate) - _safe_logit(avg_model)
+    alpha      = min(n / 50.0, 1.0)
+    correction = round(raw_corr * SHRINKAGE * alpha, 5)
+    new_stats[label] = {'win_rate': round(win_rate * 100, 1), 'n': n, 'wins': wins, 'correction': correction}
+
+  with _MOVEMENT_LOCK:
+    _SPREAD_DOW_STATS[sport] = new_stats
+  _save_calib_snapshot('spread_dow_stats', sport, new_stats)
+  _nonzero = {k: v for k, v in new_stats.items() if v['n']}
+  print(f'[spread-dow-stats] {sport} recomputed: {_nonzero}', flush=True)
+
+
+def _spread_dow_adjusted_prob(pick_prob, weekday, sport='MLB'):
+  """Mirrors _dow_adjusted_prob, reading _SPREAD_DOW_STATS."""
+  if not weekday:
+    return pick_prob
+  with _MOVEMENT_LOCK:
+    stat = (_SPREAD_DOW_STATS.get(sport) or {}).get(weekday)
+  correction = (stat or {}).get('correction') or 0.0
+  if not correction:
+    return pick_prob
+  return _sigmoid(_safe_logit(pick_prob) + correction)
+
+
+def _spread_dow_stat(weekday, sport='MLB'):
+  """Jinja-accessible {'win_rate': pct|None, 'n': int, 'wins': int,
+  'correction': logit delta} for the Spread DOW chip and the Model page."""
+  with _MOVEMENT_LOCK:
+    stat = (_SPREAD_DOW_STATS.get(sport) or {}).get(weekday) or {}
+  return {'win_rate': stat.get('win_rate'), 'n': stat.get('n', 0), 'wins': stat.get('wins', 0),
+          'correction': stat.get('correction', 0.0)}
+
+
+app.jinja_env.globals['spread_dow_stat'] = _spread_dow_stat
 
 
 def _et_date(utc_str):
@@ -4221,6 +4405,7 @@ def _hub_sport_data(sport, icon, href, today_str):
         # See the MLB branch above re: no _upsert_predictions here.
         _stamp_confidence_blend(schedule, sport)
         _stamp_movement(schedule, sport)
+        _stamp_dow(schedule, sport)
         _attach_graded_results(schedule, sport)
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
         all_games = _schedule_matchups(schedule)
@@ -5117,6 +5302,7 @@ def _best_market_pick(game):
         favors_home = home_cover >= 0.5
         pick_prob   = home_cover if favors_home else (1 - home_cover)
         pick_prob   = _spread_movement_adjusted_prob(pick_prob, game.get('spread_movement_profile'), sport)
+        pick_prob   = _spread_dow_adjusted_prob(pick_prob, game.get('dow'), sport)
         mkt_implied = vf_h if favors_home else vf_a
         amer_odds   = hp_price if favors_home else ap_price
         q = _market_qualifies(pick_prob, mkt_implied, amer_odds)
@@ -5300,6 +5486,7 @@ def _mlb_candidates(schedule):
 
       adj_prob = _consensus_adjusted_prob(pick_prob, factors_json, hp >= ap, sport='MLB')
       adj_prob = _movement_adjusted_prob(adj_prob, movement_profile, sport='MLB')
+      adj_prob = _dow_adjusted_prob(adj_prob, _dow_label(gdate), sport='MLB')
       adj_edge = round((adj_prob - mkt_implied) * 100, 1)
 
       k_b  = (amer_odds / 100.0) if amer_odds > 0 else ((-100.0 / amer_odds) if amer_odds < 0 else 0)
@@ -5469,6 +5656,7 @@ def mlb_schedule():
   # same shared _best_market_pick every other sport uses, so MLB needs this
   # stamping too for those two markets.
   _stamp_movement(schedule, 'MLB')
+  _stamp_dow(schedule, 'MLB')
   all_candidates = _mlb_candidates(schedule)
 
   # Persist ranks: pre-game ranks update on every load (shift as games start);
@@ -7017,6 +7205,7 @@ def nhl_schedule():
   _upsert_predictions(schedule, 'NHL')
   _stamp_confidence_blend(schedule, 'NHL')
   _stamp_movement(schedule, 'NHL')
+  _stamp_dow(schedule, 'NHL')
   _attach_graded_results(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
@@ -7053,6 +7242,7 @@ def nba_schedule():
   _upsert_predictions(schedule, 'NBA')
   _stamp_confidence_blend(schedule, 'NBA')
   _stamp_movement(schedule, 'NBA')
+  _stamp_dow(schedule, 'NBA')
   _attach_graded_results(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
@@ -7095,6 +7285,7 @@ def wnba_schedule():
   _upsert_predictions(schedule, 'WNBA')
   _stamp_confidence_blend(schedule, 'WNBA')
   _stamp_movement(schedule, 'WNBA')
+  _stamp_dow(schedule, 'WNBA')
   _attach_graded_results(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
@@ -7135,6 +7326,7 @@ def nfl_schedule():
   _upsert_predictions(week_ctx['days'], 'NFL')
   _stamp_confidence_blend(week_ctx['days'], 'NFL')
   _stamp_movement(week_ctx['days'], 'NFL')
+  _stamp_dow(week_ctx['days'], 'NFL')
   _attach_graded_results(week_ctx['days'], 'NFL')
   _mark_favorites(week_ctx['days'], 'NFL')
   _match_open_bets_to_games(week_ctx['days'], sport='NFL')
@@ -8229,6 +8421,7 @@ def cfb_schedule():
   _upsert_predictions(week_ctx['days'], 'CFB')
   _stamp_confidence_blend(week_ctx['days'], 'CFB')
   _stamp_movement(week_ctx['days'], 'CFB')
+  _stamp_dow(week_ctx['days'], 'CFB')
   _attach_graded_results(week_ctx['days'], 'CFB')
   _mark_favorites(week_ctx['days'], 'CFB')
   _match_open_bets_to_games(week_ctx['days'], sport='CFB')
@@ -9419,6 +9612,8 @@ def _recompute_all_calibration(sport):
     _recompute_movement_stats(sport)
     _recompute_spread_movement_profiles(sport)
     _recompute_spread_movement_stats(sport)
+    _recompute_dow_stats(sport)
+    _recompute_spread_dow_stats(sport)
     _recompute_consensus_calibration(sport)
     _recompute_prob_calibration(sport)
     # Must run after _recompute_unified_rank_stats/_recompute_prob_calibration
@@ -9451,6 +9646,8 @@ def _load_all_calibration_snapshots():
         ('movement_weights',        _MOVEMENT_WEIGHTS,         _MOVEMENT_LOCK),
         ('movement_stats',          _MOVEMENT_STATS,           _MOVEMENT_LOCK),
         ('spread_movement_stats',   _SPREAD_MOVEMENT_STATS,    _MOVEMENT_LOCK),
+        ('dow_stats',               _DOW_STATS,                _MOVEMENT_LOCK),
+        ('spread_dow_stats',        _SPREAD_DOW_STATS,         _MOVEMENT_LOCK),
     ]
     for name, target, lock in targets:
         snap = _load_calib_snapshot(name)
