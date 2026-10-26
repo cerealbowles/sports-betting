@@ -8995,6 +8995,34 @@ def _check_finalized_games():
         except Exception:
             pass
 
+    # Catch-up for NFL/CFB: nfl_api.get_current_week() (and, via ESPN's own
+    # 'week.number', cfb_api.get_current_week() too) advances to the NEXT
+    # week the moment every game in the current week has gone Final — see
+    # get_current_week()'s docstring. That means the very game whose Final
+    # triggers the advance gets polled one tick too early under the old
+    # week number and is then fetched under the new week number forever
+    # after, so build_week_schedule_context(week=None) never sees it again
+    # and its outcome sits pending indefinitely (until someone happens to
+    # browse back to that specific week). Re-check the previous week
+    # explicitly whenever a prediction for that sport is still pending —
+    # same pattern as the NHL/NBA/WNBA midnight-rollover catch-up below.
+    for name, week_fn, sched_fn in [('NFL', nfl_api.get_current_week, nfl_api.build_week_schedule_context),
+                                     ('CFB', cfb_api.get_current_week, cfb_api.build_week_schedule_context)]:
+        with app.app_context():
+            has_pending = db.session.query(GamePrediction.id).filter_by(
+                sport=name, home_won=None).first() is not None
+        if not has_pending:
+            continue
+        try:
+            _, current_week = week_fn()
+            if current_week > 1:
+                schedule = sched_fn(week=current_week - 1).get('days')
+                if schedule:
+                    with app.app_context():
+                        _upsert_predictions(schedule, name)
+        except Exception:
+            pass
+
 
 # ── Nightly outcome resolver ──────────────────────────────────────────────────
 # Fills in home_won / scores for GamePrediction rows that are still pending.
