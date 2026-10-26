@@ -5756,6 +5756,105 @@ def mlb_schedule():
                          sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB'))
   return _set_last_sport_cookie(resp, 'MLB')
 
+def _similar_games_splits(detail):
+  """Historical win-rate/ROI for this sport's graded picks, filtered down to
+  games sharing this matchup's day-of-week and (NFL/MLB only, team_venues.py's
+  coverage) travel-distance bucket. Same source data and bucket definitions as
+  /model's "Situational Splits" (app.py's dow_stats/travel_stats, added in
+  475d2c5) — just sliced to the one bucket this game falls in, for the
+  game-detail page's right rail. Exploratory context only, not fed into any
+  score/recommendation; see "only surface validated/consistent-edge picks" —
+  thin samples are shown with their count so the reader can judge for themselves."""
+  sport = detail.get('game', {}).get('league')
+  game_date = (detail.get('game', {}).get('kickoff_utc') or '')[:10]
+  home_abbr = detail.get('teams', {}).get('home', {}).get('abbr')
+  away_abbr = detail.get('teams', {}).get('away', {}).get('abbr')
+  if not sport or not game_date:
+    return None
+
+  graded = GamePrediction.query.filter_by(sport=sport).filter(
+      GamePrediction.home_won.isnot(None)).all()
+  graded = [p for p in graded if p.home_odds and p.away_odds]
+  if not graded:
+    return None
+
+  def _agg(rows):
+    if not rows:
+      return None
+    wins = total = 0
+    roi_vals = []
+    for p in rows:
+      fav_home = (p.home_prob or 0.5) >= 0.5
+      model_won = fav_home == bool(p.home_won)
+      total += 1
+      if model_won:
+        wins += 1
+      pick_odds = p.home_odds if fav_home else p.away_odds
+      try:
+        o = int(pick_odds)
+        profit = o / 100.0 if o > 0 else 100.0 / (-o)
+        roi_vals.append(profit if model_won else -1.0)
+      except (TypeError, ValueError):
+        pass
+    return {
+        'count':    total,
+        'win_rate': round(wins / total * 100, 1),
+        'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
+    }
+
+  baseline = _agg(graded)
+  if baseline is None:
+    return None
+  out = {'baseline': baseline}
+
+  _dow_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  try:
+    dlbl = _dow_order[datetime.strptime(game_date, '%Y-%m-%d').weekday()]
+  except (TypeError, ValueError):
+    dlbl = None
+  if dlbl:
+    dow_rows = []
+    for p in graded:
+      try:
+        if _dow_order[datetime.strptime(p.game_date, '%Y-%m-%d').weekday()] == dlbl:
+          dow_rows.append(p)
+      except (TypeError, ValueError):
+        continue
+    dow_agg = _agg(dow_rows)
+    if dow_agg:
+      dow_agg['label'] = dlbl
+      out['dow'] = dow_agg
+
+  _venue_sport = {'NFL': 'nfl', 'MLB': 'mlb'}.get(sport)
+  if _venue_sport and home_abbr and away_abbr:
+    def _travel_bucket(miles):
+      if miles < 300:  return 'Regional (<300mi)'
+      if miles < 1000: return '300–1000mi'
+      if miles < 2000: return '1000–2000mi'
+      return '2000mi+'
+
+    miles = team_venues.travel_miles(away_abbr, home_abbr, _venue_sport)
+    if miles is not None:
+      tlbl = _travel_bucket(miles)
+      travel_rows = []
+      for p in graded:
+        a = team_venues.abbr_from_name(p.away_team, _venue_sport)
+        h = team_venues.abbr_from_name(p.home_team, _venue_sport)
+        if not a or not h:
+          continue
+        m = team_venues.travel_miles(a, h, _venue_sport)
+        if m is not None and _travel_bucket(m) == tlbl:
+          travel_rows.append(p)
+      travel_agg = _agg(travel_rows)
+      if travel_agg:
+        travel_agg['label'] = tlbl
+        travel_agg['miles'] = miles
+        out['travel'] = travel_agg
+
+  if 'dow' not in out and 'travel' not in out:
+    return None
+  return out
+
 @app.route('/mlb/game/<game_id>')
 def mlb_game_detail_page(game_id):
   detail = mlb_game_detail.build_game_detail(game_id)
@@ -5781,7 +5880,7 @@ def mlb_game_detail_page(game_id):
                           extra_panels=extra,
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 _SPORT_META = {
 
@@ -7233,7 +7332,7 @@ def nhl_game_detail_page(game_id):
                           schedule_endpoint='nhl_schedule', bet_panel_template='_nhl_bet_panel.html',
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 @app.route('/nba')
 def nba_schedule():
@@ -7276,7 +7375,7 @@ def nba_game_detail_page(game_id):
                           extra_panels=extra,
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 @app.route('/wnba')
 def wnba_schedule():
@@ -7317,7 +7416,7 @@ def wnba_game_detail_page(game_id):
                           extra_panels=extra,
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 @app.route('/nfl')
 def nfl_schedule():
@@ -7383,7 +7482,7 @@ def nfl_game_detail_page(game_id):
                           schedule_endpoint='nfl_schedule', bet_panel_template='_nfl_bet_panel.html',
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 @app.route('/nfl/lineup')
 def nfl_lineup():
@@ -8482,7 +8581,7 @@ def cfb_game_detail_page(game_id):
                           schedule_endpoint='cfb_schedule', bet_panel_template='_cfb_bet_panel.html',
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
-                          ml_panel=panel)
+                          ml_panel=panel, splits=_similar_games_splits(detail))
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():

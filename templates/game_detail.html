@@ -416,6 +416,33 @@
       </div>
       {% endif %}
 
+      {# ── Similar games ────────────────────────────────────────────────
+         How the model's graded picks have done in games sharing this one's
+         day-of-week / travel-distance bucket — same source + bucket defs as
+         /model's Situational Splits, just sliced to this game's bucket(s).
+         Exploratory context, not a recommendation; sample counts shown. #}
+      {% if splits %}
+      <div class="gdp-card">
+        <div class="gdp-section-head"><span>GAMES LIKE THIS</span><span>{{ splits.baseline.win_rate }}% baseline (n={{ splits.baseline.count }})</span></div>
+        <div class="gdp-sit-grid">
+          {% if splits.dow %}
+          <div class="gdp-sit-cell">
+            <span>{{ splits.dow.label|upper }} GAMES</span>
+            <b>{{ splits.dow.win_rate }}% win{% if splits.dow.avg_roi is not none %} &middot; {{ '%+.1f' % splits.dow.avg_roi }}% ROI{% endif %}</b>
+            <div style="color:var(--gdp-dim);font-size:11px;margin-top:2px;">n={{ splits.dow.count }}</div>
+          </div>
+          {% endif %}
+          {% if splits.travel %}
+          <div class="gdp-sit-cell">
+            <span>{{ splits.travel.label|upper }} TRAVEL</span>
+            <b>{{ splits.travel.win_rate }}% win{% if splits.travel.avg_roi is not none %} &middot; {{ '%+.1f' % splits.travel.avg_roi }}% ROI{% endif %}</b>
+            <div style="color:var(--gdp-dim);font-size:11px;margin-top:2px;">n={{ splits.travel.count }} &middot; {{ splits.travel.miles }}mi this game</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {# Trends / H2H intentionally omitted — no real historical closing-line
          or referee data exists yet to populate them honestly. See
          nfl_game_detail.py's module docstring. #}
