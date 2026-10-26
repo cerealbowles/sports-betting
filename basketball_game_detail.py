@@ -39,7 +39,11 @@ def league_rank_table(sport, stats_db, season, before_date):
 
 
 def recent_form(stats_db, season, team_name, before_date, n=5):
-    game_log = stats_db.get_season_game_log_db(season)
+    # Postseason games included (not just 'regular') — otherwise a team's
+    # "Last 5 Games" card freezes at the regular-season finale the moment
+    # the playoffs start, same bug the rest-days figure had (see
+    # wnba_api._get_recent_game_log()'s docstring for the full reasoning).
+    game_log = stats_db.get_season_game_log_db(season, game_type=('regular', 'postseason'))
     games = []
     for g in game_log:
         if g['game_date'] >= before_date:

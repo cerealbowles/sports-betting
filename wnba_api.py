@@ -224,6 +224,26 @@ def _get_season_game_log(season):
     return games
 
 
+def _get_recent_game_log(season):
+    """Same shape as _get_season_game_log(), but includes postseason games
+    too — used only for recency reads (recent form, rest days) so those
+    don't freeze at the regular-season finale once the playoffs start.
+    _compute_team_season_stats() (PPG/PPG-allowed) deliberately keeps using
+    the regular-season-only log instead, so a handful of playoff games
+    against a narrower opponent pool don't skew a team's season averages.
+    Falls back to the regular-season-only log if the DB has nothing yet
+    (the live-walk fallback in _get_season_game_log() doesn't carry
+    postseason games — a fresh/unbackfilled deploy just degrades to the
+    same regular-season-only recency it always had)."""
+    try:
+        games = wnba_stats_db.get_season_game_log_db(season, game_type=('regular', 'postseason'))
+        if games:
+            return games
+    except Exception:
+        pass
+    return _get_season_game_log(season)
+
+
 def _compute_team_season_stats(games):
     """Compute {team_name: {ppg, ppg_allowed}} from season game scores."""
     pts = defaultdict(lambda: {'for': 0, 'against': 0, 'g': 0})
@@ -723,11 +743,12 @@ def build_schedule_context(target_date=None):
     season       = _get_wnba_season()
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
+    recent_log   = _get_recent_game_log(season)
     prior_stats  = _get_prior_season_team_stats(season - 1)
     wnba_odds_map = odds_api.get_odds_map('wnba')
     seeds = _get_standings_seeds()
 
-    games = [_build_game(event, team_stats, game_log, wnba_odds_map, prior_stats, seeds) for event in today_events]
+    games = [_build_game(event, team_stats, recent_log, wnba_odds_map, prior_stats, seeds) for event in today_events]
 
     date_display = _fmt(datetime.strptime(today_str, '%Y-%m-%d'), '%a, %b %-d')
 

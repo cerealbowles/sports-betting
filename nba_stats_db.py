@@ -248,6 +248,13 @@ def get_season_game_log_db(season, game_type='regular'):
     _team_rest_days() all consume (team-name-keyed, one row per game, not
     per team-side). [] if this table has nothing for the season yet.
 
+    `game_type` may be a single value (the default, 'regular') or a
+    list/tuple of values — e.g. ('regular', 'postseason') for a recency
+    read (last-5-games, rest-days) that should keep going once the
+    playoffs start instead of freezing at the regular-season finale.
+    Season-average reads (PPG/PPG-allowed) should keep passing the default
+    so playoff games against a narrower opponent pool don't skew them.
+
     Reads only the is_home=True TeamGameStat row per game — each finalized
     game writes one row per side, and the home side's row already carries
     both teams' names/scores (team_name/points = home, opponent_name/
@@ -257,10 +264,12 @@ def get_season_game_log_db(season, game_type='regular'):
     from app import app as flask_app, TeamGameStat
 
     with flask_app.app_context():
-        rows = (TeamGameStat.query
-                .filter_by(sport='NBA', season=season, game_type=game_type, is_home=True)
-                .order_by(TeamGameStat.game_date.asc())
-                .all())
+        query = TeamGameStat.query.filter_by(sport='NBA', season=season, is_home=True)
+        if isinstance(game_type, (list, tuple, set)):
+            query = query.filter(TeamGameStat.game_type.in_(game_type))
+        else:
+            query = query.filter_by(game_type=game_type)
+        rows = query.order_by(TeamGameStat.game_date.asc()).all()
         return [{
             'game_date':  r.game_date,
             'home_name':  r.team_name,
