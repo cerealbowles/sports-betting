@@ -128,7 +128,11 @@ def build_game_detail(game_id):
 
     p_team = model.get('team_only_prob')
     p_player = model.get('player_prob')
-    p_blend = model.get('home_prob')
+    # final_home_prob (calibration-blend + line-movement adjusted) is what
+    # _best_market_pick uses to decide the ★ recommendation — read it here
+    # too so this page's edge/Kelly agree with that decision instead of
+    # silently recomputing off the raw, unadjusted model prob.
+    p_blend = model.get('final_home_prob', model.get('home_prob'))
     conf_ml = gm.confidence(p_team, p_player) if p_team is not None and p_player is not None else None
 
     home_novig = away_novig = hold_ml = None

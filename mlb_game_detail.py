@@ -202,7 +202,11 @@ def build_game_detail(game_id):
 
     # ── model probability — single model, no team/player blend (MLB has
     # no player-level model), same degrade pattern as NHL's page ──────────
-    p_blend = model.get('home_prob')
+    # final_home_prob (calibration-blend + line-movement adjusted) is what
+    # _best_market_pick/_mlb_candidates use to decide the ★ recommendation —
+    # read it here too so this page's edge/Kelly agree with that decision
+    # instead of silently recomputing off the raw, unadjusted model prob.
+    p_blend = model.get('final_home_prob', model.get('home_prob'))
     conf_ml = None
 
     home_novig = away_novig = hold_ml = None
