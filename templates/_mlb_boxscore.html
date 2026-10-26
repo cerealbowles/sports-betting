@@ -1,0 +1,52 @@
+{# Per-player box score panel for the MLB game-detail page — ported from
+   mlb_schedule.html's inline details sheet (loadBoxscore() in that
+   template's own {% block scripts %}, originally lazy-loaded when the
+   details sheet opened). The full-page detail view has no such "opened"
+   event — it's just loaded once — so this calls the same /api/mlb/game/
+   <game_pk>/boxscore endpoint directly on page load instead. Shown for
+   Live AND Final games (the endpoint serves the completed box score once
+   final, same as the old inline sheet did). Expects `game` in context. #}
+{% if game.status in ('Live', 'Final') %}
+<div class="gdp-card">
+  <div class="gdp-section-head"><span>{{ 'LIVE BOX SCORE' if game.status == 'Live' else 'BOX SCORE' }}</span></div>
+  <div class="boxscore-panel" data-game-pk="{{ game.game_pk }}"></div>
+</div>
+<script>
+(function () {
+    function rowsHtml(players, cols) {
+        if (!players.length) return '<div style="font-size:0.72rem;color:var(--gdp-muted);padding:4px 0;">No live stats yet</div>';
+        var head = '<tr>' + cols.map(function(c) { return '<th style="text-align:' + (c.key === 'name' ? 'left' : 'center') + ';font-size:0.68rem;color:var(--gdp-muted);font-weight:600;padding:2px 6px;">' + c.label + '</th>'; }).join('') + '</tr>';
+        var rows = players.map(function(p) {
+            return '<tr>' + cols.map(function(c) {
+                return '<td style="text-align:' + (c.key === 'name' ? 'left' : 'center') + ';font-size:0.75rem;padding:2px 6px;white-space:nowrap;">' + (p[c.key] !== undefined && p[c.key] !== null ? p[c.key] : '–') + '</td>';
+            }).join('') + '</tr>';
+        }).join('');
+        return '<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">' + head + rows + '</table>';
+    }
+    function sideHtml(side) {
+        if (!side) return '';
+        var battingCols  = [{key:'name', label:'Batter'}, {key:'pos', label:'Pos'}, {key:'ab', label:'AB'}, {key:'r', label:'R'}, {key:'h', label:'H'}, {key:'rbi', label:'RBI'}, {key:'bb', label:'BB'}, {key:'so', label:'K'}];
+        var pitchingCols = [{key:'name', label:'Pitcher'}, {key:'ip', label:'IP'}, {key:'h', label:'H'}, {key:'r', label:'R'}, {key:'er', label:'ER'}, {key:'bb', label:'BB'}, {key:'so', label:'K'}, {key:'pitches', label:'P'}];
+        return '<div style="font-size:0.78rem;font-weight:700;margin:6px 0 2px;">' + side.abbr + '</div>' +
+            rowsHtml(side.pitchers || [], pitchingCols) +
+            rowsHtml(side.batters  || [], battingCols);
+    }
+    function loadBoxscore(panel) {
+        if (!panel || panel.dataset.boxscoreLoaded) return;
+        var gamePk = panel.dataset.gamePk;
+        if (!gamePk) return;
+        panel.dataset.boxscoreLoaded = '1';
+        panel.innerHTML = '<div style="font-size:0.72rem;color:var(--gdp-muted);padding:6px 0;">Loading live stats…</div>';
+        fetch('/api/mlb/game/' + gamePk + '/boxscore')
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (!data) { panel.innerHTML = ''; return; }
+                panel.innerHTML = sideHtml(data.away) + sideHtml(data.home);
+            })
+            .catch(function() { panel.innerHTML = ''; });
+    }
+    var panel = document.querySelector('.boxscore-panel[data-game-pk]');
+    if (panel) loadBoxscore(panel);
+})();
+</script>
+{% endif %}

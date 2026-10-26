@@ -1,0 +1,91 @@
+{# Bet-placement panel for the MLB game-detail page — same shape as
+   _nfl_bet_panel.html, just MLB's own 'abbr' field name instead of
+   'abbrev' (MLB has no .abbrev alias). Still wrapped in a div carrying the
+   .game-card-details class because main.js's openBetSlip()/closeBetSlip()/
+   setStakeQuick() all locate the bet-slip via closest('.game-card-details')
+   — keeping that class here means the existing JS and _spread_bet_row.html
+   keep working with zero changes.
+
+   Expects `game` in context (same dict mlb_api.build_schedule_context()
+   produces — NOT `detail`, the richer page-specific dict game_detail.html
+   otherwise uses). #}
+{% from "_edge_star.html" import edge_pick %}
+<div class="game-card-details mlb-bet-panel">
+{% if game.status not in ('Final', 'Live') %}
+<div class="bet-type-section">
+    <div class="bet-type-row">
+        <span class="bet-type-label">Moneyline</span>
+        <div class="bet-type-chips">
+            {% if game.odds %}
+            <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.away.abbr }}"
+                    data-team="{{ game.away.abbr }}" data-opp="{{ game.home.abbr }}"
+                    data-logo="{{ game.away.logo_url }}" data-market="Moneyline"
+                    data-odds="{{ game.odds.away_best }}" data-odds-display="{{ '+' if game.odds.away_best > 0 }}{{ game.odds.away_best }}"
+                    data-model-prob="{{ game.model.away_prob if game.model else '' }}" data-implied-prob="{{ game.odds.away_implied }}"
+                    data-sport="MLB" data-bet-type="Moneyline" data-bet-side="away"
+                    data-eventstartutc="{{ game.game_time_utc }}"
+                    data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                    data-game-key="{{ game.game_key }}"
+                    onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.away.abbr }}{{ game.away.abbr }}</button>
+            <button type="button" class="btn-bet-team{{ ' is-rec' if edge_pick(game) | trim == game.home.abbr }}"
+                    data-team="{{ game.home.abbr }}" data-opp="{{ game.away.abbr }}"
+                    data-logo="{{ game.home.logo_url }}" data-market="Moneyline"
+                    data-odds="{{ game.odds.home_best }}" data-odds-display="{{ '+' if game.odds.home_best > 0 }}{{ game.odds.home_best }}"
+                    data-model-prob="{{ game.model.home_prob if game.model else '' }}" data-implied-prob="{{ game.odds.home_implied }}"
+                    data-sport="MLB" data-bet-type="Moneyline" data-bet-side="home"
+                    data-eventstartutc="{{ game.game_time_utc }}"
+                    data-home-name="{{ game.home.name }}" data-away-name="{{ game.away.name }}"
+                    data-game-key="{{ game.game_key }}"
+                    onclick="openBetSlip(this)">{{ '★ ' if edge_pick(game) | trim == game.home.abbr }}{{ game.home.abbr }}</button>
+            {% else %}
+            {# No odds fetched for this game yet — nothing to bet against. #}
+            <span class="btn-bet-team btn-bet-team-disabled">{{ game.away.abbr }}</span>
+            <span class="btn-bet-team btn-bet-team-disabled">{{ game.home.abbr }}</span>
+            {% endif %}
+        </div>
+    </div>
+    {% include '_spread_bet_row.html' %}
+</div>
+
+<!-- ── Inline Moneyline bet slip — opened by the buttons above
+     instead of navigating to /new-bet (see openBetSlip in main.js) -->
+{% if game.odds %}
+<div class="bet-slip">
+    <div class="bet-slip-header">
+        <div class="bet-slip-pick">
+            <img class="bet-slip-logo" src="" alt="">
+            <div>
+                <div class="bet-slip-pick-name">—</div>
+                <div class="bet-slip-pick-sub">—</div>
+            </div>
+        </div>
+        <button type="button" class="bet-slip-cancel" onclick="closeBetSlip(this)">Cancel</button>
+    </div>
+    <div class="bet-slip-stats">
+        <div class="bss-item"><span class="bss-label">Model</span><span class="bss-val bss-model">—</span></div>
+        <div class="bss-item"><span class="bss-label">Implied</span><span class="bss-val bss-implied">—</span></div>
+        <div class="bss-item"><span class="bss-label">Edge</span><span class="bss-val bss-edge">—</span></div>
+        <div class="bss-item"><span class="bss-label">Odds</span><span class="bss-val bss-odds">—</span></div>
+    </div>
+    <div class="bet-slip-error"></div>
+    <div class="stake-row">
+        <div class="stake-input-wrap"><input type="number" inputmode="decimal" step="0.01" value="0.00"></div>
+        <div class="stake-quick-btns">
+            <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,'rec')">Rec.</button>
+            <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,25)">$25</button>
+            <button type="button" class="stake-quick-btn" onclick="setStakeQuick(this,50)">$50</button>
+        </div>
+    </div>
+    <div class="stake-meta">
+        <span>Recommended: <b class="bet-slip-recommended">$0.00</b></span>
+        <span>To win: <b class="bet-slip-to-win">$0.00</b></span>
+    </div>
+    <div class="bet-slip-btn-row">
+        <button type="button" class="btn-place-bet" onclick="placeBet(this)">Bet</button>
+        <button type="button" class="btn-add-sheet" onclick="addToBetSheet(this)">+ Sheet</button>
+    </div>
+    <div class="bet-slip-confirm"></div>
+</div>
+{% endif %}
+{% endif %}
+</div>

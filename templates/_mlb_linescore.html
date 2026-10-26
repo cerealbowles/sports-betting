@@ -1,0 +1,42 @@
+{# Inning-by-inning linescore for the MLB game-detail page — ported from
+   mlb_schedule.html's inline details sheet. No generic equivalent (every
+   other sport's game-detail page just shows a final score, since innings
+   are MLB/box-score-specific). Expects `game` in context. #}
+{% if game.linescore %}
+<div class="gdp-card">
+  <div class="gdp-section-head"><span>LINESCORE</span></div>
+  <div style="overflow-x:auto;">
+  <table style="border-collapse:collapse;width:100%;font-size:13px;">
+    <thead>
+      <tr style="color:var(--gdp-dim);">
+        <th style="text-align:left;padding:3px 8px;"></th>
+        {% for inn in game.linescore.innings %}<th style="text-align:center;padding:3px 6px;min-width:20px;">{{ inn.num }}</th>{% endfor %}
+        <th style="text-align:center;padding:3px 8px;font-weight:700;color:var(--gdp-text);">R</th>
+        <th style="text-align:center;padding:3px 8px;font-weight:700;color:var(--gdp-text);">H</th>
+        <th style="text-align:center;padding:3px 8px;font-weight:700;color:var(--gdp-text);">E</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-top:1px solid var(--gdp-border);">
+        <td style="text-align:left;padding:4px 8px;font-weight:700;">{{ game.away.abbr }}</td>
+        {% for inn in game.linescore.innings %}
+        <td style="text-align:center;padding:4px 6px;{{ 'color:var(--gdp-amber);font-weight:700;' if game.status == 'Live' and loop.last }}">{{ inn.away_runs if inn.away_runs != '' else '–' }}</td>
+        {% endfor %}
+        <td style="text-align:center;padding:4px 8px;font-weight:700;">{{ game.linescore.totals.away.r }}</td>
+        <td style="text-align:center;padding:4px 8px;">{{ game.linescore.totals.away.h }}</td>
+        <td style="text-align:center;padding:4px 8px;">{{ game.linescore.totals.away.e }}</td>
+      </tr>
+      <tr style="border-top:1px solid var(--gdp-border);">
+        <td style="text-align:left;padding:4px 8px;font-weight:700;">{{ game.home.abbr }}</td>
+        {% for inn in game.linescore.innings %}
+        <td style="text-align:center;padding:4px 6px;{{ 'color:var(--gdp-amber);font-weight:700;' if game.status == 'Live' and loop.last }}">{{ inn.home_runs if inn.home_runs != '' else '–' }}</td>
+        {% endfor %}
+        <td style="text-align:center;padding:4px 8px;font-weight:700;">{{ game.linescore.totals.home.r }}</td>
+        <td style="text-align:center;padding:4px 8px;">{{ game.linescore.totals.home.h }}</td>
+        <td style="text-align:center;padding:4px 8px;">{{ game.linescore.totals.home.e }}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}

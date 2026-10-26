@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import mlb_api
 import mlb_model
+import mlb_game_detail
 import nhl_api
 import nhl_model
 import nhl_game_detail
@@ -39,6 +40,7 @@ import nfl_game_detail
 import nfl_sim_detail
 import cfb_api
 import cfb_model
+import cfb_game_detail
 import nba_api
 import nba_model
 import nba_fantasy
@@ -4104,11 +4106,17 @@ def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None):
     keys there; this is the more general case — any reason the cache-only
     key never got written).
 
-    `is_empty` overrides the default falsy check — needed for the week-based
+    `is_empty` overrides the default check — needed for the week-based
     sports (NFL/CFB), whose build_week_schedule_context() always returns a
     populated metadata dict (week/season/...) even when its own 'days' list
-    is empty, so plain truthiness never trips the retry."""
-    is_empty = is_empty or (lambda r: not r)
+    is empty, so plain truthiness never trips the retry. The default covers
+    the day-based sports (MLB/NHL/NBA/WNBA), whose build_schedule_context()
+    returns a list of day dicts that's non-empty (and so falsy-truthy) even
+    when every day's own 'games' list is — a stale cache entry for a date
+    that had no games yet when it was written reads as a real no-games day
+    otherwise, so a game added since never gets picked up until the cache
+    naturally expires."""
+    is_empty = is_empty or (lambda r: not r or not any(day.get('games') for day in r))
     with _cache_only(*modules):
         result = fetch_fn()
     if is_empty(result):
@@ -5559,6 +5567,33 @@ def mlb_schedule():
                          sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB'))
   return _set_last_sport_cookie(resp, 'MLB')
 
+@app.route('/mlb/game/<game_id>')
+def mlb_game_detail_page(game_id):
+  detail = mlb_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('mlb_schedule'))
+
+  game, _date_str = mlb_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+  extra = ['_mlb_pitchers_panel.html']
+  if game and game.get('linescore'):
+    extra.append('_mlb_linescore.html')
+  if game and game.get('status') in ('Live', 'Final'):
+    extra.append('_mlb_boxscore.html')
+
+  return render_template('game_detail.html', detail=detail, game=game,
+                          subnav_sport='MLB', bankroll=bankroll,
+                          schedule_endpoint='mlb_schedule', bet_panel_template='_mlb_bet_panel.html',
+                          extra_panels=extra,
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
+
 _SPORT_META = {
 
   'MLB': {'emoji': '⚾', 'schedule_endpoint': 'mlb_schedule', 'baseline': '~54% (home field)'},
@@ -6568,60 +6603,124 @@ def model_performance():
   _fire_days = len(set(g['date'] for g in _fire_games))
 
   # ── Enriched recent predictions (resolved only) ────────────
+  # Spread tab only includes games actually graded against a real market
+  # spread (spread_covered set, with both sides' prices on record) — same
+  # gate _rb_extract_spread already enforces for the ★ Recommended Bets
+  # replay, so a game that never got a tradable spread line can't show up
+  # here as a graded "result" either. Moneyline tab is unaffected.
   _team_pfx = re.compile(r'^(?:Hm|Aw) ')
   enriched_preds = []
-  for p in resolved[:40]:
-    _omen_detail_p = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
-    _lm_p = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
-                            p.closing_away_odds or p.away_odds,
-                            p.opening_home_odds, p.opening_away_odds)
-    ts, score_kind = _primary_score(_omen_detail_p, sport, line_move_pct=_lm_p, clv_pct=p.pick_clv)
-    fav_home = (p.home_prob or 0.5) >= 0.5
-    actual_home_won = bool(p.home_won)
-    pick_won = (fav_home == actual_home_won)
-    pick_team = p.home_team if fav_home else p.away_team
-    opp_team  = p.away_team if fav_home else p.home_team
-    pick_prob = (p.home_prob if fav_home else 1.0 - p.home_prob) or 0.5
-    _edge = _pick_edge_pct(p.home_prob, p.home_odds, p.away_odds)
+  if bet_type == 'spread':
+    _spread_rows = [p for p in resolved
+                    if p.spread_covered is not None and p.spread_home_price and p.spread_away_price]
+    for p in _spread_rows[:40]:
+      ts = _spread_omen_score(sport, p.factors_json, p.spread_pick_line,
+                               p.spread_home_price, p.spread_away_price)
+      fav_home  = (p.spread_cover_prob or 0.5) >= 0.5
+      covered   = bool(p.spread_covered)
+      pick_won  = (fav_home == covered)
+      line      = p.spread_pick_line if p.spread_pick_line is not None else 0.0
+      val       = line if fav_home else -line
+      pick_team = p.home_team if fav_home else p.away_team
+      pick_line = f"{'+' if val > 0 else ''}{val:g}"
+      opp_team  = p.away_team if fav_home else p.home_team
+      pick_prob = (p.spread_cover_prob if fav_home else 1.0 - p.spread_cover_prob) or 0.5
+      _edge     = _pick_edge_pct(p.spread_cover_prob, p.spread_home_price, p.spread_away_price)
+      covered_team = p.home_team if covered else p.away_team
 
-    factors_display = []
-    try:
-      for label, contrib in (json.loads(p.factors_json or '[]') or []):
-        if abs(contrib) < 0.01:
-          continue
-        points_home = contrib > 0
-        clean = _team_pfx.sub('', label)
-        helped = (points_home == actual_home_won)
-        factors_display.append({
-            'label':       clean,
-            'contrib':     round(contrib, 3),
-            'points_home': points_home,
-            'helped':      helped,
-        })
-      factors_display.sort(key=lambda x: abs(x['contrib']), reverse=True)
-    except Exception:
-      pass
+      factors_display = []
+      try:
+        for label, contrib in (json.loads(p.factors_json or '[]') or []):
+          if abs(contrib) < 0.01:
+            continue
+          points_home = contrib > 0
+          clean = _team_pfx.sub('', label)
+          helped = (points_home == covered)
+          factors_display.append({
+              'label':       clean,
+              'contrib':     round(contrib, 3),
+              'points_home': points_home,
+              'helped':      helped,
+          })
+        factors_display.sort(key=lambda x: abs(x['contrib']), reverse=True)
+      except Exception:
+        pass
 
-    enriched_preds.append({
-        'game_date':  p.game_date,
-        'away_team':  p.away_team,
-        'home_team':  p.home_team,
-        'home_prob':  round(p.home_prob * 100, 1) if p.home_prob else None,
-        'away_prob':  round((1.0 - p.home_prob) * 100, 1) if p.home_prob else None,
-        'pick_team':  pick_team,
-        'opp_team':   opp_team,
-        'pick_prob':  round(pick_prob * 100, 1),
-        'pick_won':   pick_won,
-        'actual_winner': p.home_team if actual_home_won else p.away_team,
-        'home_score': p.home_score,
-        'away_score': p.away_score,
-        'omen_score': ts,
-        'score_kind': score_kind,
-        'edge':       _edge,
-        'daily_rank': p.daily_rank,
-        'phantom_rank': _phantom_rank_map.get(p.id),
-        'factors':    factors_display,
-    })
+      enriched_preds.append({
+          'game_date':  p.game_date,
+          'away_team':  p.away_team,
+          'home_team':  p.home_team,
+          'home_prob':  None,
+          'away_prob':  None,
+          'pick_team':  pick_team,
+          'pick_line':  pick_line,
+          'opp_team':   opp_team,
+          'pick_prob':  round(pick_prob * 100, 1),
+          'pick_won':   pick_won,
+          'actual_winner': covered_team,
+          'home_score': p.home_score,
+          'away_score': p.away_score,
+          'omen_score': ts,
+          'score_kind': 'omen',
+          'edge':       _edge,
+          'daily_rank': None,
+          'phantom_rank': None,
+          'factors':    factors_display,
+      })
+  else:
+    for p in resolved[:40]:
+      _omen_detail_p = _omen_score(p.home_prob, p.home_odds, p.away_odds, p.factors_json, sport=sport, detail=True)
+      _lm_p = _line_move_pct(p.home_prob, p.closing_home_odds or p.home_odds,
+                              p.closing_away_odds or p.away_odds,
+                              p.opening_home_odds, p.opening_away_odds)
+      ts, score_kind = _primary_score(_omen_detail_p, sport, line_move_pct=_lm_p, clv_pct=p.pick_clv)
+      fav_home = (p.home_prob or 0.5) >= 0.5
+      actual_home_won = bool(p.home_won)
+      pick_won = (fav_home == actual_home_won)
+      pick_team = p.home_team if fav_home else p.away_team
+      opp_team  = p.away_team if fav_home else p.home_team
+      pick_prob = (p.home_prob if fav_home else 1.0 - p.home_prob) or 0.5
+      _edge = _pick_edge_pct(p.home_prob, p.home_odds, p.away_odds)
+
+      factors_display = []
+      try:
+        for label, contrib in (json.loads(p.factors_json or '[]') or []):
+          if abs(contrib) < 0.01:
+            continue
+          points_home = contrib > 0
+          clean = _team_pfx.sub('', label)
+          helped = (points_home == actual_home_won)
+          factors_display.append({
+              'label':       clean,
+              'contrib':     round(contrib, 3),
+              'points_home': points_home,
+              'helped':      helped,
+          })
+        factors_display.sort(key=lambda x: abs(x['contrib']), reverse=True)
+      except Exception:
+        pass
+
+      enriched_preds.append({
+          'game_date':  p.game_date,
+          'away_team':  p.away_team,
+          'home_team':  p.home_team,
+          'home_prob':  round(p.home_prob * 100, 1) if p.home_prob else None,
+          'away_prob':  round((1.0 - p.home_prob) * 100, 1) if p.home_prob else None,
+          'pick_team':  pick_team,
+          'pick_line':  None,
+          'opp_team':   opp_team,
+          'pick_prob':  round(pick_prob * 100, 1),
+          'pick_won':   pick_won,
+          'actual_winner': p.home_team if actual_home_won else p.away_team,
+          'home_score': p.home_score,
+          'away_score': p.away_score,
+          'omen_score': ts,
+          'score_kind': score_kind,
+          'edge':       _edge,
+          'daily_rank': p.daily_rank,
+          'phantom_rank': _phantom_rank_map.get(p.id),
+          'factors':    factors_display,
+      })
 
   # ── Group recent predictions by date for the drill-down view ────────────
   pred_days = []
@@ -8019,6 +8118,27 @@ def cfb_schedule():
                          heading=f"{len(cfb_bets)} Open CFB Bet{'s' if len(cfb_bets) != 1 else ''}",
                          sync_next='/cfb'))
   return _set_last_sport_cookie(resp, 'CFB')
+
+@app.route('/cfb/game/<game_id>')
+def cfb_game_detail_page(game_id):
+  detail = cfb_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('cfb_schedule'))
+
+  game, _season, week = cfb_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+
+  return render_template('game_detail.html', detail=detail, game=game, week=week,
+                          subnav_sport='CFB', bankroll=bankroll,
+                          schedule_endpoint='cfb_schedule', bet_panel_template='_cfb_bet_panel.html',
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel)
 
 @app.route('/api/refresh-stats/stream')
 def api_refresh_stats_stream():

@@ -1,12 +1,16 @@
 """
-Static per-team stadium reference data for NFL — coordinates, surface, and
-home timezone. Nothing in this codebase has this today (team_catalog.py
-only fetches display NAMES live from ESPN, nothing about venues;
-weather_api.py's NFL_OUTDOOR dict has lat/lon for ~17 outdoor stadiums only,
-keyed by a venue-name substring, no surface/timezone/indoor entries).
+Static per-team stadium reference data — coordinates, surface, and home
+timezone — for NFL and MLB. Nothing in this codebase has this today
+(team_catalog.py only fetches display NAMES live from ESPN/MLB Stats API,
+nothing about venues; weather_api.py's MLB_OUTDOOR/NFL_OUTDOOR dicts have
+lat/lon for outdoor stadiums only, keyed by a venue-name substring, no
+surface/timezone/indoor entries, and skip domed parks entirely).
 
-Keyed by ESPN team abbreviation (what every team dict in this app already
-carries as team['abbr']) rather than ESPN's numeric team id, since that's
+NFL rows are keyed by ESPN team abbreviation (what every NFL team dict in
+this app already carries as team['abbr']); MLB rows are keyed by the MLB
+Stats API's own abbreviation (same convention mlb_api.py's team dicts use,
+e.g. 'AZ' not 'ARI', 'CWS' not 'CHW', 'ATH' for the Athletics) — these are
+each sport's existing convention, not ESPN's numeric team id, since that's
 the field actually available to callers without an extra lookup.
 
 Used by the game-detail page's "situation" section: travel distance/
@@ -22,7 +26,7 @@ import math
 #            weather exposure) — retractable roofs that are usually closed
 #            for the sport's season count as True here; Seattle/Vegas-style
 #            partial covers that still expose the field count as False.
-TEAMS = {
+NFL_TEAMS = {
     'ARI': ('Glendale, AZ',        33.5276, -112.2626, 'grass', True,  'America/Phoenix'),
     'ATL': ('Atlanta, GA',         33.7554,  -84.4008, 'turf',  True,  'America/New_York'),
     'BAL': ('Baltimore, MD',       39.2780,  -76.6227, 'grass', False, 'America/New_York'),
@@ -57,12 +61,51 @@ TEAMS = {
     'WSH': ('Landover, MD',        38.9076,  -76.8645, 'grass', False, 'America/New_York'),
 }
 
+# Back-compat alias — existing NFL callers (nfl_game_detail.py) import this
+# module-level name directly via team_venues.get()'s default sport.
+TEAMS = NFL_TEAMS
 
-def get(abbr):
+MLB_TEAMS = {
+    'ATH': ('West Sacramento, CA',  38.5805, -121.5144, 'grass', False, 'America/Los_Angeles'),
+    'ATL': ('Atlanta, GA',          33.8908,  -84.4678, 'grass', False, 'America/New_York'),
+    'AZ':  ('Phoenix, AZ',          33.4455, -112.0667, 'turf',  True,  'America/Phoenix'),
+    'BAL': ('Baltimore, MD',        39.2838,  -76.6217, 'grass', False, 'America/New_York'),
+    'BOS': ('Boston, MA',           42.3467,  -71.0972, 'grass', False, 'America/New_York'),
+    'CHC': ('Chicago, IL',          41.9484,  -87.6553, 'grass', False, 'America/Chicago'),
+    'CIN': ('Cincinnati, OH',       39.0979,  -84.5086, 'grass', False, 'America/New_York'),
+    'CLE': ('Cleveland, OH',        41.4962,  -81.6852, 'grass', False, 'America/New_York'),
+    'COL': ('Denver, CO',           39.7559, -104.9942, 'grass', False, 'America/Denver'),
+    'CWS': ('Chicago, IL',          41.8299,  -87.6338, 'grass', False, 'America/Chicago'),
+    'DET': ('Detroit, MI',          42.3390,  -83.0485, 'grass', False, 'America/New_York'),
+    'HOU': ('Houston, TX',          29.7573,  -95.3555, 'grass', True,  'America/Chicago'),
+    'KC':  ('Kansas City, MO',      39.0517,  -94.4803, 'grass', False, 'America/Chicago'),
+    'LAA': ('Anaheim, CA',          33.8003, -117.8827, 'grass', False, 'America/Los_Angeles'),
+    'LAD': ('Los Angeles, CA',      34.0739, -118.2400, 'grass', False, 'America/Los_Angeles'),
+    'MIA': ('Miami, FL',            25.7781,  -80.2197, 'turf',  True,  'America/New_York'),
+    'MIL': ('Milwaukee, WI',        43.0280,  -87.9712, 'grass', True,  'America/Chicago'),
+    'MIN': ('Minneapolis, MN',      44.9817,  -93.2777, 'grass', False, 'America/Chicago'),
+    'NYM': ('Queens, NY',           40.7571,  -73.8458, 'grass', False, 'America/New_York'),
+    'NYY': ('Bronx, NY',            40.8296,  -73.9262, 'grass', False, 'America/New_York'),
+    'PHI': ('Philadelphia, PA',     39.9061,  -75.1665, 'grass', False, 'America/New_York'),
+    'PIT': ('Pittsburgh, PA',       40.4469,  -80.0057, 'grass', False, 'America/New_York'),
+    'SD':  ('San Diego, CA',        32.7073, -117.1566, 'grass', False, 'America/Los_Angeles'),
+    'SEA': ('Seattle, WA',          47.5914, -122.3325, 'grass', True,  'America/Los_Angeles'),
+    'SF':  ('San Francisco, CA',    37.7786, -122.3893, 'grass', False, 'America/Los_Angeles'),
+    'STL': ('St. Louis, MO',        38.6226,  -90.1928, 'grass', False, 'America/Chicago'),
+    'TB':  ('St. Petersburg, FL',   27.7683,  -82.6534, 'turf',  True,  'America/New_York'),
+    'TEX': ('Arlington, TX',        32.7473,  -97.0817, 'grass', True,  'America/Chicago'),
+    'TOR': ('Toronto, ON',          43.6414,  -79.3894, 'turf',  True,  'America/Toronto'),
+    'WSH': ('Washington, DC',       38.8730,  -77.0074, 'grass', False, 'America/New_York'),
+}
+
+_BY_SPORT = {'nfl': NFL_TEAMS, 'mlb': MLB_TEAMS}
+
+
+def get(abbr, sport='nfl'):
     """Returns a dict for a team abbreviation, or None if not in the table
     (e.g. an unrecognized/renamed abbreviation — callers should hide the
     situation fields that need this rather than guess)."""
-    row = TEAMS.get((abbr or '').upper())
+    row = _BY_SPORT.get(sport, NFL_TEAMS).get((abbr or '').upper())
     if not row:
         return None
     city, lat, lon, surface, dome, tz = row
@@ -78,24 +121,24 @@ def _haversine_miles(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def travel_miles(away_abbr, home_abbr):
+def travel_miles(away_abbr, home_abbr, sport='nfl'):
     """One-way distance, in miles, from the away team's home stadium to the
     home team's stadium (the game venue, for all but international-site
     games, which this doesn't special-case). None if either team is
     unrecognized."""
-    a, h = get(away_abbr), get(home_abbr)
+    a, h = get(away_abbr, sport), get(home_abbr, sport)
     if not a or not h:
         return None
     return round(_haversine_miles(a['lat'], a['lon'], h['lat'], h['lon']))
 
 
-def timezone_change_hours(away_abbr, home_abbr, at_utc):
+def timezone_change_hours(away_abbr, home_abbr, at_utc, sport='nfl'):
     """Hours the away team is shifting across (positive = traveling east,
     e.g. West Coast team flying to the East Coast), evaluated at `at_utc`
     (a timezone-aware datetime) so DST is handled correctly. None if either
     team is unrecognized."""
     from zoneinfo import ZoneInfo
-    a, h = get(away_abbr), get(home_abbr)
+    a, h = get(away_abbr, sport), get(home_abbr, sport)
     if not a or not h:
         return None
     away_off = at_utc.astimezone(ZoneInfo(a['tz'])).utcoffset()

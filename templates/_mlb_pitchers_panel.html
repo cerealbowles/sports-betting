@@ -1,0 +1,57 @@
+{# Probable-pitcher + bullpen-fatigue panel for the MLB game-detail page —
+   ported from mlb_schedule.html's inline details sheet (the "Pitchers"
+   section), unchanged in substance: the starting pitcher isn't the same
+   thing as the team's overall ERA/WHIP (already shown in TEAM COMPARISON
+   above) and bullpen fatigue has no generic equivalent anywhere else on
+   this page, so it stays as MLB's own extra panel rather than folded into
+   a shared section. Expects `game` in context. #}
+{% if game.away.pitcher or game.home.pitcher or game.away.bullpen or game.home.bullpen %}
+<div class="gdp-card">
+  <div class="gdp-section-head"><span>PROBABLE PITCHERS</span></div>
+  <div class="gdp-cols">
+    {% for team, side in [(game.away, 'away'), (game.home, 'home')] %}
+    <div style="flex:1 1 240px;">
+      <div style="font-weight:700;color:{{ '#6E9BFF' if side == 'away' else '#FF8A3D' }};margin-bottom:6px;">{{ team.abbr }}</div>
+      {% if team.pitcher %}
+      <div style="font-size:14px;font-weight:700;">
+        {{ team.pitcher.name }}
+        {% if team.pitcher.throws %}<span style="font-size:11px;color:var(--gdp-dim);font-weight:400;margin-left:4px;">{{ team.pitcher.throws }}HP</span>{% endif %}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--gdp-muted);margin:4px 0 6px;">
+        <span><b style="color:var(--gdp-text)">{{ team.pitcher.x_era if team.pitcher.x_era else team.pitcher.era }}</b> {{ 'xERA' if team.pitcher.x_era else 'ERA' }}</span>
+        <span><b style="color:var(--gdp-text)">{{ team.pitcher.whip }}</b> WHIP</span>
+        <span><b style="color:var(--gdp-text)">{{ team.pitcher.record }}</b></span>
+        {% if team.pitcher.bf and team.pitcher.bf > 0 %}
+        <span><b style="color:var(--gdp-text)">{{ (team.pitcher.k / team.pitcher.bf * 100) | round(1) }}%</b> K%</span>
+        {% endif %}
+      </div>
+      {% if team.pitcher.last_starts %}
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">
+        {% for s in team.pitcher.last_starts %}
+        <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:{{ '#183222' if s.result == 'W' else ('#3A1C1C' if s.result == 'L' else '#23263A') }};color:{{ 'var(--gdp-good)' if s.result == 'W' else ('var(--gdp-bad)' if s.result == 'L' else 'var(--gdp-muted)') }};">{{ s.result }} {{ s.ip }}IP {{ s.er }}ER</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% else %}
+      <div style="color:var(--gdp-dim);font-size:13px;">SP TBD</div>
+      {% endif %}
+      {% if team.bullpen %}
+      <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--gdp-muted);">
+        <span style="font-weight:700;color:var(--gdp-dim);">PEN</span>
+        {% if team.bullpen.era_last_14 is not none %}
+        <span style="color:{{ 'var(--gdp-good)' if team.bullpen.era_last_14 < 3.5 else ('var(--gdp-bad)' if team.bullpen.era_last_14 > 4.5 else 'var(--gdp-muted)') }};"><b>{{ '%.2f' % team.bullpen.era_last_14 }}</b> ERA/14d</span>
+        {% endif %}
+        <span style="color:{{ 'var(--gdp-amber)' if team.bullpen.ip_last_3 > 6 else 'var(--gdp-muted)' }};"><b>{{ team.bullpen.ip_last_3 }}</b> IP/3d</span>
+        {% if team.bullpen.closer_name %}
+        <span style="color:{{ 'var(--gdp-amber)' if team.bullpen.closer_yesterday else 'var(--gdp-good)' }};">{{ team.bullpen.closer_name }}: {{ 'yday' if team.bullpen.closer_yesterday else 'fresh' }}</span>
+        {% endif %}
+        {% if team.bullpen.top_unavail %}
+        <span style="color:var(--gdp-bad);">⊘ {{ team.bullpen.top_unavail | join(', ') }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

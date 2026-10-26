@@ -1024,6 +1024,8 @@
     </div>
 </details>
 {% endif %}
+{% endif %}
+{% if total != 0 %}
 
 <!-- ── Recent predictions ── -->
 <div class="section-header" style="margin-bottom: 10px;">
@@ -1049,7 +1051,7 @@
       <div class="pred-header">
         <span class="pred-game">{{ p.away_team.split()[-1] }} @ {{ p.home_team.split()[-1] }}</span>
         <span class="pred-pick-label">
-          Pick: <span class="pred-pick-team">{{ p.pick_team.split()[-1] }}</span>
+          Pick: <span class="pred-pick-team">{{ p.pick_team.split()[-1] }}{% if p.pick_line %} {{ p.pick_line }}{% endif %}</span>
           {% if p.pick_prob %}<span style="color:var(--text-muted);font-weight:400;font-size:0.72rem;">({{ p.pick_prob }}%)</span>{% endif %}
           {% if p.omen_score %}<span class="omen-badge">{{ 'PH' if p.score_kind == 'phantom' else 'OM' }} {{ p.omen_score }}</span>{% endif %}
           {% if p.daily_rank %}<span style="font-size:0.68rem;color:var(--text-muted);margin-left:4px;">#{{ p.daily_rank }}</span>{% if p.phantom_rank %}<span style="font-size:0.68rem;color:var(--blue);margin-left:3px;">ph#{{ p.phantom_rank }}</span>{% endif %}{% endif %}
@@ -1057,7 +1059,7 @@
         {% if p.pick_won %}
         <span class="result-correct">✓ WIN</span>
         {% else %}
-        <span class="result-wrong">✗ LOSS · {{ p.actual_winner.split()[-1] }} won</span>
+        <span class="result-wrong">✗ LOSS · {{ p.actual_winner.split()[-1] }} {{ 'covered' if p.pick_line else 'won' }}</span>
         {% endif %}
         {% if p.home_score is not none %}
         <span class="pred-score">{{ p.away_score }}–{{ p.home_score }}</span>
