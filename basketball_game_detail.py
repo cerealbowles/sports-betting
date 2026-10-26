@@ -127,7 +127,7 @@ def build(sport, short_sport, g, season, before_date, stats_db, boxscore_api, ro
             'edge': f"{edge_pts:+.1f} pts", 'ev': f"{ev * 100:+.1f}%",
             'kelly': f"{units:.1f}u", 'confidence': conf_ml,
             'why': (f"Blended model has {'home' if fav_home else 'away'} side at "
-                    f"{(p_blend if fav_home else 1 - p_blend) * 100:.1f}% vs FanDuel's "
+                    f"{(p_blend if fav_home else 1 - p_blend) * 100:.1f}% vs DraftKings's "
                     f"{(home_novig if fav_home else away_novig) * 100:.1f}% no-vig."),
             'gate_note': gdc.recommendation_gate_note(sport, 'MONEYLINE', tag, amer_odds=side_price, edge_pts=edge_pts),
         }

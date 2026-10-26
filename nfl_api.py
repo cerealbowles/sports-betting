@@ -967,7 +967,7 @@ def build_schedule_context():
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
     prior_stats  = _get_prior_season_team_stats(season - 1)
-    nfl_odds_map = odds_api.get_odds_map('nfl')
+    nfl_odds_map = odds_api.get_odds_map('nfl', events=today_events)
 
     _prefetch_game_summaries(today_events)
     games = [_build_game(event, team_stats, game_log, nfl_odds_map, prior_stats) for event in today_events]
@@ -1071,7 +1071,7 @@ def build_week_schedule_context(week=None):
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
     prior_stats  = _get_prior_season_team_stats(season - 1)
-    nfl_odds_map = odds_api.get_odds_map('nfl')
+    nfl_odds_map = odds_api.get_odds_map('nfl', events=events)
 
     _prefetch_game_summaries(events)
     by_date = defaultdict(list)

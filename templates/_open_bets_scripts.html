@@ -76,10 +76,10 @@ function bdmInitClose(d) {
     var suggested = _closingSuggestions[id];
     if (suggested !== undefined) {
         cl.value = (suggested > 0 ? '+' : '') + suggested;
-        note.textContent = 'Auto-filled from FanDuel at game start — edit if needed.';
+        note.textContent = 'Auto-filled from DraftKings at game start — edit if needed.';
     } else {
         cl.value = '';
-        note.textContent = 'Will be auto-filled from FanDuel history when game starts.';
+        note.textContent = 'Will be auto-filled from DraftKings history when game starts.';
     }
     var entry = d.getAttribute('data-entry-amer'), curr = d.getAttribute('data-curr-amer');
     var row = d.querySelector('.bdm-co-line-row');

@@ -162,6 +162,33 @@ body::before { display: none; }
   transition: border-color var(--transition), background var(--transition);
 }
 .sport-switch-trigger:hover { border-color: var(--border-strong); }
+
+/* ── Lines toggle (header) ───────────────────────────────
+   Hides each game card's odds chips (_market_chips.html inside
+   .game-card-summary) without touching anything behind a tap/disclosure —
+   the picks table and the per-game details sheet are unaffected. */
+.lines-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition), color var(--transition);
+}
+.lines-toggle:hover { border-color: var(--border-strong); }
+.lines-toggle.off { color: var(--text-muted); }
+.lines-toggle-slash { opacity: 0; }
+.lines-toggle.off .lines-toggle-slash { opacity: 1; }
+@media (max-width: 600px) { .lines-toggle-label { display: none; } .lines-toggle { padding: 0 10px; } }
+
+body.hide-lines .game-card-summary .mc-wrap { display: none; }
 .sport-switch-caret { font-size: 0.6rem; color: var(--text-muted); }
 .sport-switch-menu {
   display: none;

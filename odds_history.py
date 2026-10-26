@@ -1,5 +1,5 @@
 """
-Persists FanDuel odds snapshots to SQLite so we can show line movement.
+Persists DraftKings odds snapshots to SQLite so we can show line movement.
 
 Each time get_odds_map() fetches fresh odds, it calls record() per game.
 A new row is only written when the odds actually change, so the table stays small.

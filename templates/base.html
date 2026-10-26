@@ -17,7 +17,7 @@
     {% block head %}{% endblock %}
 </head>
 {% set _embed = request.args.get('embed') == '1' %}
-<body{% if _embed %} class="embed-mode"{% endif %}>
+<body class="{{ 'embed-mode' if _embed }}{{ ' hide-lines' if not show_lines }}">
 {% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule'} %}
 {% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀', 'WNBA': '🏀'} %}
 {% import "_season_badge.html" as sb %}
@@ -68,6 +68,17 @@
         </nav>
 
         <div class="topbar-right">
+            <button type="button" id="linesToggle" class="lines-toggle{{ '' if show_lines else ' off' }}"
+                    onclick="toggleLinesVisibility(this)"
+                    aria-pressed="{{ 'true' if show_lines else 'false' }}"
+                    title="Show/hide betting lines on game cards">
+                <svg class="nav-icon lines-toggle-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <line class="lines-toggle-slash" x1="3" y1="21" x2="21" y2="3"></line>
+                </svg>
+                <span class="lines-toggle-label">Lines</span>
+            </button>
             {% if global_exposure %}
             <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
                 <span class="exposure-item">

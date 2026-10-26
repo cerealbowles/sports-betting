@@ -132,7 +132,7 @@
 
     {% if detail.agreement %}
     <table class="gsp-agree-table">
-      <thead><tr><th>Market</th><th>Sim</th><th>Blend</th><th>FanDuel</th><th>Read</th></tr></thead>
+      <thead><tr><th>Market</th><th>Sim</th><th>Blend</th><th>DraftKings</th><th>Read</th></tr></thead>
       <tbody>
         {% for row in detail.agreement %}
         <tr>
@@ -208,7 +208,7 @@
       {# ── Game sim row ──────────────────────────────────────────────────── #}
       {% if detail.margin_hist %}
       <div class="gsp-card">
-        <div class="gsp-section-head"><span>Margin (home − away)</span>{% if detail.spread_line is not none %}<span class="sub">FanDuel {{ detail.teams.home.abbr }} {{ '%+g' | format(detail.spread_line) }}</span>{% endif %}</div>
+        <div class="gsp-section-head"><span>Margin (home − away)</span>{% if detail.spread_line is not none %}<span class="sub">DraftKings {{ detail.teams.home.abbr }} {{ '%+g' | format(detail.spread_line) }}</span>{% endif %}</div>
         <canvas id="marginChart" height="90" role="img" aria-label="Simulated margin distribution for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas>
         {% if detail.margin_cover %}
         <div class="gsp-margin-legend">

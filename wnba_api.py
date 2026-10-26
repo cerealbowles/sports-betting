@@ -745,7 +745,7 @@ def build_schedule_context(target_date=None):
     team_stats   = _compute_team_season_stats(game_log)
     recent_log   = _get_recent_game_log(season)
     prior_stats  = _get_prior_season_team_stats(season - 1)
-    wnba_odds_map = odds_api.get_odds_map('wnba')
+    wnba_odds_map = odds_api.get_odds_map('wnba', events=today_events)
     seeds = _get_standings_seeds()
 
     games = [_build_game(event, team_stats, recent_log, wnba_odds_map, prior_stats, seeds) for event in today_events]

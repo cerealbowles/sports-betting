@@ -756,7 +756,7 @@ def build_schedule_context(target_date=None):
     game_log     = _get_season_game_log(season)
     team_stats   = _compute_team_season_stats(game_log)
     prior_stats  = _get_prior_season_team_stats(season - 1)
-    nba_odds_map = odds_api.get_odds_map('nba')
+    nba_odds_map = odds_api.get_odds_map('nba', events=today_events)
 
     games = [_build_game(event, team_stats, game_log, nba_odds_map, prior_stats) for event in today_events]
 

@@ -1,3 +1,16 @@
+/* ── Lines toggle (header) ────────────────────────────── */
+function toggleLinesVisibility(btn) {
+var hide = !document.body.classList.contains('hide-lines');
+document.body.classList.toggle('hide-lines', hide);
+btn.classList.toggle('off', hide);
+btn.setAttribute('aria-pressed', hide ? 'false' : 'true');
+fetch('/api/toggle-lines', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({show_lines: !hide}),
+}).catch(function () {});
+}
+
 /* ── Header sport switcher dropdown ───────────────────── */
 function toggleSportSwitch(e) {
 e.stopPropagation();

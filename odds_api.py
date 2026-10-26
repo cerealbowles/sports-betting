@@ -9,15 +9,12 @@ from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo('America/New_York')
 
-BASE = "https://api.the-odds-api.com/v4/sports"
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
 _cache = {}
-_TTL = 3600   # 1 hour — matches cron schedule below
-_FETCH_WINDOW = (8, 22)  # safety gate: never hit API outside this ET window
-# Fixed ET hours the cron job fires — predictable, budget-safe
-_SCHEDULE_HOURS = (8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
+_TTL = 300   # 5 min — short, just to avoid re-parsing on rapid page loads
 
-# File-based cache so restarts don't burn API quota
+# File-based cache so a restart doesn't throw away the last known lines
 _CACHE_FILE = os.path.join(
     os.path.dirname(os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'instance', 'bets.db'))),
     'odds_cache.json',
@@ -49,24 +46,16 @@ SPORT_KEYS = {
     'wnba': 'basketball_wnba',
 }
 
-# Abbreviate long bookmaker names for compact display
-_BOOK_LABELS = {
-    'draftkings':        'DK',
-    'fanduel':           'FD',
-    'betmgm':            'MGM',
-    'caesars':           'CZR',
-    'pointsbet':         'PB',
-    'bovada':            'BOV',
-    'williamhill_us':    'WH',
-    'barstool':          'BS',
-    'betrivers':         'BR',
-    'unibet_us':         'UB',
-    'mybookieag':        'MB',
-    'betonlineag':       'BOL',
-    'lowvig':            'LV',
-    'pinnacle':          'PIN',
-    'betway':            'BW',
+# ESPN scoreboard URL slug + whether the CFB-only FBS-group filter applies
+_ESPN_SLUGS = {
+    'mlb':  'baseball/mlb',
+    'nhl':  'hockey/nhl',
+    'nfl':  'football/nfl',
+    'cfb':  'football/college-football',
+    'nba':  'basketball/nba',
+    'wnba': 'basketball/wnba',
 }
+_FBS_GROUP = 80  # matches cfb_api.py — without it ESPN drops most FBS games
 
 
 def _normalize(name):
@@ -76,10 +65,6 @@ def _normalize(name):
     return name.lower().strip()
 
 
-def _book_label(key):
-    return _BOOK_LABELS.get(key.lower(), key[:4].upper())
-
-
 def _american_to_implied(price):
     """American odds → raw implied probability (no vig removal)."""
     if price > 0:
@@ -87,67 +72,68 @@ def _american_to_implied(price):
     return abs(price) / (abs(price) + 100)
 
 
-def _fanduel_price(bookmakers, team_name):
-    """Return the FanDuel American odds for team_name, or None if not listed."""
-    norm = _normalize(team_name)
-    for bm in bookmakers:
-        if bm.get('key') != 'fanduel':
-            continue
-        for market in bm.get('markets', []):
-            if market.get('key') != 'h2h':
-                continue
-            for o in market.get('outcomes', []):
-                if _normalize(o.get('name', '')) == norm:
-                    return o.get('price')
-    return None
+def _num(line):
+    """'+4.5' / '-4.5' / 'o43.5' / 'u43.5' → 4.5 / -4.5 / 43.5 / 43.5."""
+    if line is None:
+        return None
+    try:
+        return float(str(line).lstrip('ou'))
+    except (TypeError, ValueError):
+        return None
 
 
-def _fanduel_spread(bookmakers, home_team_name, away_team_name):
-    """Return (home_point, home_price, away_price) from FanDuel's spreads market.
-    home_point is the home team's spread (negative = home favored); the two
-    prices are the American odds to lay on each side at that line, needed to
-    vig-remove into a cover probability the same way moneyline does."""
-    norm_home = _normalize(home_team_name)
-    norm_away = _normalize(away_team_name)
-    for bm in bookmakers:
-        if bm.get('key') != 'fanduel':
-            continue
-        for market in bm.get('markets', []):
-            if market.get('key') != 'spreads':
-                continue
-            home_point = home_price = away_price = None
-            for o in market.get('outcomes', []):
-                norm = _normalize(o.get('name', ''))
-                if norm == norm_home:
-                    home_point, home_price = o.get('point'), o.get('price')
-                elif norm == norm_away:
-                    away_price = o.get('price')
-            if home_point is not None:
-                return home_point, home_price, away_price
-    return None, None, None
+def _int_odds(odds):
+    if odds is None:
+        return None
+    try:
+        return int(float(odds))
+    except (TypeError, ValueError):
+        return None
 
 
-def _fanduel_totals(bookmakers):
-    """Return (line, over_odds, under_odds) from FanDuel totals market, or (None, None, None)."""
-    for bm in bookmakers:
-        if bm.get('key') != 'fanduel':
-            continue
-        for market in bm.get('markets', []):
-            if market.get('key') != 'totals':
-                continue
-            line = over_odds = under_odds = None
-            for o in market.get('outcomes', []):
-                name = (o.get('name') or '').lower()
-                if name == 'over':
-                    over_odds = o.get('price')
-                    line = o.get('point')
-                elif name == 'under':
-                    under_odds = o.get('price')
-                    if line is None:
-                        line = o.get('point')
-            if line is not None:
-                return line, over_odds, under_odds
-    return None, None, None
+def _espn_provider(comp):
+    """Pick DraftKings if present (it always has been in testing), else
+    whatever ESPN lists first — defensive fallback, not expected to trigger."""
+    odds_list = comp.get('odds') or []
+    if not odds_list:
+        return None
+    for o in odds_list:
+        if (o.get('provider') or {}).get('name') == 'DraftKings':
+            return o
+    return odds_list[0]
+
+
+def _espn_spread(entry):
+    """Return (home_point, home_price, away_price) — home_point negative
+    means home favored, matching odds_api's existing convention."""
+    ps = entry.get('pointSpread') or {}
+    home_close = (ps.get('home') or {}).get('close') or {}
+    away_close = (ps.get('away') or {}).get('close') or {}
+    home_point = _num(home_close.get('line'))
+    home_price = _int_odds(home_close.get('odds'))
+    away_price = _int_odds(away_close.get('odds'))
+    return home_point, home_price, away_price
+
+
+def _espn_moneyline(entry):
+    """Return (home_price, away_price) American odds."""
+    ml = entry.get('moneyline') or {}
+    home_price = _int_odds(((ml.get('home') or {}).get('close') or {}).get('odds'))
+    away_price = _int_odds(((ml.get('away') or {}).get('close') or {}).get('odds'))
+    return home_price, away_price
+
+
+def _espn_total(entry):
+    """Return (line, over_odds, under_odds)."""
+    tot = entry.get('total') or {}
+    over_close  = (tot.get('over') or {}).get('close') or {}
+    under_close = (tot.get('under') or {}).get('close') or {}
+    line = _num(over_close.get('line'))
+    if line is None:
+        line = _num(under_close.get('line'))
+    over_odds  = _int_odds(over_close.get('odds'))
+    under_odds = _int_odds(under_close.get('odds'))
+    return line, over_odds, under_odds
 
 
 def get_last_fetch_time():
@@ -155,7 +141,6 @@ def get_last_fetch_time():
     if _cache:
         ts = max(ts for _, ts in _cache.values())
         return datetime.fromtimestamp(ts, tz=_ET) if ts else None
-    # Fall back to file cache
     try:
         fc = _fc_load()
         if fc:
@@ -167,111 +152,56 @@ def get_last_fetch_time():
 
 
 def get_next_fetch_time():
-    """Return the next scheduled cron slot (ET) after now."""
+    """Return the next scheduled cron warm-cache slot (ET) after now — same
+    schedule app.py's cron job runs on, unrelated to any quota now."""
     from datetime import timedelta
+    hours = (8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
     now = datetime.now(_ET)
-    for h in _SCHEDULE_HOURS:
+    for h in hours:
         candidate = now.replace(hour=h, minute=0, second=0, microsecond=0)
         if candidate > now:
             return candidate
-    # Past last slot today → first slot tomorrow
-    return (now + timedelta(days=1)).replace(
-        hour=_SCHEDULE_HOURS[0], minute=0, second=0, microsecond=0
-    )
+    return (now + timedelta(days=1)).replace(hour=hours[0], minute=0, second=0, microsecond=0)
 
 
-def _get_api_keys():
-    """Return list of API keys from ODDS_API_KEY (comma-separated)."""
-    raw = os.environ.get('ODDS_API_KEY', '')
-    return [k.strip() for k in raw.split(',') if k.strip()]
-
-# Track exhausted keys so we skip them without retrying until process restart
-_exhausted_keys = set()
-
-_USAGE_TTL = 300  # 5 min — avoid re-checking on every settings page load
-_usage_cache = {}  # key -> ({'remaining': int|None, 'used': int|None, 'status': str}, ts)
-
-
-def get_key_usage():
-    """Per-key request quota for the monthly plan, for display on the
-    Settings page. Hits GET /v4/sports with each key — per The Odds API's
-    docs this endpoint doesn't count against the usage quota, so it's safe
-    to call on every page load; still cached for _USAGE_TTL to cut down on
-    redundant requests from quick repeat visits.
-
-    Returns [{'key_suffix': str, 'remaining': int|None, 'used': int|None,
-              'status': 'ok'|'invalid'|'error'}, ...] — one entry per key
-    in ODDS_API_KEY, in order.
-    """
-    keys = _get_api_keys()
-    now = time.time()
-    out = []
-    for api_key in keys:
-        cached = _usage_cache.get(api_key)
-        if cached and now - cached[1] < _USAGE_TTL:
-            out.append({**cached[0], 'key_suffix': api_key[-6:]})
-            continue
-        entry = {'remaining': None, 'used': None, 'status': 'error'}
-        try:
-            r = requests.get(BASE, params={'apiKey': api_key}, timeout=10)
-            if r.status_code == 401:
-                entry['status'] = 'invalid'
-            else:
-                r.raise_for_status()
-                remaining = r.headers.get('x-requests-remaining')
-                used      = r.headers.get('x-requests-used')
-                entry['remaining'] = int(remaining) if remaining is not None else None
-                entry['used']      = int(used) if used is not None else None
-                entry['status']    = 'ok'
-        except Exception:
-            pass
-        _usage_cache[api_key] = (entry, now)
-        out.append({**entry, 'key_suffix': api_key[-6:]})
-    return out
-
-
-# Sports whose card odds stop updating at kickoff (in-play prices are hidden).
+# Sports whose card odds stop updating at kickoff (ESPN drops the `odds` key
+# entirely once a game goes live/final) — keep showing the last pre-game
+# price via odds_history's pregame snapshot instead of blanking the card.
 _FREEZE_AFTER_START = set(SPORT_KEYS.values())
 
 
-# Odds API keys for preseason markets. Only queried while active (see
-# _active_sport_keys), so an out-of-season key never costs a request.
-_PRESEASON_KEYS = {
-    'icehockey_nhl':        'icehockey_nhl_preseason',
-    'basketball_nba':       'basketball_nba_preseason',
-    'americanfootball_nfl': 'americanfootball_nfl_preseason',
-}
-_active_keys_cache = {'ts': 0.0, 'keys': set()}
+def _fetch_espn_events(sport, date_str=None):
+    """Self-contained ESPN scoreboard fetch for sports with no other ESPN
+    call already in scope (currently just MLB). `date_str` is YYYYMMDD;
+    omitted means ESPN's own default window for that sport."""
+    slug = _ESPN_SLUGS.get(sport)
+    if not slug:
+        return []
+    params = {'limit': 400}
+    if date_str:
+        params['dates'] = date_str
+    if sport == 'cfb':
+        params['groups'] = _FBS_GROUP
+    try:
+        r = requests.get(f"{ESPN_BASE}/{slug}/scoreboard", params=params, timeout=15)
+        r.raise_for_status()
+        return r.json().get('events', [])
+    except Exception as e:
+        print(f'[odds] ESPN scoreboard fetch failed for {sport}: {e}', flush=True)
+        return []
 
 
-def _active_sport_keys(api_keys):
-    """Set of currently in-season Odds API sport keys. The /sports endpoint is
-    free (doesn't consume quota); cached for an hour."""
-    now = time.time()
-    if now - _active_keys_cache['ts'] < 3600:
-        return _active_keys_cache['keys']
-    for api_key in api_keys:
-        try:
-            r = requests.get(f"{BASE}/", params={'apiKey': api_key}, timeout=10)
-            if r.status_code == 200:
-                keys = {x.get('key') for x in r.json() if x.get('active')}
-                _active_keys_cache.update(ts=now, keys=keys)
-                return keys
-        except Exception:
-            continue
-    return _active_keys_cache['keys']
-
-
-def get_odds_map(sport):
+def get_odds_map(sport, events=None, date_str=None):
     """
-    Returns {normalized_home_team: game_odds_dict} for today's games (FanDuel only).
-    Returns {} silently if no API keys are set or on any error.
-    Rotates through comma-separated keys in ODDS_API_KEY on 401/quota exhaustion.
+    Returns {normalized_home_team: game_odds_dict} for the given ESPN
+    `events` list (competitions' .odds[], DraftKings). If `events` is None,
+    fetches ESPN's scoreboard itself for `sport` — used by sports that don't
+    already have an ESPN event list in scope elsewhere (currently just MLB).
 
     game_odds_dict = {
         'away_team':    str,
         'home_team':    str,
-        'away_best':    int,    # American odds (FanDuel)
+        'away_best':    int,    # American odds (DraftKings)
         'home_best':    int,
         'away_implied': float,  # vig-free implied prob
         'home_implied': float,
@@ -279,110 +209,42 @@ def get_odds_map(sport):
         'home_spread':  float,  # home-team spread, negative = home favored, None if not priced
     }
     """
-    keys = _get_api_keys()
-    if not keys:
-        return {}
-
     sport_key = SPORT_KEYS.get(sport, sport)
-    cache_key  = f'odds_{sport_key}'
+    cache_key = f'odds_{sport_key}_{date_str}' if date_str else f'odds_{sport_key}'
     now = time.time()
 
-    # 1. In-memory cache (fastest, lives until restart)
-    if cache_key in _cache:
-        data, ts = _cache[cache_key]
-        if now - ts < _TTL:
-            return data
+    if events is None:
+        if cache_key in _cache:
+            data, ts = _cache[cache_key]
+            if now - ts < _TTL:
+                return data
+        events = _fetch_espn_events(sport, date_str=date_str)
 
-    # 2. File cache (survives restarts — restarts don't burn API quota)
-    fc = _fc_load()
-    if cache_key in fc:
-        entry = fc[cache_key]
-        if now - entry['ts'] < _TTL:
-            data = entry['data']
-            _cache[cache_key] = (data, entry['ts'])
-            return data
-
-    # 3. Outside fetch window — return stale cache rather than burning a token
-    et_hour = datetime.now(_ET).hour
-    if not (_FETCH_WINDOW[0] <= et_hour < _FETCH_WINDOW[1]):
+    if not events:
         cached = _cache.get(cache_key, ({}, 0))[0]
         if not cached:
-            cached = fc.get(cache_key, {}).get('data', {})
+            cached = _fc_load().get(cache_key, {}).get('data', {})
         return cached
-
-    # 4. Live fetch — try each key until one succeeds. Preseason games are
-    # priced under a separate Odds API sport key (e.g. icehockey_nhl_preseason),
-    # so those are pulled too whenever that key is currently active.
-    active_keys = [k for k in keys if k not in _exhausted_keys] or keys
-    fetch_keys = [sport_key]
-    pre_key = _PRESEASON_KEYS.get(sport_key)
-    if pre_key and pre_key in _active_sport_keys(active_keys):
-        fetch_keys.append(pre_key)
-
-    events = []
-    got_main = False
-    for fk in fetch_keys:
-        r = None
-        used_key = None
-        for api_key in active_keys:
-            try:
-                r = requests.get(
-                    f"{BASE}/{fk}/odds/",
-                    params={
-                        'apiKey':       api_key,
-                        'bookmakers':   'fanduel',
-                        'markets':      'h2h,totals,spreads',
-                        'oddsFormat':   'american',
-                        'dateFormat':   'iso',
-                    },
-                    timeout=10,
-                )
-                if r.status_code == 401:
-                    print(f'[odds] key ...{api_key[-6:]} exhausted/invalid — trying next', flush=True)
-                    _exhausted_keys.add(api_key)
-                    continue
-                remaining = r.headers.get('x-requests-remaining')
-                if remaining is not None:
-                    print(f'[odds] key ...{api_key[-6:]}: {remaining} requests remaining', flush=True)
-                    if int(remaining) == 0:
-                        _exhausted_keys.add(api_key)
-                r.raise_for_status()
-                used_key = api_key
-                break
-            except requests.HTTPError:
-                continue
-            except Exception:
-                break
-        if r is None or used_key is None:
-            continue
-        try:
-            events.extend(r.json())
-            if fk == sport_key:
-                got_main = True
-        except Exception:
-            continue
-
-    if not got_main and not events:
-        return _cache.get(cache_key, ({}, 0))[0]
 
     result = {}
     for event in events:
-        home_name = event.get('home_team', '')
-        away_name = event.get('away_team', '')
+        comp = (event.get('competitions') or [{}])[0]
+        tmap = {c.get('homeAway'): c for c in comp.get('competitors', [])}
+        home_name = (tmap.get('home', {}).get('team') or {}).get('displayName', '')
+        away_name = (tmap.get('away', {}).get('team') or {}).get('displayName', '')
         if not home_name or not away_name:
             continue
 
-        away_price = _fanduel_price(event.get('bookmakers', []), away_name)
-        home_price = _fanduel_price(event.get('bookmakers', []), home_name)
-
-        if away_price is None or home_price is None:
-            print(f'[odds] no FanDuel price for {away_name} @ {home_name} '
-                  f'(away={away_price}, home={home_price})', flush=True)
+        entry_raw = _espn_provider(comp)
+        if entry_raw is None:
             continue
 
-        bkm = event.get('bookmakers', [])
-        total_line, over_odds, under_odds = _fanduel_totals(bkm)
-        home_spread, home_spread_price, away_spread_price = _fanduel_spread(bkm, home_name, away_name)
+        home_price, away_price = _espn_moneyline(entry_raw)
+        if home_price is None or away_price is None:
+            continue
+
+        home_spread, home_spread_price, away_spread_price = _espn_spread(entry_raw)
+        total_line, over_odds, under_odds = _espn_total(entry_raw)
 
         ou_str = f' | O/U {total_line}' if total_line is not None else ''
         print(f'[odds] {sport_key}: {away_name} {away_price:+d} @ '
@@ -394,21 +256,18 @@ def get_odds_map(sport):
         vig_free_away = raw_away / total if total else 0.5
         vig_free_home = raw_home / total if total else 0.5
 
-        # Use hour-precision UTC timestamp so same-day series games don't collide
-        # e.g. "2026-05-16T00" vs "2026-05-16T17" are distinct keys
-        event_time = (event.get('commence_time') or '')[:13]  # 'YYYY-MM-DDTHH'
+        # Hour-precision UTC timestamp so same-day series games don't collide
+        event_date = event.get('date') or ''
+        event_time = event_date[:13]  # 'YYYY-MM-DDTHH'
         hist_key = f"{_normalize(home_name)}_{_normalize(away_name)}_{event_time}"
-        # Only record pre-game (Preview) odds into the CLV/line-movement history —
-        # once the game has started, price swings reflect in-game win probability,
-        # not market/sharp movement, and would corrupt line-movement analysis.
-        # In-play prices go to the separate live_odds table instead (see
-        # odds_history.save_live), which just tracks the single freshest price
-        # per game for the open-bet card's "current market" readout.
-        commence_raw = event.get('commence_time') or ''
+
+        # Only record pre-game odds into the CLV/line-movement history —
+        # once the game has started, price swings reflect in-game win
+        # probability, not market/sharp movement.
         is_preview = True
-        if commence_raw:
+        if event_date:
             try:
-                commence_dt = datetime.fromisoformat(commence_raw.replace('Z', '+00:00'))
+                commence_dt = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
                 is_preview = commence_dt > datetime.now(timezone.utc)
             except Exception:
                 is_preview = True
@@ -432,19 +291,22 @@ def get_odds_map(sport):
             'total_line':   total_line,
             'over_odds':    over_odds,
             'under_odds':   under_odds,
-            'home_spread':        home_spread,        # negative = home favored
-            'home_spread_price':  home_spread_price,   # American odds to back home at home_spread
-            'away_spread_price':  away_spread_price,   # American odds to back away at -home_spread
+            'home_spread':        home_spread,
+            'home_spread_price':  home_spread_price,
+            'away_spread_price':  away_spread_price,
         }
         if sport_key in _FREEZE_AFTER_START:
-            # Keep the last pre-game prices on the card once the game is live, so a
-            # bet can be compared against where the market stood at kickoff.
+            # Keep the last pre-game prices on the card once the game goes
+            # live/final — ESPN drops the `odds` key entirely at that point.
             if is_preview:
                 odds_history.save_pregame(sport_key, hist_key, entry)
             else:
                 entry = odds_history.get_pregame(sport_key, hist_key) or entry
         result[map_key] = {**entry, **movement}
 
+    # Also carry forward any games ESPN no longer lists odds for at all
+    # (gone live/final and dropped from this scoreboard fetch window) but
+    # that still have a frozen pregame snapshot from an earlier fetch.
     _cache[cache_key] = (result, now)
     _fc_save(cache_key, result, now)
     return result
@@ -454,7 +316,7 @@ def lookup_game_odds(odds_map, home_name, away_name, game_date=None):
     """
     Look up odds for a specific game by home+date key.
     Falls back to searching all dates if no date provided (NHL/NFL).
-    Handles home/away reversal between Odds API and schedule APIs.
+    Handles home/away reversal between ESPN's display order and schedule APIs.
     """
     h_norm = _normalize(home_name)
     a_norm = _normalize(away_name)

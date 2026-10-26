@@ -165,13 +165,13 @@
             {% endfor %}
         </div>
 
-        <!-- ── FanDuel + Model analysis ── -->
+        <!-- ── DraftKings + Model analysis ── -->
         {% if game.odds or game.model %}
         <div class="analysis-section">
 
             {% if game.odds %}
             <div class="analysis-row">
-                <span class="analysis-label">FanDuel</span>
+                <span class="analysis-label">DraftKings</span>
                 <div class="analysis-data">
                     <span class="odds-team">
                         <span>{{ game.away.abbrev }}</span>

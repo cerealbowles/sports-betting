@@ -161,7 +161,7 @@
       <span class="gdp-week">{{ detail.game.league }}{% if week %} · Week {{ week }}{% endif %}</span>
     </div>
     <div class="gdp-refresh">
-      {% if odds_last_fetch %}FanDuel odds as of {{ odds_last_fetch | fmt('%-I:%M%p') | lower }}{% endif %}
+      {% if odds_last_fetch %}DraftKings odds as of {{ odds_last_fetch | fmt('%-I:%M%p') | lower }}{% endif %}
       <button type="button" onclick="location.reload()">Refresh</button>
     </div>
   </div>
@@ -204,7 +204,7 @@
       <div class="gdp-vhead"><span>{{ v.market }}</span><span class="gdp-tag {{ v.tag | lower }}">{{ v.tag }}</span></div>
       <div class="gdp-pick">
         <span class="gdp-pick-val" style="color:{{ '#F5C04E' if v.tag == 'CHECK' else '#CFDDFF' }}">{{ v.pick }}</span>
-        <span class="gdp-pick-price">FanDuel <b>{{ '+' if v.price > 0 }}{{ v.price }}</b></span>
+        <span class="gdp-pick-price">DraftKings <b>{{ '+' if v.price > 0 }}{{ v.price }}</b></span>
       </div>
       <div class="gdp-vgrid">
         <div><span>MARKET</span><b>{{ v.mkt }}</b></div>
@@ -226,7 +226,7 @@
     <span>Team <b>{{ (detail.model.p_team_home * 100) | round(1) }}%</b></span>
     <span>Player <b>{{ (detail.model.p_player_home * 100) | round(1) }}%</b></span>
     <span>→ Blended <b>{{ (detail.model.p_blend_home * 100) | round(1) }}%</b></span>
-    {% if detail.fanduel.novig_home is not none %}<span>FanDuel no-vig <b>{{ detail.fanduel.novig_home }}%</b></span>{% endif %}
+    {% if detail.fanduel.novig_home is not none %}<span>DraftKings no-vig <b>{{ detail.fanduel.novig_home }}%</b></span>{% endif %}
     {% if detail.model.ats_record_when_edge %}<span style="margin-left:auto">ATS when edge ≥ {{ detail.model.ats_record_when_edge.threshold_pts }}: <b>{{ detail.model.ats_record_when_edge.w }}–{{ detail.model.ats_record_when_edge.l }} ({{ detail.model.ats_record_when_edge.pct }}%)</b></span>{% endif %}
   </div>
   {% endif %}
@@ -253,7 +253,7 @@
             <span>{{ detail.teams.home.abbr }}</span>
           </div>
         </div>
-        <div class="gdp-lm-chart-wrap"><canvas id="lineChart" role="img" aria-label="FanDuel line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas></div>
+        <div class="gdp-lm-chart-wrap"><canvas id="lineChart" role="img" aria-label="DraftKings line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas></div>
         <div id="lmModelNote" class="gdp-lm-model-note" hidden></div>
       </div>
       {% endif %}
@@ -326,10 +326,10 @@
 
     <div class="gdp-rail">
 
-      {# ── FanDuel market (read-only, informational) ───────────────────── #}
+      {# ── DraftKings market (read-only, informational) ───────────────────── #}
       {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none %}
       <div class="gdp-card">
-        <div class="gdp-section-head"><span>FANDUEL MARKET</span><span>Model side outlined</span></div>
+        <div class="gdp-section-head"><span>DRAFTKINGS MARKET</span><span>Model side outlined</span></div>
 
         {% if detail.fanduel.moneyline.home.price is not none %}
         <div class="gdp-market">
@@ -528,7 +528,7 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         if (modelNote) {
             if (modelVal != null && !modelInRange) {
                 modelNote.hidden = false;
-                modelNote.textContent = LABELS[key] + ' model: ' + (modelVal > 0 ? '+' : '') + modelVal.toFixed(1) + (modelVal > dataMax ? ' — well above FanDuel\'s range' : ' — well below FanDuel\'s range');
+                modelNote.textContent = LABELS[key] + ' model: ' + (modelVal > 0 ? '+' : '') + modelVal.toFixed(1) + (modelVal > dataMax ? ' — well above DraftKings\'s range' : ' — well below DraftKings\'s range');
             } else {
                 modelNote.hidden = true;
             }

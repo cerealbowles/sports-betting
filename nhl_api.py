@@ -417,7 +417,18 @@ ESPN_NHL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/
 _ESPN_TO_NHL_ABBREV = {'NJ': 'NJD', 'LA': 'LAK', 'SJ': 'SJS', 'TB': 'TBL'}
 
 
-def _get_espn_event_map(date_str):
+def _fetch_espn_nhl_events(date_str):
+    """ESPN hockey scoreboard events for `date_str` (YYYY-MM-DD ET) — the
+    shared fetch behind _get_espn_event_map() (team-id bridging) and
+    odds_api.get_odds_map('nhl') (DraftKings spread/moneyline), so both
+    reuse one cached request instead of two."""
+    date_compact = date_str.replace('-', '')
+    data = _cached_get(f"{ESPN_NHL_SCOREBOARD}?dates={date_compact}&limit=100",
+                        f'espn_nhl_sched_{date_str}', _TTL['schedule'])
+    return (data or {}).get('events', [])
+
+
+def _get_espn_event_map(date_str, events=None):
     """Returns {frozenset({home_abbrev, away_abbrev}): {'event_id',
     'home_id', 'away_id'}} from ESPN's hockey scoreboard for `date_str`
     (YYYY-MM-DD ET), keyed by the official NHL API's OWN abbreviation
@@ -432,13 +443,10 @@ def _get_espn_event_map(date_str):
     only job; everything downstream uses ESPN's ids once this lookup
     succeeds. {} (and the player-blend block that depends on it degrades
     to team-only) if ESPN's scoreboard has nothing for this date."""
-    date_compact = date_str.replace('-', '')
-    data = _cached_get(f"{ESPN_NHL_SCOREBOARD}?dates={date_compact}&limit=100",
-                        f'espn_nhl_sched_{date_str}', _TTL['schedule'])
+    if events is None:
+        events = _fetch_espn_nhl_events(date_str)
     out = {}
-    if not data:
-        return out
-    for event in data.get('events', []):
+    for event in events:
         comp = event.get('competitions', [{}])[0]
         tmap = {c.get('homeAway'): c for c in comp.get('competitors', [])}
         home_c, away_c = tmap.get('home', {}), tmap.get('away', {})
@@ -613,13 +621,14 @@ def build_schedule_context(target_date=None):
     standings  = _get_standings_map()
     prior_standings = _get_prior_season_standings(_get_nhl_season_start_year())
     form, last_game_date = _get_recent_form_map()
-    odds_map   = odds_api.get_odds_map('nhl')
     injury_map = injuries_api.get_injury_map('nhl')
     if not raw:
         return []
 
     today_str = target_date or _today_et()
-    espn_map = _get_espn_event_map(today_str)
+    espn_events = _fetch_espn_nhl_events(today_str)
+    odds_map   = odds_api.get_odds_map('nhl', events=espn_events)
+    espn_map = _get_espn_event_map(today_str, events=espn_events)
     today_games = []
     for day in raw.get('gameWeek', []):
         if day.get('date') == today_str:

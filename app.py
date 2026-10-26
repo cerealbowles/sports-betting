@@ -2,10 +2,9 @@ import warnings
 warnings.filterwarnings('ignore', message='.*timezone.*')
 
 # Load .env before any other import — odds_history.py and this module both
-# read os.environ.get(...) at import time (DB_PATH), and odds_api.py reads
-# ODDS_API_KEY per-request. Without this, .env silently does nothing (no
-# error, just an empty odds map) unless the parent shell happened to export
-# the same vars itself.
+# read os.environ.get(...) at import time (DB_PATH). Without this, .env
+# silently does nothing unless the parent shell happened to export the same
+# vars itself.
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -160,6 +159,7 @@ class Setting(db.Model):
   percent_bankroll = db.Column(db.Float, default=0.25)  # fraction of bankroll
   discord_webhook_url = db.Column(db.Text, default='')
   favorite_teams_json = db.Column(db.Text, default='{}')  # {"NFL": ["Chicago Bears", ...], ...}
+  show_lines = db.Column(db.Boolean, default=True)  # odds chips on game-card summaries (header toggle)
 
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
@@ -258,10 +258,10 @@ class GamePrediction(db.Model):
   spread_close   = db.Column(db.Float)
   total_open     = db.Column(db.Float)                        # ESPN pickcenter game total (O/U)
   total_close    = db.Column(db.Float)
-  # Spread pick tracking — separate from spread_open/close above (which are
-  # ESPN-sourced, post-game backfilled for display). These are the odds_api
-  # (FanDuel) line captured at prediction time, graded against the model's
-  # own spread_proxy cover probability.
+  # Spread pick tracking — separate from spread_open/close above (which come
+  # from ESPN's pickcenter backfill, for older/display-only rows). These are
+  # odds_api's live ESPN/DraftKings scoreboard line captured at prediction
+  # time, graded against the model's own spread_proxy cover probability.
   spread_pick_line  = db.Column(db.Float)                     # home-team spread at pick time
   spread_cover_prob = db.Column(db.Float)                     # model P(home covers), via spread_proxy
   spread_home_price = db.Column(db.Integer)                   # American odds to back home ATS
@@ -989,6 +989,7 @@ def ensure_column_exists():
     _add('game_predictions', 'total_inputs_json', 'TEXT DEFAULT NULL')
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
+    _add('setting',          'show_lines',          'BOOLEAN DEFAULT 1')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
@@ -3543,7 +3544,7 @@ app.jinja_env.globals['vig_free_pair'] = _vig_free_implied
 # tight realistic band (MLB run lines are ~1.5, occasionally 2.5 for a big
 # pitching mismatch; NHL puck lines are almost always 1.5) so a double-digit
 # value there is bad upstream data (e.g. a team-name mismatch in
-# odds_api._fanduel_spread grabbing the wrong outcome), not a real market
+# odds_api._espn_spread grabbing the wrong outcome), not a real market
 # line, and offering a bet on it would let a bogus spread get recorded as a
 # real one (see the +13.5 MLB "run line" bug this guards against). Sports
 # with legitimately wide spreads (NFL/CFB/NBA/WNBA) are left uncapped.
@@ -4008,6 +4009,21 @@ _SPORT_SCHEDULE_ENDPOINTS = {
     'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
     'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule',
 }
+
+
+@app.context_processor
+def _inject_show_lines():
+    """Header 'Lines' toggle (base.html) — hides each game card's odds
+    chips (not the picks table, which is already tucked behind its own
+    disclosure) for browsing without wanting to see betting lines. Read
+    server-side so the very first render already has the right body class
+    (no toggle-on-load flash); static/main.js flips the class instantly on
+    click and persists the new value via /api/toggle-lines."""
+    try:
+        settings = Setting.query.first()
+        return {'show_lines': True if not settings else bool(settings.show_lines)}
+    except Exception:
+        return {'show_lines': True}
 
 @app.context_processor
 def _inject_nav_context():
@@ -4512,10 +4528,8 @@ def dashboard_mockup():
 def settings_page():
   s = Setting.query.first() or Setting()
   import odds_history
-  import odds_api as _oa
   odds_stats = odds_history.get_storage_stats()
-  odds_key_usage = _oa.get_key_usage()
-  return render_template('settings.html', settings=s, odds_stats=odds_stats, odds_key_usage=odds_key_usage,
+  return render_template('settings.html', settings=s, odds_stats=odds_stats,
                          favorites=_load_favorites(), favorite_sports=FAVORITE_SPORTS)
 
 
@@ -4547,6 +4561,17 @@ def api_save_favorites():
   s.favorite_teams_json = json.dumps(clean)
   db.session.commit()
   return jsonify({'ok': True, 'favorites': clean})
+
+@app.route('/api/toggle-lines', methods=['POST'])
+def api_toggle_lines():
+  data = request.get_json(silent=True) or {}
+  s = Setting.query.first()
+  if not s:
+    s = Setting()
+    db.session.add(s)
+  s.show_lines = bool(data.get('show_lines', True))
+  db.session.commit()
+  return jsonify({'ok': True, 'show_lines': s.show_lines})
 
 @app.route('/save_settings', methods=['POST'])
 def save_settings():
@@ -4910,7 +4935,7 @@ def close_open(bet_id):
     outcome = 'loss'
   profit = b.stake * (_as_decimal_odds(b.odds) - 1.0) if outcome == 'win' else -b.stake
 
-  # Closing line: use manually entered value, else auto-lookup from FanDuel history
+  # Closing line: use manually entered value, else auto-lookup from DraftKings history
   closing_line = None
   cl_raw = request.form.get('closing_line', '').strip()
   if cl_raw:
@@ -8080,8 +8105,9 @@ def api_refresh_odds():
 
 @app.route('/api/refresh-odds/stream')
 def api_refresh_odds_stream():
-    """SSE stream: clears the odds cache, re-fetches from The Odds API,
-    rebuilds recommendations, and reports each step in real time."""
+    """SSE stream: clears the odds cache, rebuilds recommendations (which
+    re-fetches fresh ESPN/DraftKings odds along the way), and reports each
+    step in real time."""
     from flask import stream_with_context, Response as _Resp
     import mlb_api as _mlb
     import odds_api as _oa
@@ -8107,10 +8133,6 @@ def api_refresh_odds_stream():
             except Exception:
                 pass
             yield _sse('Odds cache cleared', 'done')
-
-            yield _sse('Fetching odds from The Odds API', 'running')
-            _oa.get_odds_map('mlb')
-            yield _sse('Odds fetched', 'done')
 
             yield _sse('Rebuilding game recommendations', 'running')
             schedule = _mlb.build_schedule_context()
@@ -8421,11 +8443,11 @@ def api_lifeos_mlb_game_boxscore(game_pk):
 def api_lifeos_games():
     """
     Read-only feed for LifeOS (a separate app, /home/spooky/lifedb) — today's MLB/NFL
-    games with live score, status, and FanDuel odds where available, so its Sports
+    games with live score, status, and DraftKings odds where available, so its Sports
     page can show a card per game instead of re-implementing its own score/odds
     fetching. Reuses the same cached get_live_scores()/get_odds_map() this app's own
-    dashboard already calls, so it adds no extra load on MLB/ESPN/Odds API beyond
-    what's already happening — LifeOS just gets to read the result.
+    dashboard already calls, so it adds no extra load on MLB/ESPN beyond what's
+    already happening — LifeOS just gets to read the result.
 
     No other endpoint in this app requires auth, but this one is reachable from
     outside this app's own dashboard, so it's gated on a shared-secret header
@@ -9344,11 +9366,13 @@ def _start_cache_warmer():
     from zoneinfo import ZoneInfo
 
     scheduler = BackgroundScheduler(daemon=True)
-    # Non-noon runs: hourly 8-21 ET (noon excluded, covered by the daily-picks
-    # run below) — matches odds_api._SCHEDULE_HOURS/._TTL, bumped from every
-    # 2 hours to hourly now that the odds-API quota has headroom for it.
+    # Every 5 min, 7am-11pm ET (noon's minute-0 tick doubles as the
+    # daily-picks run below). Odds now come from ESPN's unauthenticated
+    # scoreboard API (DraftKings) instead of the quota-limited Odds API, so
+    # there's no budget to pace around — this can run as often as the data
+    # is worth refreshing.
     scheduler.add_job(_warm_all_caches, 'cron',
-                      hour='8,9,10,11,13,14,15,16,17,18,19,20,21', minute=0,
+                      hour='7-23', minute='*/5',
                       timezone='America/New_York', id='warm_caches')
     # Noon run: TS alerts + daily picks message
     scheduler.add_job(_warm_all_caches_noon, 'cron',

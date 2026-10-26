@@ -15,8 +15,6 @@ services:
       - ./data:/data
     environment:
       - DB_PATH=/data/bets.db
-      # Get your free key at https://the-odds-api.com (500 req/month)
-      - ODDS_API_KEY=${ODDS_API_KEY:-}
       # Get your free key at https://openweathermap.org/api_keys
       - WEATHER_API_KEY=${WEATHER_API_KEY:-}
       # Shared secret for GET /api/lifeos/games (LifeOS's Sports page). Set the same
