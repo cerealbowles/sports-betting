@@ -465,6 +465,13 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
     if venue_obj.get('city'):
         venue += f", {venue_obj['city']}"
 
+    # Best-of series record, ESPN-supplied — comp['series'].competitors[].wins
+    # already reflects each team's win count in the CURRENT playoff series
+    # (through the most recently completed game of it), no matchup-scraping
+    # needed the way MLB's postseason series record requires. Empty outside
+    # the playoffs (ESPN omits 'series' entirely for regular-season games).
+    series_wins_by_id = {c.get('id'): c.get('wins', 0) for c in (comp.get('series') or {}).get('competitors', [])}
+
     status_obj = comp.get('status', {}).get('type', {})
     state = status_obj.get('state', 'pre')
     if state == 'in':
@@ -502,6 +509,7 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
             'logo_url':    f"https://a.espncdn.com/i/teamlogos/wnba/500/{abbrev.lower()}.png",
             'wins':        w,
             'losses':      l,
+            'series_wins':   series_wins_by_id.get(team.get('id')),
             'split_w':     split_w,
             'split_l':     split_l,
             'split_label': split_label,
@@ -517,6 +525,9 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
 
     away = teams.get('away', {})
     home = teams.get('home', {})
+    if away.get('series_wins') is not None and home.get('series_wins') is not None:
+        away['series_losses'] = home['series_wins']
+        home['series_losses'] = away['series_wins']
 
     # Enrich with season stats, recent form, and rest days entering *this*
     # game's date.
