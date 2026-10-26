@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 import odds_api
 import cfb_model
+import cfb_stats_db
 
 _ET = ZoneInfo('America/New_York')
 
@@ -333,11 +334,19 @@ def _opponent_weight(conference, rank):
 
 
 def _compute_team_season_stats(games):
-    """Compute {team_name: {ppg, ppg_allowed}} from season game scores,
+    """Compute {team_name: {ppg, ppg_allowed, sos}} from season game scores,
     weighting each game by the opponent's tier (see _opponent_weight) so a
     stat line padded against weak non-conference opponents doesn't look the
-    same as one built against real competition."""
-    pts = defaultdict(lambda: {'for': 0.0, 'against': 0.0, 'w': 0.0, 'g': 0})
+    same as one built against real competition.
+
+    'sos' is the same per-game _opponent_weight values averaged unweighted
+    by score — a standalone strength-of-schedule read, independent of
+    PPG/PPG-allowed (which already fold the same weight in implicitly, see
+    cfb_model.py's 'Strength of schedule' factor for why this needs to be
+    its own number rather than reused from 'w'/'g' below: 'w' is a score-
+    weighted sum used as ppg's denominator, not a schedule-strength average
+    on its own)."""
+    pts = defaultdict(lambda: {'for': 0.0, 'against': 0.0, 'w': 0.0, 'g': 0, 'opp_w_sum': 0.0})
     for g in games:
         hw = _opponent_weight(g.get('away_conf'), g.get('away_rank'))
         aw = _opponent_weight(g.get('home_conf'), g.get('home_rank'))
@@ -345,16 +354,19 @@ def _compute_team_season_stats(games):
         pts[g['home_name']]['against'] += g['away_score'] * hw
         pts[g['home_name']]['w']       += hw
         pts[g['home_name']]['g']       += 1
+        pts[g['home_name']]['opp_w_sum'] += hw
         pts[g['away_name']]['for']     += g['away_score'] * aw
         pts[g['away_name']]['against'] += g['home_score'] * aw
         pts[g['away_name']]['w']       += aw
         pts[g['away_name']]['g']       += 1
+        pts[g['away_name']]['opp_w_sum'] += aw
     return {
         t: {
             'ppg':         round(v['for']     / v['w'], 1),
             'ppg_allowed': round(v['against'] / v['w'], 1),
+            'sos':         round(v['opp_w_sum'] / v['g'], 3),
         }
-        for t, v in pts.items() if v['w'] > 0
+        for t, v in pts.items() if v['w'] > 0 and v['g'] > 0
     }
 
 
@@ -716,6 +728,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
             'score':       competitor.get('score'),
             'ppg':         None,
             'ppg_allowed': None,
+            'sos':         None,
             'rest_days':   None,
             'rank':        rank,
             'rank_display': rank if rank <= 25 else None,
@@ -758,6 +771,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
         ts   = team_stats.get(name, {})
         team['ppg']         = ts.get('ppg')
         team['ppg_allowed'] = ts.get('ppg_allowed')
+        team['sos']         = ts.get('sos')
         team['form']        = _team_recent_form(game_log, name)
         team['form_score']  = _team_recent_form_score(game_log, name)
         team['rest_days']   = _team_rest_days(game_log, name, game_date_et)
@@ -784,6 +798,28 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
     h_ab = home.get('abbrev', '')
 
     team_stats = _parse_team_stats(summary, home.get('id'), away.get('id')) if status in ('Live', 'Final') else None
+
+    # Persist a Final game's result into the local stats warehouse
+    # (cfb_stats_db.py) — no extra API call needed, the scoreboard event
+    # already has both teams' final scores. Idempotent (upsert), so this
+    # runs fine on every _build_game() call for a Final game. Write-only
+    # for now: _get_season_game_log()'s live walk is NOT replaced by a DB
+    # read the way nfl_api.py's is, because TeamGameStat has no columns for
+    # conference/AP-rank — _opponent_weight (PPG/form/SoS weighting) needs
+    # those and would silently degrade to "Independent, unranked" for every
+    # team if read back from this table instead.
+    if status == 'Final':
+        try:
+            home_score = float(home['score']) if home.get('score') is not None else None
+            away_score = float(away['score']) if away.get('score') is not None else None
+            game_type = cfb_stats_db.GAME_TYPE_BY_ESPN_SEASON_TYPE.get(
+                event.get('season', {}).get('type'), 'regular')
+            cfb_stats_db.ingest_team_game(
+                event.get('id'), game_date_et, _get_cfb_season(), game_type,
+                home.get('id'), away.get('id'), home.get('name'), away.get('name'),
+                home_score, away_score)
+        except Exception:
+            pass
 
     return {
         'game_id':       event.get('id'),

@@ -163,6 +163,26 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
         elif a_rest <= 5 and h_rest >= 7:
             _add('Short week (away)', 0.14)
 
+    # ── 9. Strength of schedule (logged only — NOT counted in home_prob) ─────
+    # Same _opponent_weight tiers (cfb_api.py) that already discount PPG/
+    # PPG-allowed and Recent form implicitly, but here isolated into its own
+    # standalone season-average factor instead of being folded invisibly
+    # into those two. Deliberately NOT added to `logit` (bypasses _add(), the
+    # only factor in this module that does) — a brand-new hand-tuned
+    # coefficient would change every future CFB prediction (this module also
+    # feeds spread_proxy.py's implied_margin via home_prob, not just this
+    # model's own output) with no backtest behind it yet. The *_pending*
+    # label keeps it visibly distinct in the factors panel so it doesn't read
+    # as "the model used this." Stored at the same scale convention as the
+    # other factors (not pre-zeroed) so cfb_bootstrap.py/spread_model_fit.py
+    # have real, non-constant signal to fit an actual weight against once
+    # enough games accumulate — at that point move this line above into the
+    # logit-contributing section with a real fitted coefficient.
+    h_sos = home.get('sos')
+    a_sos = away.get('sos')
+    if h_sos is not None and a_sos is not None:
+        factors.append(('Strength of schedule (pending)', round((h_sos - a_sos) * 0.8, 3)))
+
     home_prob = _sigmoid(logit)
 
     # Shrink large model-vs-market disagreements — same guardrail added to
