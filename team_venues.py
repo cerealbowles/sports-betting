@@ -132,6 +132,49 @@ def travel_miles(away_abbr, home_abbr, sport='nfl'):
     return round(_haversine_miles(a['lat'], a['lon'], h['lat'], h['lon']))
 
 
+# Full display-name → abbreviation, for callers that only have the team
+# name stored (e.g. GamePrediction.home_team/away_team, saved as ESPN's
+# displayName for NFL and the MLB Stats API's team name for MLB — neither
+# persists the abbreviation itself). Keys match those APIs' own display
+# names exactly; used by abbr_from_name() below.
+NFL_NAME_TO_ABBR = {
+    'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL',
+    'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI',
+    'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL',
+    'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB',
+    'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX',
+    'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC',
+    'Los Angeles Rams': 'LAR', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN',
+    'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG',
+    'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT',
+    'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB',
+    'Tennessee Titans': 'TEN', 'Washington Commanders': 'WSH',
+}
+
+MLB_NAME_TO_ABBR = {
+    'Athletics': 'ATH', 'Atlanta Braves': 'ATL', 'Arizona Diamondbacks': 'AZ',
+    'Baltimore Orioles': 'BAL', 'Boston Red Sox': 'BOS', 'Chicago Cubs': 'CHC',
+    'Cincinnati Reds': 'CIN', 'Cleveland Guardians': 'CLE', 'Colorado Rockies': 'COL',
+    'Chicago White Sox': 'CWS', 'Detroit Tigers': 'DET', 'Houston Astros': 'HOU',
+    'Kansas City Royals': 'KC', 'Los Angeles Angels': 'LAA', 'Los Angeles Dodgers': 'LAD',
+    'Miami Marlins': 'MIA', 'Milwaukee Brewers': 'MIL', 'Minnesota Twins': 'MIN',
+    'New York Mets': 'NYM', 'New York Yankees': 'NYY', 'Philadelphia Phillies': 'PHI',
+    'Pittsburgh Pirates': 'PIT', 'San Diego Padres': 'SD', 'Seattle Mariners': 'SEA',
+    'San Francisco Giants': 'SF', 'St. Louis Cardinals': 'STL', 'Tampa Bay Rays': 'TB',
+    'Texas Rangers': 'TEX', 'Toronto Blue Jays': 'TOR', 'Washington Nationals': 'WSH',
+}
+
+_NAME_TO_ABBR_BY_SPORT = {'nfl': NFL_NAME_TO_ABBR, 'mlb': MLB_NAME_TO_ABBR}
+
+
+def abbr_from_name(name, sport='nfl'):
+    """Abbreviation for a team's full display name, or None if unrecognized
+    (unsupported sport, or a name that doesn't match exactly — callers
+    should treat that as "can't compute travel for this game" rather than
+    guess)."""
+    return _NAME_TO_ABBR_BY_SPORT.get(sport, {}).get(name)
+
+
 def timezone_change_hours(away_abbr, home_abbr, at_utc, sport='nfl'):
     """Hours the away team is shifting across (positive = traveling east,
     e.g. West Coast team flying to the East Coast), evaluated at `at_utc`

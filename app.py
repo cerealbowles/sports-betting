@@ -53,6 +53,7 @@ import injuries_api
 import market_edge_calibration
 import spread_proxy
 import spread_model
+import team_venues
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
@@ -6338,6 +6339,153 @@ def model_performance():
         'by_grade': [],
     })
 
+  # ── Situational splits: day of week, travel distance ────────────────────────
+  # Exploratory only — these are NOT fed into _best_market_pick or any score
+  # formula. Thin/uneven samples here are expected; see "only surface
+  # validated/consistent-edge picks" — this section is for research, not recs.
+  _dow_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  _dow_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _dow_order}
+  for p in resolved:
+    if not p.home_odds or not p.away_odds:
+      continue
+    try:
+      wd = datetime.strptime(p.game_date, '%Y-%m-%d').weekday()
+    except (TypeError, ValueError):
+      continue
+    dlbl = _dow_order[wd]
+    fav_home  = (p.home_prob or 0.5) >= 0.5
+    model_won = fav_home == bool(p.home_won)
+    pick_odds = p.home_odds if fav_home else p.away_odds
+    bkt = _dow_bkts[dlbl]
+    bkt['total'] += 1
+    if model_won:
+      bkt['wins'] += 1
+    if pick_odds:
+      try:
+        o = int(pick_odds)
+        profit = o / 100.0 if o > 0 else 100.0 / (-o)
+        bkt['roi'].append(profit if model_won else -1.0)
+      except (TypeError, ValueError):
+        pass
+
+  dow_stats = []
+  for lbl in _dow_order:
+    bkt = _dow_bkts[lbl]
+    if bkt['total'] == 0:
+      continue
+    roi_vals = bkt['roi']
+    wr  = round(bkt['wins'] / bkt['total'] * 100, 1)
+    avg_roi = round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None
+    dow_stats.append({
+        'label':    lbl,
+        'count':    bkt['total'],
+        'win_rate': wr,
+        'avg_roi':  avg_roi,
+        'lift_wr':  round(wr - baseline_wr, 1) if baseline_wr is not None else None,
+        'lift_roi': round(avg_roi - baseline_roi, 1) if (avg_roi is not None and baseline_roi is not None) else None,
+    })
+
+  # Travel distance only computable for sports team_venues.py covers today
+  # (NFL, MLB) — needs a stadium lat/lon table, not just a rest/odds read.
+  _venue_sport = {'NFL': 'nfl', 'MLB': 'mlb'}.get(sport)
+  _travel_order = ['Regional (<300mi)', '300–1000mi', '1000–2000mi', '2000mi+']
+  travel_stats = []
+  if _venue_sport:
+    def _travel_bucket(miles):
+      if miles < 300:  return _travel_order[0]
+      if miles < 1000: return _travel_order[1]
+      if miles < 2000: return _travel_order[2]
+      return _travel_order[3]
+
+    _tv_bkts = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _travel_order}
+    for p in resolved:
+      if not p.home_odds or not p.away_odds:
+        continue
+      away_abbr = team_venues.abbr_from_name(p.away_team, _venue_sport)
+      home_abbr = team_venues.abbr_from_name(p.home_team, _venue_sport)
+      if not away_abbr or not home_abbr:
+        continue
+      miles = team_venues.travel_miles(away_abbr, home_abbr, _venue_sport)
+      if miles is None:
+        continue
+      tlbl = _travel_bucket(miles)
+      fav_home  = (p.home_prob or 0.5) >= 0.5
+      model_won = fav_home == bool(p.home_won)
+      pick_odds = p.home_odds if fav_home else p.away_odds
+      bkt = _tv_bkts[tlbl]
+      bkt['total'] += 1
+      if model_won:
+        bkt['wins'] += 1
+      if pick_odds:
+        try:
+          o = int(pick_odds)
+          profit = o / 100.0 if o > 0 else 100.0 / (-o)
+          bkt['roi'].append(profit if model_won else -1.0)
+        except (TypeError, ValueError):
+          pass
+
+    for lbl in _travel_order:
+      bkt = _tv_bkts[lbl]
+      if bkt['total'] == 0:
+        continue
+      roi_vals = bkt['roi']
+      wr  = round(bkt['wins'] / bkt['total'] * 100, 1)
+      avg_roi = round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None
+      travel_stats.append({
+          'label':    lbl,
+          'count':    bkt['total'],
+          'win_rate': wr,
+          'avg_roi':  avg_roi,
+          'lift_wr':  round(wr - baseline_wr, 1) if baseline_wr is not None else None,
+          'lift_roi': round(avg_roi - baseline_roi, 1) if (avg_roi is not None and baseline_roi is not None) else None,
+      })
+
+  # Trend over time — weekly (Mon-start) win rate + Brier, for a time-axis
+  # chart. Exploratory zone, same caveat as above: no sample-size floor here,
+  # a 2-game week renders same as a 20-game week — the chart tooltip shows n.
+  _trend_bkts = {}  # week_start (date str) -> {'wins','total','brier_sum','roi':[]}
+  for p in resolved:
+    try:
+      gd = datetime.strptime(p.game_date, '%Y-%m-%d')
+    except (TypeError, ValueError):
+      continue
+    week_start = (gd - timedelta(days=gd.weekday())).strftime('%Y-%m-%d')
+    b = _trend_bkts.setdefault(week_start, {'wins': 0, 'total': 0, 'brier_sum': 0.0, 'roi': []})
+    prob = max(0.001, min(0.999, p.home_prob or 0.5))
+    outcome = 1.0 if p.home_won else 0.0
+    b['brier_sum'] += (prob - outcome) ** 2
+    b['total'] += 1
+    fav_home  = prob >= 0.5
+    model_won = fav_home == bool(p.home_won)
+    if model_won:
+      b['wins'] += 1
+    pick_odds = p.home_odds if fav_home else p.away_odds
+    if pick_odds and p.home_odds and p.away_odds:
+      try:
+        o = int(pick_odds)
+        profit = o / 100.0 if o > 0 else 100.0 / (-o)
+        b['roi'].append(profit if model_won else -1.0)
+      except (TypeError, ValueError):
+        pass
+
+  trend_weeks = []
+  for week_start in sorted(_trend_bkts.keys()):
+    b = _trend_bkts[week_start]
+    roi_vals = b['roi']
+    try:
+      _wk_dt = datetime.strptime(week_start, '%Y-%m-%d')
+      _wk_label = f"{_wk_dt.month}/{_wk_dt.day}"
+    except ValueError:
+      _wk_label = week_start
+    trend_weeks.append({
+        'week':     week_start,
+        'label':    _wk_label,
+        'count':    b['total'],
+        'win_rate': round(b['wins'] / b['total'] * 100, 1) if b['total'] else None,
+        'brier':    round(b['brier_sum'] / b['total'], 4) if b['total'] else None,
+        'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
+    })
+
   # ── Closing line distance (model vs closing market) ─────────────────────────
   _cld_order = ['< -5%', '-5 to 0%', '0 to +5%', '> +5%']
   _cld_bkts  = {k: {'wins': 0, 'total': 0, 'roi': []} for k in _cld_order}
@@ -6766,6 +6914,9 @@ def model_performance():
       consensus_stats=consensus_stats,
       fav_dog_stats=fav_dog_stats,
       closing_dist_stats=closing_dist_stats,
+      dow_stats=dow_stats,
+      travel_stats=travel_stats,
+      trend_weeks=trend_weeks,
       baseline_wr=round(baseline_wr, 1) if baseline_wr is not None else None,
       baseline_roi=round(baseline_roi, 1) if baseline_roi is not None else None,
       sport=sport,

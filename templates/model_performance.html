@@ -2,6 +2,7 @@
 {% block title %}Model — {{ sport }} — Dead Money{% endblock %}
 
 {% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 .bet-type-tabs {
     display: flex; gap: 2px; margin-bottom: 14px;
@@ -418,6 +419,21 @@
     <span class="zone-sub">how well the model reads {{ sport_meta.noun }} data</span>
     <span class="zone-line"></span>
 </div>
+
+{% if trend_weeks and trend_weeks|length > 1 %}
+<!-- ── Trend over time ── -->
+<div class="card" style="margin-bottom: 14px;">
+    <div class="section-header" style="margin-bottom: 12px;">
+        <h2>Trend Over Time</h2>
+        <span class="small">weekly win rate &amp; Brier score, all resolved predictions</span>
+    </div>
+    <div style="height:220px;">
+        <canvas id="chartTrend"></canvas>
+    </div>
+    <p class="section-note">One point per Mon–Sun week. Hover for sample size — sparse weeks (offseason edges, bye weeks) are noisy, not a verdict.</p>
+</div>
+<script type="application/json" id="trend-data">{{ trend_weeks | tojson }}</script>
+{% endif %}
 
 <!-- ── Calibration ── -->
 <div class="card" style="margin-bottom: 14px;">
@@ -978,6 +994,99 @@
 </details>
 {% endif %}
 
+{% if dow_stats or travel_stats %}
+<!-- ── Situational splits: day of week, travel distance ── -->
+<details class="score-details">
+    <summary>
+        <span class="sd-title">Situational Splits</span>
+        <span class="sd-sub">day of week &amp; travel distance — exploratory, not fed into the model</span>
+    </summary>
+    <div class="score-details-body">
+
+    {% if dow_stats %}
+    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:8px;">Day of Week</div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr>
+                <th>Day</th>
+                <th>Games</th>
+                <th>ROI%</th>
+                <th>Lift</th>
+                <th>Win%</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for d in dow_stats %}
+        <tr>
+            <td style="font-weight:700;font-size:0.82rem;">{{ d.label }}</td>
+            <td>{{ d.count }}</td>
+            <td>
+                {% if d.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if d.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if d.avg_roi > 0 }}{{ d.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+            <td>
+                {% if d.lift_wr is not none %}
+                <span class="lift-badge {{ 'lift-pos' if d.lift_wr > 0 else ('lift-neg' if d.lift_wr < 0 else 'lift-zero') }}">{{ '+' if d.lift_wr > 0 }}{{ d.lift_wr }}pp</span>
+                {% else %}—{% endif %}
+            </td>
+            <td>
+                <span class="{{ 'calib-err-ok' if d.win_rate >= 55 else ('calib-err-pos' if d.win_rate >= 50 else 'calib-err-neg') }}">{{ d.win_rate }}%</span>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">Weekday the game was played (ET calendar date), not kickoff/first-pitch local time. Small per-day samples — treat as a lead to dig into, not a standalone edge.</p>
+    {% endif %}
+
+    {% if travel_stats %}
+    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:18px 0 8px;border-top:1px solid var(--border);padding-top:14px;">Away-Team Travel Distance</div>
+    <div class="calib-scroll">
+    <table class="calib-table">
+        <thead>
+            <tr>
+                <th>Distance</th>
+                <th>Games</th>
+                <th>ROI%</th>
+                <th>Lift</th>
+                <th>Win%</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for t in travel_stats %}
+        <tr>
+            <td style="font-weight:700;font-size:0.82rem;">{{ t.label }}</td>
+            <td>{{ t.count }}</td>
+            <td>
+                {% if t.avg_roi is not none %}
+                <span class="{{ 'calib-err-ok' if t.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if t.avg_roi > 0 }}{{ t.avg_roi }}%</span>
+                {% else %}—{% endif %}
+            </td>
+            <td>
+                {% if t.lift_wr is not none %}
+                <span class="lift-badge {{ 'lift-pos' if t.lift_wr > 0 else ('lift-neg' if t.lift_wr < 0 else 'lift-zero') }}">{{ '+' if t.lift_wr > 0 }}{{ t.lift_wr }}pp</span>
+                {% else %}—{% endif %}
+            </td>
+            <td>
+                <span class="{{ 'calib-err-ok' if t.win_rate >= 55 else ('calib-err-pos' if t.win_rate >= 50 else 'calib-err-neg') }}">{{ t.win_rate }}%</span>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="section-note">One-way haversine distance, away team's home stadium → this game's venue. Win%/ROI here is the model's pick result, not specifically whether the away team struggled — a long trip could help or hurt either side. Only available for NFL/MLB today (travel data not yet built out for NBA/WNBA/NHL/CFB).</p>
+    {% elif dow_stats %}
+    <p class="section-note" style="margin-top:14px;">Travel-distance split isn't available for {{ sport }} yet — stadium location data only covers NFL and MLB so far.</p>
+    {% endif %}
+
+    </div>
+</details>
+{% endif %}
+
 {% if consensus_stats %}
 <!-- ── Factor consensus ── -->
 <details class="score-details">
@@ -1085,4 +1194,63 @@
 {% endfor %}
 
 {% endif %}
+
+{% if trend_weeks and trend_weeks|length > 1 %}
+<script>
+(function () {
+  var el = document.getElementById('trend-data');
+  if (!el) return;
+  var weeks = JSON.parse(el.textContent);
+  var ctx = document.getElementById('chartTrend');
+  if (!ctx) return;
+
+  Chart.defaults.color       = '#9a93ad';
+  Chart.defaults.borderColor = 'rgba(154,147,173,0.12)';
+  Chart.defaults.font.family = "'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+  Chart.defaults.font.size   = 11;
+
+  var orange = '#ff7a1a', blue = '#60A5FA';
+  var labels = weeks.map(function (w) { return w.label; });
+  var wr     = weeks.map(function (w) { return w.win_rate; });
+  var brier  = weeks.map(function (w) { return w.brier; });
+  var counts = weeks.map(function (w) { return w.count; });
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        { label: 'Win rate %', data: wr, yAxisID: 'y', borderColor: orange,
+          backgroundColor: 'rgba(255,122,26,0.12)', borderWidth: 2,
+          pointRadius: 2, tension: 0.25, fill: false },
+        { label: 'Brier score', data: brier, yAxisID: 'y1', borderColor: blue,
+          borderWidth: 2, borderDash: [4, 3], pointRadius: 2, tension: 0.25, fill: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { padding: 10, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#13111a', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
+          titleColor: '#ece8f4', bodyColor: '#9a93ad', padding: 10, cornerRadius: 6,
+          callbacks: {
+            afterBody: function (items) {
+              var n = counts[items[0].dataIndex];
+              return 'n=' + n + ' game' + (n === 1 ? '' : 's');
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y:  { position: 'left',  ticks: { callback: function (v) { return v + '%'; } } },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, suggestedMin: 0, suggestedMax: 0.3 },
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
+
 {% endblock %}
