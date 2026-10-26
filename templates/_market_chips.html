@@ -90,13 +90,16 @@
    VALIDATED_SPORTS) shouldn't read as confident just because a given game's
    margin lands far from 0. #}
 {% set mc_sp_validated = spread_model_validated(game.sport) %}
-{# The chip's magnitude comes from spread_model's own regression fit
-   against actual margins where it's validated (MLB, NHL); for unvalidated
-   sports it falls back to spread_proxy's win-prob-derived margin, since
-   spread_model's independent Ridge fit doesn't beat break-even there
-   either (see spread_model.py's docstring) and spread_proxy's number is at
-   least derived from the same win-prob signal the ML chip already shows. #}
-{% set mc_sp_margin = (spread_model_margin(game.sport, game.model.factors) if game.model and game.model.factors else none) if mc_sp_validated else spread_implied_margin(game.sport, mc_model_home_prob) %}
+{# The chip's magnitude is whichever of spread_model's regression fit or
+   spread_proxy's win-prob-derived margin actually tests better
+   out-of-sample for this sport (spread_best_margin / spread_model.
+   best_source) — for MLB/NHL the two agree exactly (see spread_model.py's
+   docstring) so it doesn't matter which is picked; for the four
+   unvalidated sports they disagree and one is reliably less wrong than the
+   other even though neither clears break-even (see spread_model._ATS_PCT).
+   "Best of two mediocre fits" is not the same as validated — mc_sp_validated
+   still drives the unproven styling below regardless of which source won. #}
+{% set mc_sp_margin = spread_best_margin(game.sport, game.model.factors if game.model else none, mc_model_home_prob) if mc_model_home_prob is not none else none %}
 {% set mc_sp_model_ok = mc_sp_margin is not none %}
 {% if mc_sp_model_ok %}
 {# Favorite is whichever team spread_margin's own sign points to (positive
