@@ -12,6 +12,7 @@ scheduled games (see that function's own docstring).
 from datetime import datetime, timedelta
 
 import basketball_game_detail as bgd
+import game_detail_common as gdc
 import wnba_api
 import wnba_stats_db
 import wnba_boxscore_api
@@ -28,6 +29,7 @@ def find_game(game_id):
         for day in ctx:
             for g in day.get('games', []):
                 if str(g.get('game_id')) == str(game_id):
+                    gdc.apply_schedule_corrections('WNBA', g, date_str)
                     return g, date_str
     return None, None
 

@@ -53,6 +53,7 @@ def find_game(game_id):
         for day in ctx:
             for g in day.get('games', []):
                 if str(g.get('game_id')) == str(game_id):
+                    gdc.apply_schedule_corrections('NHL', g, date_str)
                     return g, date_str
     return None, None
 

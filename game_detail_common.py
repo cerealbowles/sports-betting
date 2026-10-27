@@ -88,6 +88,38 @@ def recommendation_gate_note(sport, market, tag, amer_odds=None, edge_pts=None):
     return None
 
 
+# Sports whose game-detail page builds model['final_home_prob'] the same way
+# the schedule page does, via app.py's shared non-MLB stamp chain. MLB is
+# excluded — its final_home_prob comes out of _mlb_candidates' whole-day
+# rank-bucket blend in app.py's /mlb route, not this chain, and can't be
+# reproduced for a single isolated game without re-deriving that day's full
+# candidate ranking.
+STAMPABLE_SPORTS = {'NHL', 'NBA', 'WNBA', 'NFL', 'CFB'}
+
+
+def apply_schedule_corrections(sport, game, date_str):
+    """Stamps game['model']['final_home_prob']/'final_away_prob' the same
+    way the schedule page does before computing _best_market_pick/the ★
+    recommendation — calibration-band blend, then line-movement correction,
+    then day-of-week correction (app.py's _stamp_confidence_blend/
+    _stamp_movement/_stamp_dow). Every <sport>_game_detail.py's find_game()
+    re-fetches its own single game from a fresh, unstamped schedule context
+    instead of reusing the schedule route's already-stamped one, so without
+    this call model['final_home_prob'] is simply never set and every
+    build_game_detail() here silently falls back to the raw, uncalibrated
+    model probability — disagreeing with the real ★/Recommendations-list
+    decision for the same pick. No-op for MLB (see STAMPABLE_SPORTS) or any
+    game missing a model/date. Lazy-imports app.py (see
+    recommendation_gate_note above for why)."""
+    if sport not in STAMPABLE_SPORTS or not game.get('model') or not date_str:
+        return
+    import app as _app
+    day = {'date': date_str, 'games': [game]}
+    _app._stamp_confidence_blend([day], sport)
+    _app._stamp_movement([day], sport)
+    _app._stamp_dow([day], sport)
+
+
 def line_movement(short_sport, home_name, away_name, game_time_utc):
     """Line-movement series (ML no-vig %, spread, total) for one game, read
     from odds_history.get_snapshot_series() under the real Odds-API sport

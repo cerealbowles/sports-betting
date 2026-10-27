@@ -7,6 +7,7 @@ find_game()'s schedule lookup and which sport modules to pass in.
 from datetime import datetime, timedelta
 
 import basketball_game_detail as bgd
+import game_detail_common as gdc
 import nba_api
 import nba_stats_db
 import nba_boxscore_api
@@ -25,6 +26,7 @@ def find_game(game_id):
         for day in ctx:
             for g in day.get('games', []):
                 if str(g.get('game_id')) == str(game_id):
+                    gdc.apply_schedule_corrections('NBA', g, date_str)
                     return g, date_str
     return None, None
 

@@ -49,6 +49,7 @@ def find_game(game_id):
         for day in ctx.get('days', []):
             for g in day.get('games', []):
                 if str(g.get('game_id')) == str(game_id):
+                    gdc.apply_schedule_corrections('CFB', g, day.get('date'))
                     return g, ctx.get('season', season), w
     return None, None, None
 
