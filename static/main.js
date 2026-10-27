@@ -1,3 +1,40 @@
+/* ── Toast ─────────────────────────────────────────────
+   Fading bottom-center popup, replacing the old inline "✓ Bet placed…"
+   text that stuck around in the (now-navigated-away-from) bet slip.
+   showToast() displays immediately on the current page; stashToast()
+   persists a message in sessionStorage for the page we're about to
+   navigate to, which picks it up via the DOMContentLoaded check below. */
+var _toastTimer = null;
+function showToast(message) {
+var el = document.getElementById('bmToast');
+if (!el) return;
+el.textContent = message;
+el.classList.add('show');
+clearTimeout(_toastTimer);
+_toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2600);
+}
+function stashToast(message) {
+try { sessionStorage.setItem('bmPendingToast', message); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', function () {
+var msg;
+try { msg = sessionStorage.getItem('bmPendingToast'); } catch (e) { msg = null; }
+if (!msg) return;
+try { sessionStorage.removeItem('bmPendingToast'); } catch (e) {}
+showToast(msg);
+});
+
+/* Sport -> its schedule page route, for returning there after a bet is
+   placed/staged from a game-detail page (NHL/NBA/WNBA/NFL/CFB) or an
+   inline schedule-card sheet (MLB/CFB — already the current page, so this
+   is just where a reload would land anyway). */
+var _SPORT_SCHEDULE_URL = {
+MLB: '/mlb', NHL: '/nhl', NBA: '/nba', WNBA: '/wnba', NFL: '/nfl', CFB: '/cfb',
+};
+function scheduleUrlForSport(sport) {
+return _SPORT_SCHEDULE_URL[(sport || '').toUpperCase()] || '/';
+}
+
 /* ── Lines toggle (header) ────────────────────────────── */
 function toggleLinesVisibility(btn) {
 var hide = !document.body.classList.contains('hide-lines');
@@ -345,8 +382,6 @@ if (input) input.value = recommended.toFixed(2);
 
 var err = slip.querySelector('.bet-slip-error');
 if (err) err.classList.remove('show');
-var confirm = slip.querySelector('.bet-slip-confirm');
-if (confirm) confirm.classList.remove('show');
 
 slip.classList.add('open');
 updateBetSlipReturn(slip);
@@ -429,15 +464,8 @@ fd.append('eventstartutc', d.eventstartutc || '');
 fetch('/add_open', { method: 'POST', body: fd })
     .then(function (r) {
     if (r.status === 409) return r.text().then(function () { throw new Error('unsettled'); });
-    var confirm = slip.querySelector('.bet-slip-confirm');
-    if (confirm) {
-        confirm.textContent = '✓ Bet placed — $' + stake.toFixed(2) + ' on ' + d.name + ' logged to Open Bets';
-        confirm.classList.add('show');
-    }
-    setTimeout(function () {
-        closeGameDetails();
-        window.location.reload();
-    }, 900);
+    stashToast('✓ Bet placed — $' + stake.toFixed(2) + ' on ' + d.name + ' logged to Open Bets');
+    window.location.href = scheduleUrlForSport(d.sport);
     })
     .catch(function () {
     btnEl.disabled = false;
@@ -479,15 +507,9 @@ fd.append('eventstartutc', d.eventstartutc || '');
 
 fetch('/bet_sheet/add', { method: 'POST', body: fd })
     .then(function () {
-    var confirm = slip.querySelector('.bet-slip-confirm');
-    if (confirm) {
-        confirm.textContent = '✓ Added to Bet Sheet — $' + stake.toFixed(2) + ' on ' + d.name;
-        confirm.classList.add('show');
-    }
-    setTimeout(function () {
-        closeGameDetails();
-        window.location.reload();
-    }, 900);
+    stashToast('✓ Added to Bet Sheet — $' + stake.toFixed(2) + ' on ' + d.name);
+    closeGameDetails();
+    window.location.reload();
     })
     .catch(function () {
     btnEl.disabled = false;
