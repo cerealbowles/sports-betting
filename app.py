@@ -4785,14 +4785,22 @@ def save_settings():
 
 @app.route('/api/send-daily-picks', methods=['POST'])
 def api_send_daily_picks():
-    """Manually trigger the daily MLB picks Discord message using the current schedule cache."""
+    """Manually trigger the daily picks Discord digest (all sports, same
+    content as the noon cron) using each sport's current schedule cache."""
     s       = Setting.query.first()
     webhook = (s.discord_webhook_url or '').strip() if s else ''
     if not webhook:
         return jsonify({'ok': False, 'error': 'No webhook URL configured'})
     try:
-        schedule = mlb_api.build_schedule_context()
-        _send_daily_mlb_recommendation(schedule, webhook)
+        schedules_by_sport = {
+            'MLB':  mlb_api.build_schedule_context(),
+            'NHL':  nhl_api.build_schedule_context(),
+            'NFL':  (nfl_api.build_week_schedule_context().get('days') or []),
+            'CFB':  (cfb_api.build_week_schedule_context().get('days') or []),
+            'NBA':  nba_api.build_schedule_context(),
+            'WNBA': wnba_api.build_schedule_context(),
+        }
+        _send_daily_recommendations(schedules_by_sport, webhook)
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
@@ -9365,111 +9373,279 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
 # Runs in a daemon thread — won't block shutdown.
 # NOTE: works correctly with a single Gunicorn worker (1 process = 1 shared cache).
 
-def _send_daily_mlb_recommendation(schedule, webhook_url: str) -> None:
-    """Post the ranked list of ★-recommended MLB picks to Discord at noon ET
-    (only games passing _mlb_star_pick's kelly/edge/payout-floor rule —
-    previously this sent every Preview game with a model+odds pair)."""
+_SPORT_EMOJI = {'MLB': '⚾', 'NFL': '🏈', 'CFB': '🏈', 'NHL': '🏒', 'NBA': '🏀', 'WNBA': '🏀'}
+_SPORT_URL_PREFIX = {'MLB': 'mlb', 'NHL': 'nhl', 'NBA': 'nba', 'WNBA': 'wnba', 'NFL': 'nfl', 'CFB': 'cfb'}
+# LAN/Tailscale address — set SITE_BASE_URL to override (e.g. a public domain)
+# if one ever gets put in front of this. No trailing slash.
+_SITE_BASE_URL = os.environ.get('SITE_BASE_URL', 'http://192.168.1.23:5034').rstrip('/')
+
+
+def _game_detail_url(sport, game):
+    """Link to this game's detail page (/<sport>/game/<id>) for Discord
+    embeds — MLB's route key is the MLB Stats API gamePk (game['game_pk']),
+    every other sport's is ESPN's game_id (game['game_id']); see each sport's
+    game_detail.py find_game(). None if the sport/id isn't recognized."""
+    prefix = _SPORT_URL_PREFIX.get(sport)
+    gid = game.get('game_pk') if sport == 'MLB' else game.get('game_id')
+    if not prefix or not gid:
+        return None
+    return f'{_SITE_BASE_URL}/{prefix}/game/{gid}'
+
+
+def _schedule_game_status_map(schedule):
+    """{game_key: status} for every game in a schedule (list of {'games':[...]}
+    days), regardless of whether it's recommended — used by
+    _check_recommended_list_changes to explain *why* a game dropped off the
+    list (started/finished vs. fell below the edge/Kelly bar vs. vanished
+    from the slate entirely)."""
+    out = {}
+    for day in (schedule or []):
+        for game in day.get('games', []):
+            home_obj = game.get('home') or {}
+            away_obj = game.get('away') or {}
+            home_abbr = home_obj.get('abbr') or home_obj.get('abbrev') or home_obj.get('name', '?')[:3].upper()
+            away_abbr = away_obj.get('abbr') or away_obj.get('abbrev') or away_obj.get('name', '?')[:3].upper()
+            out[f'{away_abbr}@{home_abbr}'] = game.get('status', 'Preview')
+    return out
+
+
+def _collect_recommendations_for_sport(schedule, sport):
+    """Currently-recommended bets for one sport, keyed by (game_key, market).
+    MLB goes through _mlb_star_pick (ML-only — matches MLB's own
+    Recommendations table, which is ML-specific); every other sport goes
+    through _edge_recommendations (already the exact set/order behind that
+    sport's on-site Recommended table, ML or Spread, Omen/Phantom-Score-
+    sorted). Shared by the noon digest and the list-membership add/remove
+    alert so both match what "Recommended" means on-site — no separate
+    mirrored gate to keep in sync."""
+    rec = {}
+
+    if sport == 'MLB':
+        import odds_history
+        for day in (schedule or []):
+            for game in day.get('games', []):
+                if game.get('status', 'Preview') != 'Preview':
+                    continue
+                model = game.get('model')
+                odds  = game.get('odds')
+                if not model or not odds:
+                    continue
+                if not _mlb_star_pick(game):
+                    continue
+                home_obj  = game.get('home') or {}
+                away_obj  = game.get('away') or {}
+                home_abbr = home_obj.get('abbr') or home_obj.get('name', '?')[:3].upper()
+                away_abbr = away_obj.get('abbr') or away_obj.get('name', '?')[:3].upper()
+                hp, ap   = model.get('home_prob', 0.5), model.get('away_prob', 0.5)
+                h_odds, a_odds = odds.get('home_best', 0), odds.get('away_best', 0)
+                bet_side = 'home' if hp >= ap else 'away'
+                fj       = model.get('factors_json') or json.dumps(model.get('factors', []))
+                td       = _omen_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
+                lm = _line_move_pct(hp, h_odds, a_odds,
+                                     odds.get('opening_home'), odds.get('opening_away'))
+                lm_val = max(0.0, min(1.0, 0.5 + lm / 10.0)) if lm is not None else 0.5
+                game_start = None
+                _utc_raw = game.get('game_time_utc', '')
+                if _utc_raw:
+                    try:
+                        game_start = datetime.fromisoformat(_utc_raw.replace('Z', '+00:00'))
+                    except Exception:
+                        game_start = None
+                movement_profile, _ = odds_history.classify_movement(
+                    'baseball_mlb', home_obj.get('name', ''), away_obj.get('name', ''),
+                    bet_side == 'home', game_start)
+                movement_val = _movement_value(movement_profile, sport='MLB')
+                pick_odds = h_odds if bet_side == 'home' else a_odds
+                unf       = _unified_score(td, lm_val, movement_val, pick_odds)
+                pick_abbr = home_abbr if bet_side == 'home' else away_abbr
+                opp_abbr  = away_abbr if bet_side == 'home' else home_abbr
+                gt_utc, time_str = game.get('game_time_utc') or '', ''
+                if gt_utc:
+                    try:
+                        time_str = _fmt(datetime.fromisoformat(gt_utc.replace('Z', '+00:00'))
+                                         .astimezone(_ET), '%-I:%M %p')
+                    except Exception:
+                        pass
+                game_key = f'{away_abbr}@{home_abbr}'
+                rec[(game_key, 'ml')] = {
+                    'pick': pick_abbr, 'opp': opp_abbr, 'market': 'ml',
+                    'label': f'{pick_abbr} ML', 'odds': pick_odds, 'edge': None,
+                    'ev_pct': None, 'score': unf, 'time': time_str,
+                    'url': _game_detail_url('MLB', game),
+                }
+        return rec
+
+    for entry in _edge_recommendations(schedule, sport, limit=9999):
+        g = entry['game']
+        home_obj  = g.get('home') or {}
+        away_obj  = g.get('away') or {}
+        home_abbr = home_obj.get('abbr') or home_obj.get('abbrev') or ''
+        away_abbr = away_obj.get('abbr') or away_obj.get('abbrev') or ''
+        game_key  = f'{away_abbr}@{home_abbr}'
+        opp_abbr  = away_abbr if entry['pick_abbr'] == home_abbr else home_abbr
+        gt_utc, time_str = g.get('game_time_utc') or '', ''
+        if gt_utc:
+            try:
+                time_str = _fmt(datetime.fromisoformat(gt_utc.replace('Z', '+00:00'))
+                                 .astimezone(_ET), '%-I:%M %p')
+            except Exception:
+                pass
+        rec[(game_key, entry['market'])] = {
+            'pick': entry['pick_abbr'], 'opp': opp_abbr, 'market': entry['market'],
+            'label': entry['pick_label'], 'odds': entry['amer_odds'], 'edge': entry['edge'],
+            'ev_pct': entry['ev_pct'], 'score': entry['omen_score'], 'time': time_str,
+            'url': _game_detail_url(sport, g),
+        }
+    return rec
+
+
+def _recommendation_reason(snap):
+    """Human-readable 'why' string from a recommendation snapshot's edge/EV/
+    score/odds — used for both the 'added' and 'removed' Discord alerts."""
+    bits = []
+    if snap.get('edge') is not None:
+        bits.append(f"edge {snap['edge']:.1f}pts")
+    if snap.get('ev_pct') is not None:
+        bits.append(f"EV {snap['ev_pct']:+.1f}%")
+    if snap.get('score') is not None:
+        bits.append(f"score {snap['score']}")
+    if snap.get('odds') is not None:
+        try:
+            bits.append(f"odds {int(snap['odds']):+d}")
+        except (TypeError, ValueError):
+            pass
+    return ' · '.join(bits) if bits else '—'
+
+
+# {(sport, game_key, market): snapshot} from the last warmer cycle, across
+# every sport — lets _check_recommended_list_changes diff cycle-to-cycle.
+_PREV_RECOMMENDED: dict = {}
+_PREV_RECOMMENDED_LOCK = threading.Lock()
+_RECOMMENDED_SEEDED = False   # False until the first cycle has run once, so
+                               # process startup doesn't fire a wall of "added"
+                               # alerts for every game already on the board.
+
+
+def _check_recommended_list_changes(schedules_by_sport, webhook_url: str) -> None:
+    """Fires a Discord alert the moment a bet newly clears (or falls out of)
+    the live Recommended gate for ANY sport, with the underlying edge/EV/
+    score/odds as the 'why' — complements _check_unified_score_alerts (which
+    only tracks MLB's Omen Score *moving* on games already recommended)."""
+    global _RECOMMENDED_SEEDED
     import requests as _req
-    import odds_history
-    from zoneinfo import ZoneInfo
-    _ET = ZoneInfo('America/New_York')
+
+    current, status_by_sport = {}, {}
+    for sport, schedule in schedules_by_sport.items():
+        for key, snap in _collect_recommendations_for_sport(schedule, sport).items():
+            current[(sport,) + key] = snap
+        status_by_sport[sport] = _schedule_game_status_map(schedule)
+
+    with _PREV_RECOMMENDED_LOCK:
+        prev   = dict(_PREV_RECOMMENDED)
+        seeded = _RECOMMENDED_SEEDED
+        _PREV_RECOMMENDED.clear()
+        _PREV_RECOMMENDED.update(current)
+        _RECOMMENDED_SEEDED = True
+
+    if not seeded or not webhook_url:
+        return  # first cycle ever, or alerts off — just seed state, no spam
+
+    added   = [k for k in current if k not in prev]
+    removed = [k for k in prev if k not in current]
+    if not added and not removed:
+        return
+    print(f'[rec-list] {len(added)} added, {len(removed)} removed', flush=True)
+
+    for sport, game_key, market in added:
+        snap = current[(sport, game_key, market)]
+        desc = (f"**{game_key}** · {sport} {market.upper()}\n"
+                f"Pick: **{snap['label']}**\nWhy: {_recommendation_reason(snap)}")
+        if snap.get('time'):
+            desc += f"\n\nGame: {snap['time']}"
+        if snap.get('url'):
+            desc += f"\n[View game]({snap['url']})"
+        try:
+            _req.post(webhook_url, json={'embeds': [{
+                'title': f"🆕 Added to Recommended · {sport}",
+                'description': desc, 'color': 0x4ade80,
+            }]}, timeout=5)
+        except Exception:
+            pass
+
+    for sport, game_key, market in removed:
+        snap   = prev[(sport, game_key, market)]
+        status = status_by_sport.get(sport, {}).get(game_key)
+        if status in ('Final', 'Live'):
+            why = f"Game is now {status.lower()}."
+        elif status is None:
+            why = "Game is no longer on today's schedule."
+        else:
+            why = "No longer clears the edge/Kelly threshold."
+        desc = (f"**{game_key}** · {sport} {market.upper()}\n"
+                f"Pick: **{snap['label']}**\nWhy: {why} (was: {_recommendation_reason(snap)})")
+        if snap.get('url'):
+            desc += f"\n[View game]({snap['url']})"
+        try:
+            _req.post(webhook_url, json={'embeds': [{
+                'title': f"➖ Removed from Recommended · {sport}",
+                'description': desc, 'color': 0xf87171,
+            }]}, timeout=5)
+        except Exception:
+            pass
+
+
+def _send_daily_recommendations(schedules_by_sport, webhook_url: str) -> None:
+    """Post the ranked list of recommended picks to Discord at noon ET —
+    one embed per sport that currently has any, all in a single message.
+    Only games clearing each sport's on-site Recommended gate (same source
+    as _check_recommended_list_changes) — previously this was MLB-only."""
+    import requests as _req
     print('[daily-picks] triggered', flush=True)
     if not webhook_url:
         print('[daily-picks] no webhook URL configured — skipping', flush=True)
         return
 
-    candidates = []
-    for day in (schedule or []):
-        for game in day.get('games', []):
-            if game.get('status', 'Preview') != 'Preview':
-                continue
-            model = game.get('model')
-            odds  = game.get('odds')
-            if not model or not odds:
-                continue
-            # Only games that earn the ★ on their own card — same kelly > 0 /
-            # edge >= 4pt / payout b >= 0.25 rule as everywhere else in the
-            # app, so the noon ping matches what "Recommended" means on-site
-            # instead of ranking every game with a model+odds pair.
-            if not _mlb_star_pick(game):
-                continue
-            home_obj  = game.get('home') or {}
-            away_obj  = game.get('away') or {}
-            home_abbr = home_obj.get('abbr') or home_obj.get('name', '?')[:3].upper()
-            away_abbr = away_obj.get('abbr') or away_obj.get('name', '?')[:3].upper()
-            hp    = model.get('home_prob', 0.5)
-            ap    = model.get('away_prob', 0.5)
-            h_odds = odds.get('home_best', 0)
-            a_odds = odds.get('away_best', 0)
-            bet_side  = 'home' if hp >= ap else 'away'
-            fj        = model.get('factors_json') or json.dumps(model.get('factors', []))
-            td        = _omen_score(hp, h_odds, a_odds, fj, sport='MLB', detail=True)
-            lm = _line_move_pct(hp, h_odds, a_odds,
-                                odds.get('opening_home'), odds.get('opening_away'))
-            lm_val = max(0.0, min(1.0, 0.5 + lm / 10.0)) if lm is not None else 0.5
-            game_start = None
-            _utc_raw = game.get('game_time_utc', '')
-            if _utc_raw:
-                try:
-                    game_start = datetime.fromisoformat(_utc_raw.replace('Z', '+00:00'))
-                except Exception:
-                    game_start = None
-            movement_profile, _ = odds_history.classify_movement(
-                'baseball_mlb', home_obj.get('name', ''), away_obj.get('name', ''),
-                bet_side == 'home', game_start)
-            movement_val = _movement_value(movement_profile, sport='MLB')
-            pick_odds = h_odds if bet_side == 'home' else a_odds
-            unf       = _unified_score(td, lm_val, movement_val, pick_odds)
-            pick_abbr = home_abbr if bet_side == 'home' else away_abbr
-            opp_abbr  = away_abbr if bet_side == 'home' else home_abbr
-            pick_odds = h_odds if bet_side == 'home' else a_odds
-            gt_utc    = game.get('game_time_utc') or ''
-            gt_str    = ''
-            if gt_utc:
-                try:
-                    from datetime import datetime as _dt
-                    gt_str = _fmt(_dt.fromisoformat(gt_utc.replace('Z', '+00:00'))
-                                     .astimezone(_ET), '%-I:%M %p')
-                except Exception:
-                    pass
-            candidates.append({
-                'pick':  pick_abbr,
-                'opp':   opp_abbr,
-                'odds':  f'{pick_odds:+d}' if pick_odds else '—',
-                'unf':   unf,
-                'time':  gt_str,
-            })
+    today_str = _fmt(datetime.now(_ET), '%A, %b %-d')
+    embeds = []
+    for sport, schedule in schedules_by_sport.items():
+        rec = _collect_recommendations_for_sport(schedule, sport)
+        if not rec:
+            continue
+        rows_data = sorted(rec.values(), key=lambda r: -(r['score'] if r['score'] is not None else 0))
 
-    if not candidates:
-        print('[daily-picks] no Preview games earned a ★ recommendation — message not sent', flush=True)
-        return
+        header = f"{'PICK':<5}  {'OPP':<5}  {'MKT':<6}  {'ODDS':>5}  {'SC':>3}  TIME"
+        sep    = '─' * len(header)
+        lines  = [header, sep]
+        for r in rows_data:
+            odds_str = f"{int(r['odds']):+d}" if r['odds'] else '—'
+            score_str = f"{r['score']}" if r['score'] is not None else '—'
+            lines.append(f"{r['pick']:<5}  {r['opp']:<5}  {r['market'].upper():<6}  {odds_str:>5}  {score_str:>3}  {r['time']}")
+        description = '```\n' + '\n'.join(lines) + '\n```'
+        links = '\n'.join(f"[{r['pick']} vs {r['opp']}]({r['url']})" for r in rows_data if r.get('url'))
+        if links:
+            description += '\n' + links
+        if len(description) > 3900:
+            description = description[:3900] + '\n…```'
 
-    print(f'[daily-picks] building embed with {len(candidates)} games', flush=True)
-    candidates.sort(key=lambda x: -x['unf'])
-
-    # Monospace table — one line per game, all columns aligned
-    header = f"{'#':>2}  {'PICK':<4}  {'OPP':<4}  {'ODDS':>5}  {'TS':>2}  TIME"
-    sep    = '─' * len(header)
-    rows   = [header, sep]
-    for i, c in enumerate(candidates, 1):
-        rows.append(
-            f"{i:>2}  {c['pick']:<4}  {c['opp']:<4}  {c['odds']:>5}  {c['unf']:>2}  {c['time']}"
-        )
-
-    today_str   = _fmt(datetime.now(_ET), '%A, %b %-d')
-    description = '```\n' + '\n'.join(rows) + '\n```'
-    # Discord embed description limit is 4096 chars
-    if len(description) > 3900:
-        description = description[:3900] + '\n…```'
-
-    try:
-        r = _req.post(webhook_url, json={'embeds': [{
-            'title':       f'⚾ MLB Daily Picks · {today_str}',
+        embeds.append({
+            'title':       f"{_SPORT_EMOJI.get(sport, '🎯')} {sport} Daily Picks · {today_str}",
             'description': description,
             'color':       0xFB4F14,
-            'footer':      {'text': 'Recommended picks only · sorted by Omen Score · noon ET snapshot'},
-        }]}, timeout=10)
-        print(f'[daily-picks] Discord response: {r.status_code}', flush=True)
+            'footer':      {'text': 'Recommended picks only · noon ET snapshot'},
+        })
+
+    if not embeds:
+        print('[daily-picks] no Preview games earned a recommendation in any sport — message not sent', flush=True)
+        return
+
+    print(f'[daily-picks] building message with {len(embeds)} sport embed(s)', flush=True)
+    try:
+        # Discord caps a single message at 10 embeds — split into separate
+        # messages if ever more than 10 sports feed this (not possible today
+        # at 6, but cheap insurance against a silent drop if that changes).
+        for i in range(0, len(embeds), 10):
+            r = _req.post(webhook_url, json={'embeds': embeds[i:i + 10]}, timeout=10)
+            print(f'[daily-picks] Discord response: {r.status_code}', flush=True)
     except Exception as e:
         print(f'[daily-picks] Discord POST failed: {e}', flush=True)
 
@@ -9488,6 +9664,7 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     # view's per-game summary/weather/injury prefetch uncached for every
     # non-today game, so real visitors still paid the cold-fetch cost. Warm
     # the week view instead so it matches what the route actually reads.
+    schedules_by_sport = {}
     for name, fn, is_week in [('MLB', mlb_api.build_schedule_context, False),
                                ('NHL', nhl_api.build_schedule_context, False),
                                ('NFL', nfl_api.build_week_schedule_context, True),
@@ -9498,15 +9675,30 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
             result = fn()
             schedule = result.get('days') if is_week else result
             if schedule:
+                schedules_by_sport[name] = schedule
                 with app.app_context():
                     _upsert_predictions(schedule, name)
-                    if name == 'MLB':
+                    if name == 'MLB' and send_alerts:
                         s       = Setting.query.first()
                         webhook = (s.discord_webhook_url or '').strip() if s else ''
-                        if send_alerts:
-                            _check_unified_score_alerts(result, webhook)
-                        if send_daily:
-                            _send_daily_mlb_recommendation(result, webhook)
+                        _check_unified_score_alerts(schedule, webhook)
+        except Exception:
+            pass
+
+    # Discord: all-sport recommended-list alerts/digest — run once with every
+    # sport's schedule collected above, so "Recommended" means the same thing
+    # here as it does on each sport's own page (see _collect_recommendations_
+    # for_sport). Kept outside the per-sport loop/try above since it needs
+    # every sport's schedule at once, not one at a time.
+    if schedules_by_sport and (send_alerts or send_daily):
+        try:
+            with app.app_context():
+                s       = Setting.query.first()
+                webhook = (s.discord_webhook_url or '').strip() if s else ''
+            if send_alerts:
+                _check_recommended_list_changes(schedules_by_sport, webhook)
+            if send_daily:
+                _send_daily_recommendations(schedules_by_sport, webhook)
         except Exception:
             pass
 
