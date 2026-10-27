@@ -2900,3 +2900,92 @@ body.embed-mode .container { padding-bottom: 0; }
        open and the summary toggle is hidden. */
     .rec-summary { display: none; cursor: default; }
 }
+
+/* ── Slate overview: tonight's map + at-a-glance facts (_slate_overview.html) ── */
+.slate { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; align-items: stretch; }
+.slate > .card { margin-bottom: 0; }
+.slate-map-card { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.slate-glance { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; }
+.slate-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.slate-title { font-family: var(--font-cond); font-weight: 700; font-size: 1.15rem; margin: 0; letter-spacing: 0.2px; }
+.slate-glance .slate-title { margin-bottom: 4px; }
+.slate-hint { margin-left: auto; font-size: 0.78rem; color: var(--text-muted); }
+
+.slate-map { position: relative; width: 100%; }
+.slate-map-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.slate-dot {
+  position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; padding: 0;
+  background: transparent; border: 0; cursor: pointer; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.slate-dot > span {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--silver); border: 2px solid var(--bg-card);
+  transition: transform var(--transition), background var(--transition), box-shadow var(--transition);
+}
+.slate-dot.is-final > span { background: var(--border-strong); }
+.slate-dot.is-live > span { background: var(--win); animation: pulse 1.5s ease-in-out infinite; }
+.slate-dot[aria-pressed="true"] { z-index: 2; }
+.slate-dot[aria-pressed="true"] > span {
+  background: var(--orange); transform: scale(1.4); box-shadow: 0 0 0 5px var(--orange-dim);
+}
+.slate-dot:hover, .slate-dot:active { background: transparent; box-shadow: none; transform: none; }
+.slate-dot:hover > span { transform: scale(1.25); }
+.slate-dot[aria-pressed="true"]:hover > span { transform: scale(1.4); }
+.slate-dot:focus-visible { outline: none; }
+.slate-dot:focus-visible > span { box-shadow: 0 0 0 3px var(--text); }
+
+.slate-tag {
+  position: absolute; transform: translateY(-50%); pointer-events: none; white-space: nowrap;
+  font-family: var(--font-cond); font-weight: 600; font-size: 0.72rem; color: var(--silver);
+}
+.slate-tag-r { margin-left: 13px; }
+.slate-tag-l { margin-left: -13px; transform: translate(-100%, -50%); }
+
+.slate-pop {
+  position: absolute; z-index: 3; width: 280px; padding: 12px 14px;
+  background: var(--bg-card-2); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+}
+.slate-pop, .slate-detail { display: flex; flex-direction: column; gap: 7px; }
+.slate-pop[hidden] { display: none; }
+.slate-pop-when { font-family: var(--font-cond); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.4px; color: var(--orange); }
+.slate-live { color: var(--win); }
+.slate-pop-team { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; }
+.slate-pop-team img { width: 22px; height: 22px; object-fit: contain; flex: none; }
+.slate-pop-abbr { font-family: var(--font-cond); font-weight: 700; width: 38px; flex: none; }
+.slate-pop-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slate-pop-rec { margin-left: auto; flex: none; white-space: nowrap; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.slate-pop-venue { font-size: 0.76rem; color: var(--text-muted); }
+.slate-pop-link { font-size: 0.8rem; font-weight: 600; color: var(--orange); text-decoration: none; min-height: 24px; }
+.slate-pop-link:hover { text-decoration: underline; }
+
+.slate-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.slate-chip {
+  min-height: 36px; padding: 0 12px; border-radius: 18px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-strong); color: var(--silver);
+  font-family: var(--font-body); font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.slate-chip:hover { background: var(--bg-card-2); border-color: var(--silver); box-shadow: none; transform: none; }
+.slate-chip[aria-pressed="true"], .slate-chip[aria-pressed="true"]:hover { border-color: var(--orange); background: var(--orange-dim); color: var(--orange); }
+
+.slate-detail {
+  padding: 12px 14px; background: var(--bg-card-2);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
+.slate-detail:empty { display: none; }
+
+.slate-fact { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-top: 1px solid var(--border); }
+.slate-fact-label { font-family: var(--font-cond); font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; color: var(--text-muted); }
+.slate-fact-title { font-weight: 600; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.slate-fact-detail { font-size: 0.8rem; color: var(--text-muted); }
+
+.game-card.slate-linked { border-color: var(--orange); }
+
+/* Phones: no hover, little room — drop the floating popup and time tags;
+   the chip row + detail panel carry the same info. */
+@media (min-width: 641px) { .slate-detail { display: none; } }
+@media (max-width: 640px) {
+  .slate-pop, .slate-pop[hidden], .slate-tag, .slate-hint { display: none; }
+}

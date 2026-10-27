@@ -98,14 +98,63 @@ MLB_TEAMS = {
     'WSH': ('Washington, DC',       38.8730,  -77.0074, 'grass', False, 'America/New_York'),
 }
 
-_BY_SPORT = {'nfl': NFL_TEAMS, 'mlb': MLB_TEAMS}
+# NBA rows are keyed by ESPN's NBA abbreviation (what nba_api.py's team dicts
+# carry as team['abbrev'] — note ESPN's short forms: 'GS', 'NO', 'NY', 'SA',
+# 'UTAH', 'WSH'). Coordinates are the arena, not the city centre. Surface is
+# always hardwood and every arena is indoors, so those two columns are
+# constant here and only kept so get() returns the same shape for every sport.
+NBA_TEAMS = {
+    'ATL':  ('Atlanta, GA',        33.7573,  -84.3963, 'hardwood', True, 'America/New_York'),
+    'BOS':  ('Boston, MA',         42.3662,  -71.0621, 'hardwood', True, 'America/New_York'),
+    'BKN':  ('Brooklyn, NY',       40.6826,  -73.9754, 'hardwood', True, 'America/New_York'),
+    'CHA':  ('Charlotte, NC',      35.2251,  -80.8392, 'hardwood', True, 'America/New_York'),
+    'CHI':  ('Chicago, IL',        41.8807,  -87.6742, 'hardwood', True, 'America/Chicago'),
+    'CLE':  ('Cleveland, OH',      41.4965,  -81.6882, 'hardwood', True, 'America/New_York'),
+    'DAL':  ('Dallas, TX',         32.7905,  -96.8103, 'hardwood', True, 'America/Chicago'),
+    'DEN':  ('Denver, CO',         39.7487, -105.0077, 'hardwood', True, 'America/Denver'),
+    'DET':  ('Detroit, MI',        42.3411,  -83.0553, 'hardwood', True, 'America/Detroit'),
+    'GS':   ('San Francisco, CA',  37.7680, -122.3877, 'hardwood', True, 'America/Los_Angeles'),
+    'HOU':  ('Houston, TX',        29.7508,  -95.3621, 'hardwood', True, 'America/Chicago'),
+    'IND':  ('Indianapolis, IN',   39.7640,  -86.1555, 'hardwood', True, 'America/Indiana/Indianapolis'),
+    'LAC':  ('Inglewood, CA',      33.9450, -118.3430, 'hardwood', True, 'America/Los_Angeles'),
+    'LAL':  ('Los Angeles, CA',    34.0430, -118.2673, 'hardwood', True, 'America/Los_Angeles'),
+    'MEM':  ('Memphis, TN',        35.1382,  -90.0506, 'hardwood', True, 'America/Chicago'),
+    'MIA':  ('Miami, FL',          25.7814,  -80.1870, 'hardwood', True, 'America/New_York'),
+    'MIL':  ('Milwaukee, WI',      43.0451,  -87.9172, 'hardwood', True, 'America/Chicago'),
+    'MIN':  ('Minneapolis, MN',    44.9795,  -93.2761, 'hardwood', True, 'America/Chicago'),
+    'NO':   ('New Orleans, LA',    29.9490,  -90.0821, 'hardwood', True, 'America/Chicago'),
+    'NY':   ('New York, NY',       40.7505,  -73.9934, 'hardwood', True, 'America/New_York'),
+    'OKC':  ('Oklahoma City, OK',  35.4634,  -97.5151, 'hardwood', True, 'America/Chicago'),
+    'ORL':  ('Orlando, FL',        28.5392,  -81.3839, 'hardwood', True, 'America/New_York'),
+    'PHI':  ('Philadelphia, PA',   39.9012,  -75.1720, 'hardwood', True, 'America/New_York'),
+    'PHX':  ('Phoenix, AZ',        33.4457, -112.0712, 'hardwood', True, 'America/Phoenix'),
+    'POR':  ('Portland, OR',       45.5316, -122.6668, 'hardwood', True, 'America/Los_Angeles'),
+    'SAC':  ('Sacramento, CA',     38.5802, -121.4997, 'hardwood', True, 'America/Los_Angeles'),
+    'SA':   ('San Antonio, TX',    29.4270,  -98.4375, 'hardwood', True, 'America/Chicago'),
+    'TOR':  ('Toronto, ON',        43.6435,  -79.3791, 'hardwood', True, 'America/Toronto'),
+    'UTAH': ('Salt Lake City, UT', 40.7683, -111.9011, 'hardwood', True, 'America/Denver'),
+    'WSH':  ('Washington, DC',     38.8981,  -77.0209, 'hardwood', True, 'America/New_York'),
+}
+
+# Other common NBA abbreviation spellings (NBA.com / Basketball-Reference /
+# odds feeds) → ESPN's, so a caller holding a non-ESPN abbreviation still
+# resolves instead of silently dropping off the map.
+_NBA_ALIASES = {
+    'BRK': 'BKN', 'CHO': 'CHA', 'GSW': 'GS', 'NOP': 'NO', 'NYK': 'NY',
+    'PHO': 'PHX', 'SAS': 'SA', 'UTA': 'UTAH', 'WAS': 'WSH',
+}
+
+_BY_SPORT = {'nfl': NFL_TEAMS, 'mlb': MLB_TEAMS, 'nba': NBA_TEAMS}
 
 
 def get(abbr, sport='nfl'):
     """Returns a dict for a team abbreviation, or None if not in the table
     (e.g. an unrecognized/renamed abbreviation — callers should hide the
     situation fields that need this rather than guess)."""
-    row = _BY_SPORT.get(sport, NFL_TEAMS).get((abbr or '').upper())
+    key = (abbr or '').upper()
+    if sport == 'nba':
+        key = _NBA_ALIASES.get(key, key)
+    row = _BY_SPORT.get(sport, NFL_TEAMS).get(key)
     if not row:
         return None
     city, lat, lon, surface, dome, tz = row

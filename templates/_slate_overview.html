@@ -1,0 +1,155 @@
+{# Tonight's map + "at a glance" facts for a daily schedule page.
+   Expects `slate` from slate_overview.build(); renders nothing when it's None.
+   Dots are positioned in % of the map box, which keeps the SVG's aspect
+   ratio, so they stay on their arenas at any width. Under 640px the floating
+   popup and time tags are hidden and the selected game shows in a panel
+   under the chip row instead (see .slate-* in styles.css). #}
+{% if slate and slate.markers %}
+<section class="slate" aria-label="Tonight's slate" data-slate>
+  <div class="card slate-map-card">
+    <div class="slate-hd">
+      <h2 class="slate-title">Tonight's map</h2>
+      <span class="slate-hint">Hover or tap a venue</span>
+    </div>
+
+    <div class="slate-map" style="aspect-ratio: {{ slate.vb_w }} / {{ slate.vb_h }};">
+      <img class="slate-map-img" src="{{ url_for('static', filename='us-lower48.svg') }}" alt="" aria-hidden="true">
+      {% for m in slate.markers %}
+      <button type="button" class="slate-dot{% if m.status == 'Live' %} is-live{% elif m.status == 'Final' %} is-final{% endif %}"
+              style="left:{{ m.x }}%; top:{{ m.y }}%;" data-slate-id="{{ m.id }}" aria-pressed="false"
+              aria-label="{{ m.away.name }} at {{ m.home.name }}, {{ m.venue }}"><span></span></button>
+      <span class="slate-tag slate-tag-{{ m.label_side }}" style="left:{{ m.x }}%; top:{{ m.y }}%;" aria-hidden="true">
+        {%- if m.status == 'Live' %}LIVE{% elif m.status == 'Final' %}FINAL{% else %}<span data-slate-short="{{ m.utc }}"></span>{% endif -%}
+      </span>
+      {% endfor %}
+      <div class="slate-pop" data-slate-pop hidden></div>
+    </div>
+
+    <div class="slate-chips" role="group" aria-label="Games">
+      {% for m in slate.markers %}
+      <button type="button" class="slate-chip" data-slate-id="{{ m.id }}" aria-pressed="false">
+        {%- if m.status == 'Live' %}Live{% elif m.status == 'Final' %}Final{% else %}<span data-slate-short="{{ m.utc }}"></span>{% endif %} · {{ m.away.abbr }} @ {{ m.home.abbr -}}
+      </button>
+      {% endfor %}
+    </div>
+
+    <div class="slate-detail" data-slate-detail></div>
+
+    {# One server-rendered detail block per game; the script copies the
+       selected one into the popup and the mobile panel. #}
+    {% for m in slate.markers %}
+    <div hidden data-slate-src="{{ m.id }}" data-pop-h="{{ m.pop_h }}" data-pop-v="{{ m.pop_v }}"
+         data-x="{{ m.x }}" data-y="{{ m.y }}" data-game-key="{{ m.game_key }}">
+      <div class="slate-pop-when">
+        {% if m.status == 'Live' %}<span class="slate-live">● Live</span>
+        {% elif m.status == 'Final' %}Final
+        {% else %}<span data-slate-time="{{ m.utc }}"></span> · <span data-slate-local="{{ m.utc }}" data-tz="{{ m.tz }}"></span> local{% endif %}
+      </div>
+      {% for t in (m.away, m.home) %}
+      <div class="slate-pop-team">
+        {% if t.logo_url %}<img src="{{ t.logo_url }}" alt="" width="22" height="22" loading="lazy" onerror="this.style.visibility='hidden'">{% endif %}
+        <span class="slate-pop-abbr">{{ t.abbr }}</span>
+        <span class="slate-pop-name">{{ t.name }}</span>
+        <span class="slate-pop-rec">{% if m.status in ('Live', 'Final') and t.score is not none %}{{ t.score }}{% else %}{{ t.record }}{% endif %}</span>
+      </div>
+      {% endfor %}
+      <div class="slate-pop-venue">{{ m.venue }}</div>
+      <a class="slate-pop-link" href="{{ m.href }}">Game details ›</a>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if slate.facts %}
+  <aside class="card slate-glance" aria-label="Tonight at a glance">
+    <h2 class="slate-title">Tonight at a glance</h2>
+    {% for f in slate.facts %}
+    <div class="slate-fact">
+      <span class="slate-fact-label">{{ f.label }}</span>
+      {% if f.kind == 'window' %}
+      <span class="slate-fact-title"><span data-slate-time="{{ f.utc_first }}"></span> – <span data-slate-time="{{ f.utc_last }}"></span></span>
+      {% elif f.title %}
+      <span class="slate-fact-title">{{ f.title }}</span>
+      {% endif %}
+      {% if f.detail %}<span class="slate-fact-detail">{{ f.detail }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </aside>
+  {% endif %}
+</section>
+
+<script>
+// Runs after the whole page parses: the game cards it links to come later in
+// the document than this partial.
+document.addEventListener('DOMContentLoaded', function () {
+  var root = document.querySelector('[data-slate]');
+  if (!root) return;
+
+  function fmt(utc, opts) {
+    var d = new Date(utc);
+    if (!utc || isNaN(d)) return '';
+    try { return d.toLocaleTimeString([], opts); } catch (e) { return ''; }
+  }
+  function fillTimes(scope) {
+    scope.querySelectorAll('[data-slate-time]').forEach(function (el) {
+      el.textContent = fmt(el.getAttribute('data-slate-time'), {hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});
+    });
+    scope.querySelectorAll('[data-slate-local]').forEach(function (el) {
+      el.textContent = fmt(el.getAttribute('data-slate-local'), {hour: 'numeric', minute: '2-digit', timeZone: el.getAttribute('data-tz') || undefined, timeZoneName: 'short'});
+    });
+    scope.querySelectorAll('[data-slate-short]').forEach(function (el) {
+      el.textContent = fmt(el.getAttribute('data-slate-short'), {hour: 'numeric', minute: '2-digit'}).replace(/\s?[AP]M$/i, '');
+    });
+  }
+  fillTimes(root);
+
+  var pop = root.querySelector('[data-slate-pop]');
+  var panel = root.querySelector('[data-slate-detail]');
+  var current = null;
+
+  function select(id) {
+    if (!id || id === current) return;
+    var src = root.querySelector('[data-slate-src="' + id + '"]');
+    if (!src) return;
+    current = id;
+    root.querySelectorAll('[data-slate-id]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-slate-id') === id ? 'true' : 'false');
+    });
+    var x = parseFloat(src.dataset.x), y = parseFloat(src.dataset.y);
+    pop.style.left = pop.style.right = pop.style.top = pop.style.bottom = '';
+    if (src.dataset.popH === 'right') pop.style.right = 'calc(' + (100 - x) + '% + 16px)';
+    else pop.style.left = 'calc(' + x + '% + 16px)';
+    if (src.dataset.popV === 'bottom') pop.style.bottom = 'calc(' + (100 - y) + '% - 14px)';
+    else pop.style.top = 'calc(' + y + '% - 14px)';
+    pop.innerHTML = src.innerHTML;
+    panel.innerHTML = src.innerHTML;
+    pop.hidden = false;
+    fillTimes(pop); fillTimes(panel);
+    document.querySelectorAll('.game-card.slate-linked').forEach(function (c) { c.classList.remove('slate-linked'); });
+    var card = src.dataset.gameKey && document.getElementById('gc-' + src.dataset.gameKey);
+    if (card) card.classList.add('slate-linked');
+  }
+
+  root.querySelectorAll('[data-slate-id]').forEach(function (b) {
+    var id = b.getAttribute('data-slate-id');
+    b.addEventListener('click', function () { select(id); });
+    if (b.classList.contains('slate-dot')) {
+      b.addEventListener('mouseenter', function () { select(id); });
+      b.addEventListener('focus', function () { select(id); });
+    }
+  });
+
+  // Hovering a game card further down lights up its venue on the map.
+  root.querySelectorAll('[data-slate-src]').forEach(function (src) {
+    var card = src.dataset.gameKey && document.getElementById('gc-' + src.dataset.gameKey);
+    if (card) card.addEventListener('mouseenter', function () { select(src.getAttribute('data-slate-src')); });
+  });
+
+  // Start on a live game if there is one, else the next to tip, else the first.
+  var dots = Array.prototype.slice.call(root.querySelectorAll('.slate-dot'));
+  var start = dots.filter(function (d) { return d.classList.contains('is-live'); })[0]
+           || dots.filter(function (d) { return !d.classList.contains('is-final'); })[0]
+           || dots[0];
+  if (start) select(start.getAttribute('data-slate-id'));
+});
+</script>
+{% endif %}

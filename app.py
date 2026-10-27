@@ -54,6 +54,7 @@ import market_edge_calibration
 import spread_proxy
 import spread_model
 import team_venues
+import slate_overview
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
@@ -7411,8 +7412,15 @@ def nba_schedule():
   _mark_favorites(schedule, 'NBA')
   _match_open_bets_to_games(schedule, sport='NBA')
   recommended = _edge_recommendations(schedule, 'NBA')
+  # Map + "at a glance" facts — built only from data already in `schedule`;
+  # never let it take the page down.
+  try:
+    slate = slate_overview.build(schedule[0]['games'], 'nba') if schedule else None
+  except Exception:
+    app.logger.exception('slate overview failed')
+    slate = None
   resp = make_response(render_template('nba_schedule.html', schedule=schedule, subnav_sport='NBA',
-                         recommended=recommended, day_nav=day_nav))
+                         recommended=recommended, day_nav=day_nav, slate=slate))
   return _set_last_sport_cookie(resp, 'NBA')
 
 @app.route('/nba/game/<game_id>')
