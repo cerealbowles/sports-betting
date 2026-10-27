@@ -320,7 +320,7 @@ def build_game_detail(game_id):
     away_fatigue = away.get('schedule_fatigue') or {}
     home_fatigue = home.get('schedule_fatigue') or {}
     if away_fatigue.get('rest_days') is not None and home_fatigue.get('rest_days') is not None:
-        situation['rest'] = f"{away_fatigue['rest_days']}d / {home_fatigue['rest_days']}d"
+        situation['rest'] = {'away': away_fatigue['rest_days'], 'home': home_fatigue['rest_days']}
     if away_venue and home_venue:
         miles = team_venues.travel_miles(away['abbr'], home['abbr'], sport='mlb')
         try:

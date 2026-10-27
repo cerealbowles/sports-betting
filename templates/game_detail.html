@@ -98,6 +98,8 @@
 .gdp .gdp-sit-cell { background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; }
 .gdp .gdp-sit-cell span { display:block; font-size:10px; color:var(--gdp-dim); letter-spacing:.05em; }
 .gdp .gdp-sit-cell b { font-size:14px; }
+.gdp .gdp-sit-rest { display:flex; align-items:center; gap:6px; }
+.gdp .gdp-sit-rest-logo { width:16px; height:16px; object-fit:contain; }
 .gdp .gdp-market { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
 .gdp .gdp-market-sides { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .gdp .gdp-market-side { background:var(--gdp-surface2); border:1px solid var(--gdp-border); border-radius:10px; padding:8px 10px; }
@@ -408,7 +410,7 @@
       <div class="gdp-card">
         <div class="gdp-section-head"><span>SITUATION</span></div>
         <div class="gdp-sit-grid">
-          {% if detail.situation.rest %}<div class="gdp-sit-cell"><span>REST</span><b>{{ detail.situation.rest }}</b></div>{% endif %}
+          {% if detail.situation.rest %}<div class="gdp-sit-cell"><span>REST</span><b class="gdp-sit-rest">{% if detail.teams.away.logo_url %}<img src="{{ detail.teams.away.logo_url }}" alt="{{ detail.teams.away.abbr }}" class="gdp-sit-rest-logo" loading="lazy" onerror="this.style.visibility='hidden'">{% endif %}{{ detail.situation.rest.away }}d / {{ detail.situation.rest.home }}d{% if detail.teams.home.logo_url %}<img src="{{ detail.teams.home.logo_url }}" alt="{{ detail.teams.home.abbr }}" class="gdp-sit-rest-logo" loading="lazy" onerror="this.style.visibility='hidden'">{% endif %}</b></div>{% endif %}
           {% if detail.situation.travel %}<div class="gdp-sit-cell"><span>TRAVEL</span><b>{{ detail.situation.travel }}</b></div>{% endif %}
           {% if detail.situation.weather %}<div class="gdp-sit-cell"><span>WEATHER</span><b>{{ detail.situation.weather }}</b></div>{% endif %}
           {% if detail.situation.surface %}<div class="gdp-sit-cell"><span>SURFACE</span><b>{{ detail.situation.surface }}</b></div>{% endif %}

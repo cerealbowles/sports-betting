@@ -5766,7 +5766,7 @@ def _similar_games_splits(detail):
   score/recommendation; see "only surface validated/consistent-edge picks" —
   thin samples are shown with their count so the reader can judge for themselves."""
   sport = detail.get('game', {}).get('league')
-  game_date = (detail.get('game', {}).get('kickoff_utc') or '')[:10]
+  game_date = _et_date(detail.get('game', {}).get('kickoff_utc') or '')
   home_abbr = detail.get('teams', {}).get('home', {}).get('abbr')
   away_abbr = detail.get('teams', {}).get('away', {}).get('abbr')
   if not sport or not game_date:

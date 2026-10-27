@@ -314,7 +314,7 @@ def build_game_detail(game_id):
     home_venue = team_venues.get(home['abbr'])
     situation = {}
     if home.get('rest_days') is not None and away.get('rest_days') is not None:
-        situation['rest'] = f"{away['rest_days']}d / {home['rest_days']}d"
+        situation['rest'] = {'away': away['rest_days'], 'home': home['rest_days']}
     if away_venue and home_venue:
         miles = team_venues.travel_miles(away['abbr'], home['abbr'])
         try:

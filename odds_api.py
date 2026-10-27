@@ -92,15 +92,20 @@ def _int_odds(odds):
 
 
 def _espn_provider(comp):
-    """Pick DraftKings if present (it always has been in testing), else
-    whatever ESPN lists first — defensive fallback, not expected to trigger."""
+    """Pick DraftKings if present, else whatever ESPN lists first — defensive
+    fallback, not expected to trigger often. Returns (entry, is_draftkings)
+    so callers can keep the single-book line-movement history from being
+    contaminated by a different book's line whenever ESPN's feed happens to
+    drop DraftKings from this game's odds list for a poll — otherwise the
+    history alternates between two books' lines every ~5min TTL refresh,
+    which looks like (but isn't) real line movement."""
     odds_list = comp.get('odds') or []
     if not odds_list:
-        return None
+        return None, False
     for o in odds_list:
         if (o.get('provider') or {}).get('name') == 'DraftKings':
-            return o
-    return odds_list[0]
+            return o, True
+    return odds_list[0], False
 
 
 def _espn_spread(entry):
@@ -235,7 +240,7 @@ def get_odds_map(sport, events=None, date_str=None):
         if not home_name or not away_name:
             continue
 
-        entry_raw = _espn_provider(comp)
+        entry_raw, is_draftkings = _espn_provider(comp)
         if entry_raw is None:
             continue
 
@@ -272,10 +277,11 @@ def get_odds_map(sport, events=None, date_str=None):
             except Exception:
                 is_preview = True
         if is_preview:
-            odds_history.record(sport_key, hist_key, home_price, away_price,
-                                 home_spread=home_spread, home_spread_price=home_spread_price,
-                                 away_spread_price=away_spread_price, total_line=total_line,
-                                 over_odds=over_odds, under_odds=under_odds)
+            if is_draftkings:
+                odds_history.record(sport_key, hist_key, home_price, away_price,
+                                     home_spread=home_spread, home_spread_price=home_spread_price,
+                                     away_spread_price=away_spread_price, total_line=total_line,
+                                     over_odds=over_odds, under_odds=under_odds)
         else:
             odds_history.save_live(sport_key, hist_key, home_price, away_price)
         movement = odds_history.get_movement(sport_key, hist_key)

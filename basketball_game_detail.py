@@ -189,7 +189,7 @@ def build(sport, short_sport, g, season, before_date, stats_db, boxscore_api, ro
 
     situation = {}
     if home.get('rest_days') is not None and away.get('rest_days') is not None:
-        situation['rest'] = f"{away['rest_days']}d / {home['rest_days']}d"
+        situation['rest'] = {'away': away['rest_days'], 'home': home['rest_days']}
 
     recent = {
         'away': recent_form(stats_db, season, away['name'], before_date),

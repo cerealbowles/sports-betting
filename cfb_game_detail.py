@@ -248,7 +248,7 @@ def build_game_detail(game_id):
     # already on g) — no travel/surface (see module docstring) ────────────
     situation = {}
     if home.get('rest_days') is not None and away.get('rest_days') is not None:
-        situation['rest'] = f"{away['rest_days']}d / {home['rest_days']}d"
+        situation['rest'] = {'away': away['rest_days'], 'home': home['rest_days']}
     if g.get('weather'):
         situation['weather'] = f"{g['weather']['temp']}°F" + (
             f", gust {g['weather']['gust_mph']} mph" if g['weather'].get('gust_mph') else '')

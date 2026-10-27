@@ -220,7 +220,7 @@ def build_game_detail(game_id):
 
     situation = {}
     if home.get('rest_days') is not None and away.get('rest_days') is not None:
-        situation['rest'] = f"{away['rest_days']}d / {home['rest_days']}d"
+        situation['rest'] = {'away': away['rest_days'], 'home': home['rest_days']}
 
     recent = {
         'away': _recent_form(season, away['name'], date_str),
