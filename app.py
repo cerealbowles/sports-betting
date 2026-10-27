@@ -3181,10 +3181,31 @@ def _mark_favorites(days, sport):
       game['is_favorite'] = bool(favs) and (_hit(game.get('home')) or _hit(game.get('away')))
 
 
+def _fetch_predictions_map(schedule, sport):
+  """Batch-loads this request's GamePrediction rows in one query instead of
+  one query per game (the N+1 pattern _upsert_predictions/_attach_graded_results
+  used to hit on every schedule-page load) — keyed by the same
+  (game_date, home_team, away_team) tuple those lookups use."""
+  dates = set()
+  for day in (schedule or []):
+    for game in day.get('games', []):
+      d = _et_date(game.get('game_time_utc') or '')
+      if d:
+        dates.add(d)
+  if not dates:
+    return {}
+  rows = GamePrediction.query.filter(
+      GamePrediction.sport == sport,
+      GamePrediction.game_date.in_(dates),
+  ).all()
+  return {(p.game_date, p.home_team, p.away_team): p for p in rows}
+
+
 def _upsert_predictions(schedule, sport='MLB'):
   """Save model predictions and record outcomes for completed games."""
   now = datetime.now(timezone.utc)
   changed = False
+  preds = _fetch_predictions_map(schedule, sport)
   for day in (schedule or []):
     for game in day.get('games', []):
       # NFL preseason (nfl_api.build_schedule_context tags is_preseason from
@@ -3208,10 +3229,7 @@ def _upsert_predictions(schedule, sport='MLB'):
         continue
 
       odds = game.get('odds') or {}
-      pred = GamePrediction.query.filter_by(
-          sport=sport, game_date=game_date,
-          home_team=home_name, away_team=away_name,
-      ).first()
+      pred = preds.get((game_date, home_name, away_name))
 
       if pred is None:
         pred = GamePrediction(
@@ -3220,6 +3238,7 @@ def _upsert_predictions(schedule, sport='MLB'):
             home_team=home_name, away_team=away_name,
         )
         db.session.add(pred)
+        preds[(game_date, home_name, away_name)] = pred
 
       # Refresh prediction while game hasn't started
       if pred.home_won is None and status == 'Preview':
@@ -3393,6 +3412,7 @@ def _attach_graded_results(schedule, sport):
   GamePrediction row (written by _upsert_predictions) rather than
   recomputing win/cover/over from scratch here, so this always agrees with
   the Model Performance page's numbers."""
+  preds = _fetch_predictions_map(schedule, sport)
   for day in (schedule or []):
     for game in day.get('games', []):
       if game.get('status') != 'Final':
@@ -3404,10 +3424,7 @@ def _attach_graded_results(schedule, sport):
       away_name = away_obj.get('name', '')
       if not game_date or not home_name or not away_name:
         continue
-      pred = GamePrediction.query.filter_by(
-          sport=sport, game_date=game_date,
-          home_team=home_name, away_team=away_name,
-      ).first()
+      pred = preds.get((game_date, home_name, away_name))
       if pred is None or pred.home_won is None:
         continue
       home_ab = home_obj.get('abbrev') or home_obj.get('abbr') or ''
@@ -5425,6 +5442,9 @@ def _mlb_candidates(schedule):
   # Preview games: use live schedule data (model + odds) for a fresh omen score.
   # Live/Final games: use stored pre-game data from GamePrediction so omen scores
   # reflect the board state at game start and never shift after the game begins.
+  # Live/Final lookups are batched via _fetch_predictions_map rather than one
+  # query per game — same N+1 fix as _upsert_predictions/_attach_graded_results.
+  preds = _fetch_predictions_map(schedule, 'MLB')
   all_candidates = []
   for day in (schedule or []):
     for game in day.get('games', []):
@@ -5448,10 +5468,7 @@ def _mlb_candidates(schedule):
         factors_json = model.get('factors_json') or json.dumps(model.get('factors', []))
       else:
         # Live / Final: reconstruct from stored pre-game snapshot
-        stored = GamePrediction.query.filter_by(
-            sport='MLB', game_date=gdate,
-            home_team=home_name, away_team=away_name,
-        ).first()
+        stored = preds.get((gdate, home_name, away_name))
         if not stored or stored.home_prob is None or not stored.home_odds:
           continue
         hp, ap = stored.home_prob, stored.away_prob or (1.0 - stored.home_prob)
@@ -5671,13 +5688,11 @@ def mlb_schedule():
   # Live games get their rank-at-start captured once and never overwritten.
   # Final games are skipped — their outcome is already recorded by _upsert_predictions.
   try:
+    _rank_preds = _fetch_predictions_map(schedule, 'MLB')
     for b in all_candidates:
       if b['status'] not in ('Preview', 'Live'):
         continue
-      pred = GamePrediction.query.filter_by(
-          sport='MLB', game_date=b['game_date'],
-          home_team=b['home_name'], away_team=b['away_name'],
-      ).first()
+      pred = _rank_preds.get((b['game_date'], b['home_name'], b['away_name']))
       if not pred:
         continue
       if b['status'] == 'Preview':
@@ -5764,6 +5779,95 @@ def mlb_schedule():
                          sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB'))
   return _set_last_sport_cookie(resp, 'MLB')
 
+def _splits_agg(rows):
+  if not rows:
+    return None
+  wins = total = 0
+  roi_vals = []
+  for p in rows:
+    fav_home = (p.home_prob or 0.5) >= 0.5
+    model_won = fav_home == bool(p.home_won)
+    total += 1
+    if model_won:
+      wins += 1
+    pick_odds = p.home_odds if fav_home else p.away_odds
+    try:
+      o = int(pick_odds)
+      profit = o / 100.0 if o > 0 else 100.0 / (-o)
+      roi_vals.append(profit if model_won else -1.0)
+    except (TypeError, ValueError):
+      pass
+  return {
+      'count':    total,
+      'win_rate': round(wins / total * 100, 1),
+      'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
+  }
+
+
+_SPLITS_CACHE = {}
+_SPLITS_TTL = 1800  # 30 min — graded rows only change as games finish, so
+                     # there's no need to re-scan this sport's full history
+                     # (with a datetime.strptime + team_venues lookup per row)
+                     # on every single game-detail page view.
+
+def _similar_games_splits_aggregates(sport):
+  """Per-sport baseline/day-of-week/travel-bucket win-rate aggregates for
+  _similar_games_splits, built from every graded row at most once per
+  _SPLITS_TTL instead of on every game-detail page load."""
+  now = time.time()
+  cached = _SPLITS_CACHE.get(sport)
+  if cached and now - cached[1] < _SPLITS_TTL:
+    return cached[0]
+
+  graded = GamePrediction.query.filter_by(sport=sport).filter(
+      GamePrediction.home_won.isnot(None)).all()
+  graded = [p for p in graded if p.home_odds and p.away_odds]
+
+  result = {'baseline': _splits_agg(graded), 'by_dow': {}, 'by_travel': {}}
+
+  if result['baseline']:
+    _dow_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    dow_buckets = {}
+    for p in graded:
+      try:
+        lbl = _dow_order[datetime.strptime(p.game_date, '%Y-%m-%d').weekday()]
+      except (TypeError, ValueError):
+        continue
+      dow_buckets.setdefault(lbl, []).append(p)
+    for lbl, rows in dow_buckets.items():
+      agg = _splits_agg(rows)
+      if agg:
+        agg['label'] = lbl
+        result['by_dow'][lbl] = agg
+
+    _venue_sport = {'NFL': 'nfl', 'MLB': 'mlb'}.get(sport)
+    if _venue_sport:
+      def _travel_bucket(miles):
+        if miles < 300:  return 'Regional (<300mi)'
+        if miles < 1000: return '300–1000mi'
+        if miles < 2000: return '1000–2000mi'
+        return '2000mi+'
+
+      travel_buckets = {}
+      for p in graded:
+        a = team_venues.abbr_from_name(p.away_team, _venue_sport)
+        h = team_venues.abbr_from_name(p.home_team, _venue_sport)
+        if not a or not h:
+          continue
+        m = team_venues.travel_miles(a, h, _venue_sport)
+        if m is None:
+          continue
+        travel_buckets.setdefault(_travel_bucket(m), []).append(p)
+      for lbl, rows in travel_buckets.items():
+        agg = _splits_agg(rows)
+        if agg:
+          agg['label'] = lbl
+          result['by_travel'][lbl] = agg
+
+  _SPLITS_CACHE[sport] = (result, now)
+  return result
+
+
 def _similar_games_splits(detail):
   """Historical win-rate/ROI for this sport's graded picks, filtered down to
   games sharing this matchup's day-of-week and (NFL/MLB only, team_venues.py's
@@ -5772,7 +5876,9 @@ def _similar_games_splits(detail):
   475d2c5) — just sliced to the one bucket this game falls in, for the
   game-detail page's right rail. Exploratory context only, not fed into any
   score/recommendation; see "only surface validated/consistent-edge picks" —
-  thin samples are shown with their count so the reader can judge for themselves."""
+  thin samples are shown with their count so the reader can judge for themselves.
+  Aggregates come from _similar_games_splits_aggregates's TTL cache; only the
+  current matchup's own travel-miles lookup runs per request."""
   sport = detail.get('game', {}).get('league')
   game_date = _et_date(detail.get('game', {}).get('kickoff_utc') or '')
   home_abbr = detail.get('teams', {}).get('home', {}).get('abbr')
@@ -5780,37 +5886,8 @@ def _similar_games_splits(detail):
   if not sport or not game_date:
     return None
 
-  graded = GamePrediction.query.filter_by(sport=sport).filter(
-      GamePrediction.home_won.isnot(None)).all()
-  graded = [p for p in graded if p.home_odds and p.away_odds]
-  if not graded:
-    return None
-
-  def _agg(rows):
-    if not rows:
-      return None
-    wins = total = 0
-    roi_vals = []
-    for p in rows:
-      fav_home = (p.home_prob or 0.5) >= 0.5
-      model_won = fav_home == bool(p.home_won)
-      total += 1
-      if model_won:
-        wins += 1
-      pick_odds = p.home_odds if fav_home else p.away_odds
-      try:
-        o = int(pick_odds)
-        profit = o / 100.0 if o > 0 else 100.0 / (-o)
-        roi_vals.append(profit if model_won else -1.0)
-      except (TypeError, ValueError):
-        pass
-    return {
-        'count':    total,
-        'win_rate': round(wins / total * 100, 1),
-        'avg_roi':  round(sum(roi_vals) / len(roi_vals) * 100, 1) if roi_vals else None,
-    }
-
-  baseline = _agg(graded)
+  agg = _similar_games_splits_aggregates(sport)
+  baseline = agg['baseline']
   if baseline is None:
     return None
   out = {'baseline': baseline}
@@ -5820,18 +5897,8 @@ def _similar_games_splits(detail):
     dlbl = _dow_order[datetime.strptime(game_date, '%Y-%m-%d').weekday()]
   except (TypeError, ValueError):
     dlbl = None
-  if dlbl:
-    dow_rows = []
-    for p in graded:
-      try:
-        if _dow_order[datetime.strptime(p.game_date, '%Y-%m-%d').weekday()] == dlbl:
-          dow_rows.append(p)
-      except (TypeError, ValueError):
-        continue
-    dow_agg = _agg(dow_rows)
-    if dow_agg:
-      dow_agg['label'] = dlbl
-      out['dow'] = dow_agg
+  if dlbl and dlbl in agg['by_dow']:
+    out['dow'] = agg['by_dow'][dlbl]
 
   _venue_sport = {'NFL': 'nfl', 'MLB': 'mlb'}.get(sport)
   if _venue_sport and home_abbr and away_abbr:
@@ -5844,18 +5911,8 @@ def _similar_games_splits(detail):
     miles = team_venues.travel_miles(away_abbr, home_abbr, _venue_sport)
     if miles is not None:
       tlbl = _travel_bucket(miles)
-      travel_rows = []
-      for p in graded:
-        a = team_venues.abbr_from_name(p.away_team, _venue_sport)
-        h = team_venues.abbr_from_name(p.home_team, _venue_sport)
-        if not a or not h:
-          continue
-        m = team_venues.travel_miles(a, h, _venue_sport)
-        if m is not None and _travel_bucket(m) == tlbl:
-          travel_rows.append(p)
-      travel_agg = _agg(travel_rows)
-      if travel_agg:
-        travel_agg['label'] = tlbl
+      if tlbl in agg['by_travel']:
+        travel_agg = dict(agg['by_travel'][tlbl])
         travel_agg['miles'] = miles
         out['travel'] = travel_agg
 
