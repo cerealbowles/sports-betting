@@ -26,9 +26,16 @@ import requests
 ESPN_SITE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba'
 
 _cache = {}
-# injuries can change right up to tip-off; boxscore needs to track a live
-# game closely. Both short — matches nba_api.py's own 120s scoreboard TTL.
-_TTL = 120
+# Was 120s (matching nba_api.py's own scoreboard TTL) — shorter than the
+# 5-minute cache-warmer cycle (_warm_all_caches in app.py), so any real page
+# visit landing more than ~2 minutes after the last warm run found this
+# expired and paid for a live, synchronous per-game refetch across the
+# whole slate (12 games sequentially = most of a /nba page load). 600s
+# (same as nfl_api.py/cfb_api.py's own per-game 'summary' TTL) comfortably
+# outlasts the warmer's cadence, so a visit between warm runs just reads
+# the cache the warmer already populated. Fine for injuries/live boxscore
+# too — nothing on this page needs sub-5-minute freshness.
+_TTL = 600
 _fail_ts = {}
 _FAIL_BACKOFF = 300  # same pattern as nba_roster_api._get
 

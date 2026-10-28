@@ -120,11 +120,24 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
     when the DB has nothing for this player yet (not backfilled, or new to
     the league this season) — see wnba_stats_db.py's module docstring for
     the ingestion side of this.
-    """
+
+    The DB lookup itself is cached here (same 6h TTL as the ESPN fallback
+    below) — see nba_roster_api.get_player_gamelog's identical fix for why:
+    it was re-querying PlayerGameStat (app-context push included) on every
+    single call with no memoization, ~19ms/player round trip measured on
+    the NBA side, multiplied across a full slate's rosters on every page
+    load regardless of how fresh the data already was."""
+    cache_key = ('db_gamelog', player_id)
+    now = time.time()
+    if cache_key in _cache:
+        data, ts = _cache[cache_key]
+        if now - ts < _TTL['gamelog']:
+            return data
     try:
         import wnba_stats_db
         db_games = wnba_stats_db.get_player_gamelog_db(player_id)
         if db_games:
+            _cache[cache_key] = (db_games, now)
             return db_games
     except Exception:
         pass

@@ -120,11 +120,27 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
     when the DB has nothing for this player yet (not backfilled, or new to
     the league this season) — see nba_stats_db.py's module docstring for
     the ingestion side of this.
-    """
+
+    The DB lookup itself is cached here (same 6h TTL as the ESPN fallback
+    below) — it was previously re-querying PlayerGameStat, app-context push
+    included, on every single call with no memoization at all. Across a
+    full slate that's ~15 players x 2 teams x however many games (~360 for
+    12 games), each a real ~19ms round trip measured locally — 5+ seconds
+    of every single /nba page load, even with every external ESPN fetch
+    already warm. A finalized player's games don't change until their next
+    game is backfilled, so there's no reason to re-read this more often
+    than the 5-minute cache-warmer cycle already does."""
+    cache_key = ('db_gamelog', player_id)
+    now = time.time()
+    if cache_key in _cache:
+        data, ts = _cache[cache_key]
+        if now - ts < _TTL['gamelog']:
+            return data
     try:
         import nba_stats_db
         db_games = nba_stats_db.get_player_gamelog_db(player_id)
         if db_games:
+            _cache[cache_key] = (db_games, now)
             return db_games
     except Exception:
         pass
