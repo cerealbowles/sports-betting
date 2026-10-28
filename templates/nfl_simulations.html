@@ -47,9 +47,8 @@
 <div class="schedule-body">
 
 {% set current_sport = 'NFL' %}
-{% include "_sport_pills.html" %}
 {% set active_tool = 'simulations' %}
-{% include "_sport_tools.html" %}
+{% include "_sport_pills.html" %}
 <h1>Game Simulations</h1>
 <p class="dfs-subhead">Each card: {{ games[0].summary.n_sims if games and games[0].summary else '—' }} full drive-by-drive simulated games, resampled from real play-by-play and team-conditioned by offense/defense grade, re-run once a day in the background (not live). Win % is from this simulator's own game outcomes, not this app's real betting model. Once a game is Final, its card also shows the real score and each player's actual stat line next to what was predicted.</p>
 

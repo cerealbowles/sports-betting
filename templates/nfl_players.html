@@ -7,9 +7,8 @@
 <div class="schedule-body">
 
 {% set current_sport = 'NFL' %}
-{% include "_sport_pills.html" %}
 {% set active_tool = 'fantasy' %}
-{% include "_sport_tools.html" %}
+{% include "_sport_pills.html" %}
 <h1>Players</h1>
 <p class="dfs-subhead">Projected FanDuel points for every skill player and DST in this week's slate, fit from this app's own stored stats. Click a name for their recent game log and any news coverage. Also available as the Rankings tab on <a href="{{ url_for('nfl_lineup') }}">Fantasy</a>.</p>
 

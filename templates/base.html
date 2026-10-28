@@ -87,7 +87,11 @@
                 </span>
             </div>
             {% endif %}
-            {% if request.endpoint != 'bets_page' %}
+            {# Pages that render _sport_pills.html already carry a full,
+               always-visible sport switcher inline — the header's icon
+               dropdown would just be a second way to do the same tap. #}
+            {% set _pills_endpoints = ('mlb_schedule', 'nhl_schedule', 'nba_schedule', 'wnba_schedule', 'nfl_schedule', 'cfb_schedule', 'nfl_defense_page', 'nba_simulations_page', 'nfl_lineup', 'nfl_compare', 'nfl_recap_page', 'nfl_simulations_page', 'nfl_players') %}
+            {% if request.endpoint != 'bets_page' and request.endpoint not in _pills_endpoints %}
             <div class="sport-switch">
                 <button type="button" class="sport-switch-trigger" onclick="toggleSportSwitch(event)" aria-haspopup="true" aria-expanded="false" aria-label="Switch sport">
                     <span>{{ _sport_icons[_sport_switch_active] }}</span>

@@ -18,9 +18,8 @@
 <div class="schedule-body">
 
 {% set current_sport = 'NFL' %}
-{% include "_sport_pills.html" %}
 {% set active_tool = 'defense' %}
-{% include "_sport_tools.html" %}
+{% include "_sport_pills.html" %}
 <h1>Defense</h1>
 <p class="dfs-subhead">Season-to-date individual defender stats — sacks, tackles, tackles for loss, passes defended, QB hits, interceptions, and fumbles recovered — summed from real box scores. These never feed FanDuel scoring (that's the team DST unit, on <a href="{{ url_for('nfl_lineup') }}">Fantasy</a>) or the game simulator — this is a straight stats leaderboard. Position/team shown is each player's CURRENT roster — a player traded or cut since shows '?'/their old team rather than being dropped.</p>
 

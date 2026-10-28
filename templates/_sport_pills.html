@@ -1,14 +1,42 @@
-{# Inline sport-switch row for the top of each sport's schedule page, matching
-   the mockup's "sport pill-tabs" above the date-nav. Distinct from the header's
-   sport-switch dropdown (base.html) — this is always-visible, page-local nav.
-   Expects `current_sport` (e.g. 'NBA') set by the including page. #}
+{# Page-local sport nav: sport switcher + (when the sport has one) its tool
+   tabs, as a single row. Replaces what used to be two stacked bars
+   (_sport_pills.html + a separate _sport_tools.html include) — merged so
+   switching sport and switching tool read as one connected control instead
+   of duplicate nav layers. The header's icon sport-switch dropdown
+   (base.html) is hidden on every page that includes this partial, since
+   this row already covers that job, always visible, one tap.
+
+   Expects `current_sport` (e.g. 'NBA') and, on pages with tools, `active_tool`
+   set by the including page. #}
 {% import "_season_badge.html" as sb %}
 {% set _sp_list = [('MLB','mlb_schedule'), ('NHL','nhl_schedule'), ('NFL','nfl_schedule'), ('CFB','cfb_schedule'), ('NBA','nba_schedule'), ('WNBA','wnba_schedule')] %}
-<div role="group" aria-label="Sport" style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px; margin-bottom:12px;">
+{% set _sport_tools = {
+    'NFL': [
+        ('schedule', '🏈 Schedule', 'nfl_schedule'),
+        ('fantasy', '🏆 Fantasy', 'nfl_lineup'),
+        ('simulations', '🎲 Simulations', 'nfl_simulations_page'),
+        ('defense', '🛡️ Defense', 'nfl_defense_page'),
+    ],
+    'NBA': [
+        ('schedule', '🏀 Schedule', 'nba_schedule'),
+        ('simulations', '🎲 Simulations', 'nba_simulations_page'),
+    ],
+} %}
+{% set _tools = _sport_tools.get(current_sport, []) %}
+<div role="group" aria-label="Sport" style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px; margin-bottom:{{ '6px' if _tools|length > 1 else '12px' }};">
 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
 {% for label, endpoint in _sp_list %}
 <a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if label == current_sport else '' }}" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px;">{{ label }}{{ sb.season_badge(label) }}</a>
 {% endfor %}
 </div>
+{% if _tools|length <= 1 %}
 <a href="{{ url_for('model_performance', sport=current_sport) }}" class="sport-chip" style="text-decoration:none;">📊 Model</a>
+{% endif %}
 </div>
+{% if _tools|length > 1 %}
+<div role="group" aria-label="{{ current_sport }} tools" class="sport-chip-bar">
+{% for key, label, endpoint in _tools %}
+<a href="{{ url_for(endpoint) }}" class="sport-chip{{ ' sport-chip-active' if key == active_tool else '' }}">{{ label }}</a>
+{% endfor %}
+</div>
+{% endif %}

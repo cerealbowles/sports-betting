@@ -98,9 +98,8 @@
 
 {% set objective_labels = {'sim_median': 'Sim Median', 'sim_ceiling': 'Sim Ceiling', 'risk_adjusted': 'Consistent'} %}
 {% set current_sport = 'NFL' %}
-{% include "_sport_pills.html" %}
 {% set active_tool = 'fantasy' %}
-{% include "_sport_tools.html" %}
+{% include "_sport_pills.html" %}
 <div role="group" aria-label="Fantasy view" class="sport-chip-bar">
     <button type="button" class="sport-chip sport-chip-active" id="dfs-view-tab-builder" onclick="dfsShowView('builder')">Builder</button>
     <button type="button" class="sport-chip" id="dfs-view-tab-rankings" onclick="dfsShowView('rankings')">Rankings</button>

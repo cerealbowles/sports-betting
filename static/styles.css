@@ -948,6 +948,16 @@ body.embed-mode .container { padding-bottom: 0; }
   flex-direction: column;
   gap: 6px;
 }
+/* The one number a glance at this row needs to answer — "am I up or
+   down right now" — gets the full-width lead slot instead of sitting
+   as a fourth, equal-weight tile indistinguishable from the rest. */
+.stat-card-lead {
+  grid-column: 1 / -1;
+  background: var(--orange-dim);
+  border-color: rgba(255,122,26,0.30);
+}
+.stat-card-lead .stat-label { color: var(--orange); }
+.stat-card-lead .stat-value { font-size: 2.1rem; }
 .stat-label {
   color: var(--text-muted);
   font-family: var(--font-cond);
@@ -2135,9 +2145,14 @@ body.embed-mode .container { padding-bottom: 0; }
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+/* Three spacing tiers, not five arbitrary ones: first-in-list (0), a
+   divider between groups in the same list (12px), and a status/day
+   boundary — Upcoming, Completed — big enough to read as a new section
+   (20px/14px). */
 .games-section-hdr-fav { color: #f5b301; border-top: none; margin-top: 0; }
 .games-section-hdr-lead { margin-top: 6px; margin-bottom: 4px; }
 .games-section-hdr-rest { margin-top: 12px; }
+.games-section-hdr-upcoming,
 .games-section-hdr-completed { margin-top: 20px; padding-top: 14px; }
 .preseason-badge {
   font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
@@ -2151,8 +2166,6 @@ body.embed-mode .container { padding-bottom: 0; }
   background: var(--orange-dim); color: var(--orange);
   border: 1px solid rgba(255,122,26,0.30);
 }
-.games-section-hdr-upcoming { margin-top: 28px; padding: 18px 2px 14px; }
-
 /* ── Schedule page — completed games moved to the bottom of the week ─────
    Every date's Final games are pulled out of day-by-day order into one
    condensed list at the end of the page instead of interrupting each day's

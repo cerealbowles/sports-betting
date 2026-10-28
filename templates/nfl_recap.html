@@ -83,9 +83,8 @@
 <div class="schedule-body">
 
 {% set current_sport = 'NFL' %}
-{% include "_sport_pills.html" %}
 {% set active_tool = 'fantasy' %}
-{% include "_sport_tools.html" %}
+{% include "_sport_pills.html" %}
 <div role="group" aria-label="Fantasy view" class="sport-chip-bar">
     <a href="{{ url_for('nfl_lineup') }}" class="sport-chip">Builder</a>
     <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip sport-chip-active">Recap</a>

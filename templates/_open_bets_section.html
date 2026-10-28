@@ -20,6 +20,13 @@
 
 {% if open_stats %}
 <div class="dashboard" style="margin-bottom:14px;">
+    <div class="stat-card stat-card-lead">
+        <div class="stat-label">Expected ROI</div>
+        <div class="stat-value {% if open_stats.expected_roi is not none %}{{ 'status-win' if open_stats.expected_roi >= 0 else 'status-loss' }}{% endif %}">
+            {% if open_stats.expected_roi is not none %}{{ '+' if open_stats.expected_roi > 0 }}{{ open_stats.expected_roi }}%{% else %}—{% endif %}
+        </div>
+        <div class="stat-sub">avg EV across open bets</div>
+    </div>
     <div class="stat-card">
         <div class="stat-label">Avg Edge</div>
         <div class="stat-value {% if open_stats.avg_edge is not none %}{{ 'status-win' if open_stats.avg_edge >= 2 else ('status-loss' if open_stats.avg_edge < 0 else '') }}{% endif %}">
@@ -40,13 +47,6 @@
             {% if open_stats.positive_clv_pct is not none %}{{ open_stats.positive_clv_pct }}%{% else %}—{% endif %}
         </div>
         <div class="stat-sub">of tracked lines</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Expected ROI</div>
-        <div class="stat-value {% if open_stats.expected_roi is not none %}{{ 'status-win' if open_stats.expected_roi >= 0 else 'status-loss' }}{% endif %}">
-            {% if open_stats.expected_roi is not none %}{{ '+' if open_stats.expected_roi > 0 }}{{ open_stats.expected_roi }}%{% else %}—{% endif %}
-        </div>
-        <div class="stat-sub">avg EV across open bets</div>
     </div>
 </div>
 {% endif %}
