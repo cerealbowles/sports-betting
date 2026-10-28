@@ -114,7 +114,7 @@ def _parse_utc(s):
 
 # ── fact rules ─────────────────────────────────────────────────────────────
 # Each returns a fact dict or None:
-#   {'label': 'GAME OF THE NIGHT', 'title': 'POR @ LAL', 'detail': '...'}
+#   {'label': 'Game of the night', 'title': 'POR @ LAL', 'detail': '...'}
 # The tip-off window fact also carries 'utc_first'/'utc_last' so the page can
 # render those times in the viewer's own time zone.
 
@@ -136,7 +136,7 @@ def _fact_game_of_night(games, used):
     w = (a.get('wins') or 0) + (h.get('wins') or 0)
     l = (a.get('losses') or 0) + (h.get('losses') or 0)
     note = 'Two unbeatens' if not a.get('losses') and not h.get('losses') else 'Best combined record'
-    return {'label': 'GAME OF THE NIGHT', 'title': _matchup(g),
+    return {'label': 'Game of the night', 'title': _matchup(g),
             'detail': f"{note} · {w}-{l} combined"}
 
 
@@ -158,7 +158,7 @@ def _fact_mismatch(games, used):
     a, h = g['away'], g['home']
     fav, dog = (a, h) if _win_pct(a) > _win_pct(h) else (h, a)
     verb = 'visits' if fav is a else 'hosts'
-    return {'label': 'BIGGEST MISMATCH ON PAPER', 'title': _matchup(g),
+    return {'label': 'Biggest mismatch on paper', 'title': _matchup(g),
             'detail': f"{_abbr(fav)} ({_record(fav)}) {verb} {_abbr(dog)} ({_record(dog)})"}
 
 
@@ -174,7 +174,7 @@ def _fact_perfect(games, listed):
         return None
     teams.sort(key=lambda t: -(t.get('wins') or 0))
     listed.update(_abbr(t) for t in teams)
-    return {'label': 'STILL PERFECT',
+    return {'label': 'Still perfect',
             'title': ' · '.join(f"{_abbr(t)} {_record(t)}" for t in teams[:4]), 'detail': ''}
 
 
@@ -184,7 +184,7 @@ def _fact_winless(games, listed):
         return None
     teams.sort(key=lambda t: -(t.get('losses') or 0))
     listed.update(_abbr(t) for t in teams)
-    return {'label': 'STILL WINLESS',
+    return {'label': 'Still winless',
             'title': ' · '.join(f"{_abbr(t)} {_record(t)}" for t in teams[:4]), 'detail': ''}
 
 
@@ -199,7 +199,7 @@ def _fact_streaks(games, listed):
     if not rows:
         return None
     rows.sort(key=lambda r: -r[0])
-    return {'label': 'STREAKING',
+    return {'label': 'Streaking',
             'title': ' · '.join(f"{_abbr(t)} {kind}{n}" for n, kind, t in rows[:4]),
             'detail': 'Current streaks, last 5 games'}
 
@@ -219,8 +219,8 @@ def _fact_back_to_back(games):
         o_rest = _rest_days(o)
         if (o_rest or 0) >= 2:
             detail += f" · {_abbr(o)} is rested ({o_rest} days)"
-        return {'label': 'BACK-TO-BACK', 'title': _abbr(t), 'detail': detail}
-    return {'label': 'BACK-TO-BACKS',
+        return {'label': 'Back-to-back', 'title': _abbr(t), 'detail': detail}
+    return {'label': 'Back-to-backs',
             'title': ' · '.join(_abbr(t) for t, _ in tired[:5]),
             'detail': 'Playing the 2nd night of a back-to-back'}
 
@@ -243,7 +243,7 @@ def _fact_longest_trip(games, sport):
         tz = team_venues.timezone_change_hours(a, h, when, sport)
         if tz:
             detail += f" · {abs(tz)} time zone{'s' if abs(tz) != 1 else ''} {'east' if tz > 0 else 'west'}"
-    return {'label': 'LONGEST TRIP', 'title': f"{a} at {home['city'].split(',')[0]}", 'detail': detail}
+    return {'label': 'Longest trip', 'title': f"{a} at {home['city'].split(',')[0]}", 'detail': detail}
 
 
 def _fact_high_scoring(games):
@@ -261,7 +261,7 @@ def _fact_high_scoring(games):
     if not best:
         return None
     total, g = best
-    return {'label': 'HIGHEST-SCORING MATCHUP', 'title': _matchup(g),
+    return {'label': 'Highest-scoring matchup', 'title': _matchup(g),
             'detail': f"~{total:.0f} combined pts on season scoring averages"}
 
 
@@ -279,7 +279,7 @@ def _fact_window(games, sport):
         v = team_venues.get(_abbr(g['home']), sport)
         return v['city'].split(',')[0] if v else _abbr(g['home'])
 
-    return {'label': 'TIP-OFF WINDOW', 'title': '', 'kind': 'window',
+    return {'label': 'Tip-off window', 'title': '', 'kind': 'window',
             'utc_first': first.get('game_time_utc'), 'utc_last': last.get('game_time_utc'),
             'detail': f"{city(first)} tips first, {city(last)} last"}
 

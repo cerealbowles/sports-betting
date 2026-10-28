@@ -52,11 +52,11 @@ def test_markers_and_facts_for_real_slate():
     s = so.build(SLATE, 'nba')
     assert [m['home']['abbr'] for m in s['markers']] == ['BOS', 'NY', 'SA', 'LAL']
     labels = {f['label']: f for f in s['facts']}
-    assert labels['GAME OF THE NIGHT']['title'] == 'POR @ LAL'
-    assert 'Two unbeatens' in labels['GAME OF THE NIGHT']['detail']
-    assert labels['BIGGEST MISMATCH ON PAPER']['title'] == 'DET @ NY'
-    assert labels['STILL PERFECT']['title'] == 'DET 3-0 · LAL 3-0 · POR 2-0'
-    assert labels['STILL WINLESS']['title'].startswith('BKN 0-3')
+    assert labels['Game of the night']['title'] == 'POR @ LAL'
+    assert 'Two unbeatens' in labels['Game of the night']['detail']
+    assert labels['Biggest mismatch on paper']['title'] == 'DET @ NY'
+    assert labels['Still perfect']['title'] == 'DET 3-0 · LAL 3-0 · POR 2-0'
+    assert labels['Still winless']['title'].startswith('BKN 0-3')
     assert s['facts'][-1]['kind'] == 'window'
     assert len(s['facts']) <= so.MAX_FACTS
 
@@ -72,9 +72,9 @@ def test_back_to_back_and_trip():
     g = [_game('1', _team('POR', 'Blazers', 2, 2, rest_days=1), _team('MIA', 'Heat', 2, 2, rest_days=3),
                '2026-10-27T23:30Z')]
     labels = {f['label']: f for f in so.build_facts(g, 'nba')}
-    assert labels['BACK-TO-BACK']['title'] == 'POR'
-    assert 'MIA is rested' in labels['BACK-TO-BACK']['detail']
-    assert '3 time zones east' in labels['LONGEST TRIP']['detail']
+    assert labels['Back-to-back']['title'] == 'POR'
+    assert 'MIA is rested' in labels['Back-to-back']['detail']
+    assert '3 time zones east' in labels['Longest trip']['detail']
 
 
 def test_unknown_teams_and_empty_slate():

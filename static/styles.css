@@ -2976,8 +2976,8 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 .slate-detail:empty { display: none; }
 
-.slate-fact { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-top: 1px solid var(--border); }
-.slate-fact-label { font-family: var(--font-cond); font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; color: var(--text-muted); }
+.slate-fact { display: flex; flex-direction: column; gap: 2px; padding: 10px 0 10px 10px; border-top: 1px solid var(--border); border-left: 2px solid var(--orange-dim); }
+.slate-fact-label { font-family: var(--font-cond); font-weight: 600; font-size: 0.78rem; font-style: italic; color: var(--silver); }
 .slate-fact-title { font-weight: 600; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
 .slate-fact-detail { font-size: 0.8rem; color: var(--text-muted); }
 
