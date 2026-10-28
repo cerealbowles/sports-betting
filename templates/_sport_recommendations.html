@@ -46,7 +46,17 @@
         {% else %}—{% endif %}
       </td>
       <td style="padding:6px 8px;text-align:center;"><span class="kelly-verdict {{ r.k_cls }}">{{ r.k_label }}</span></td>
-      <td style="padding:6px 8px;text-align:right;"><button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}', '{{ {'ml': 'Moneyline', 'spread': 'Spread'}[r.market] }}')">Bet</button></td>
+      <td style="padding:6px 8px;text-align:right;">
+        {% if r.status == 'Preview' %}
+        <button type="button" class="btn-bet-team" style="padding:3px 10px;font-size:0.7rem;" onclick="openRecommendedBet('{{ g.game_key }}', '{{ r.pick_side }}', '{{ {'ml': 'Moneyline', 'spread': 'Spread'}[r.market] }}')">Bet</button>
+        {% elif r.status == 'Live' %}
+        <span class="kelly-verdict edge-neutral" title="Game in progress — recommendation frozen at the pre-game line">Live</span>
+        {% elif r.outcome is not none %}
+        <span class="kelly-verdict {{ 'edge-pos' if r.outcome else 'edge-neg' }}" title="Graded result for this recommendation">{{ 'W' if r.outcome else 'L' }}</span>
+        {% else %}
+        <span style="color:var(--text-muted);">—</span>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
     </tbody>

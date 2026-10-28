@@ -301,6 +301,27 @@ class GamePrediction(db.Model):
   blended_total_over_prob   = db.Column(db.Float)
   blended_total_went_over   = db.Column(db.Boolean)
   blended_total_pick_roi    = db.Column(db.Float)
+  # Snapshot of _best_market_pick(game)'s verdict, captured every cycle while
+  # the game is still Preview and frozen the moment it goes Live (same
+  # last-value-before-kickoff semantics as home_prob/home_odds above). Lets
+  # _edge_recommendations (the non-MLB sports' Recommendations list) show a
+  # game's recommendation indefinitely after it starts/finishes, instead of
+  # _best_market_pick's live Final/Live exclusion (app.py's
+  # `game.get('status') in ('Final', 'Live')` check) making it vanish —
+  # mirrors what MLB's _mlb_candidates already does by reconstructing from
+  # this table's home_prob/home_odds/away_odds instead. None means either
+  # no market cleared the bar at last Preview snapshot, or (for rows from
+  # before this feature shipped) it was never captured.
+  rec_market     = db.Column(db.String(10))                   # 'ml' or 'spread'
+  rec_side       = db.Column(db.String(10))                   # 'home' or 'away'
+  rec_abbr       = db.Column(db.String(10))
+  rec_label      = db.Column(db.String(30))                   # e.g. "BOS ML" / "BOS -1.5"
+  rec_edge       = db.Column(db.Float)
+  rec_kelly      = db.Column(db.Float)
+  rec_amer_odds  = db.Column(db.Integer)
+  rec_ev_pct     = db.Column(db.Float)
+  rec_pick_rank  = db.Column(db.String(10))
+  rec_pips       = db.Column(db.Integer)
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
 
@@ -1034,6 +1055,16 @@ def ensure_column_exists():
     _add('nfl_recap_weeks', 'comparison_lineup_scores_json', 'TEXT DEFAULT NULL')
     _add('nfl_sim_results', 'sim_stats_json', 'TEXT DEFAULT NULL')
     _add('nfl_sim_games', 'margins_json', 'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_market',    'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_side',      'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_abbr',      'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_label',     'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_edge',      'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'rec_kelly',     'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'rec_amer_odds', 'INTEGER DEFAULT NULL')
+    _add('game_predictions', 'rec_ev_pct',    'FLOAT DEFAULT NULL')
+    _add('game_predictions', 'rec_pick_rank', 'TEXT DEFAULT NULL')
+    _add('game_predictions', 'rec_pips',      'INTEGER DEFAULT NULL')
 
     # Paper picks were removed; drop any leftover rows so they don't resurface
     # as $0 real bets. The is_paper column itself is left in place (SQLite,
@@ -3272,6 +3303,22 @@ def _upsert_predictions(schedule, sport='MLB'):
             # NFL's player model has no margin signal to blend).
             pred.blended_spread_cover_prob = _margin_cover_prob(
                 sport, model.get('ensemble_margin'), spread_line)
+
+        # Freeze whatever _best_market_pick currently says about this game —
+        # see GamePrediction.rec_market's comment. Recomputed every cycle
+        # while still Preview (tracks line movement right up to puck/tip/
+        # kickoff), then never touched again once status leaves Preview.
+        pick = _best_market_pick(game)
+        pred.rec_market    = pick['market']    if pick else None
+        pred.rec_side      = pick['side']      if pick else None
+        pred.rec_abbr      = pick['abbr']      if pick else None
+        pred.rec_label     = pick['label']     if pick else None
+        pred.rec_edge      = pick['edge']      if pick else None
+        pred.rec_kelly     = pick['kelly']     if pick else None
+        pred.rec_amer_odds = pick['amer_odds'] if pick else None
+        pred.rec_ev_pct    = pick['ev_pct']    if pick else None
+        pred.rec_pick_rank = pick['pick_rank'] if pick else None
+        pred.rec_pips      = pick['pips']      if pick else None
 
         if has_wind and pred.wind_mph is None:
           pred.wind_mph = wx['wind_mph']
@@ -7304,41 +7351,85 @@ def _edge_recommendations(days, sport, limit=15):
   Built directly from _best_market_pick — the same single source of truth
   that decides the ★ on each game's card — so this list is exactly the set
   of games that render a star below, whichever market (ML/Spread/Total)
-  earned it, with no separate mirrored threshold logic to keep in sync."""
+  earned it, with no separate mirrored threshold logic to keep in sync for
+  games still in Preview.
+
+  Live/Final games are reconstructed from GamePrediction's rec_* snapshot
+  (frozen by _upsert_predictions the moment the game leaves Preview) instead
+  of calling _best_market_pick directly, which unconditionally returns None
+  for Live/Final (see its status check) — that exclusion is what made a
+  game recommended pre-game vanish from this list once it started. Mirrors
+  how _mlb_candidates already reconstructs MLB's own table from this same
+  table for Live/Final games."""
+  preds = _fetch_predictions_map(days, sport)
   recommended = []
   for day in (days or []):
     for game in day.get('games', []):
-      pick = _best_market_pick(game)
-      if not pick:
-        continue
+      status    = game.get('status', 'Preview')
+      home_name = (game.get('home') or {}).get('name', '')
+      away_name = (game.get('away') or {}).get('name', '')
+
+      if status == 'Preview':
+        pick = _best_market_pick(game)
+        if not pick:
+          continue
+        # Moneyline primary score — informative on every row regardless of
+        # which market earned the ★ (same convention as MLB's table), since
+        # it's read off the game's own home_prob/odds, not the picked market.
+        model = game.get('model') or {}
+        odds  = game.get('odds') or {}
+        omen_score = None
+        score_kind = 'omen'
+        hp, ho, ao = model.get('home_prob'), odds.get('home_best'), odds.get('away_best')
+        if hp is not None and ho is not None and ao is not None:
+          factors_json = json.dumps(model.get('factors') or [])
+          omen_detail = _omen_score(hp, ho, ao, factors_json, sport=sport, detail=True)
+          line_move_pct = None
+          if sport in _PHANTOM_SPORTS:
+            open_h, open_a = odds.get('opening_home'), odds.get('opening_away')
+            if open_h and open_a:
+              vf_h_open, vf_a_open = _vig_free_implied(open_h, open_a)
+              if vf_h_open is not None:
+                fav_home   = hp >= 0.5
+                pick_open  = vf_h_open if fav_home else vf_a_open
+                pick_curr  = odds.get('home_implied') if fav_home else odds.get('away_implied')
+                if pick_curr is not None:
+                  line_move_pct = round((pick_curr - pick_open) * 100, 2)
+          omen_score, score_kind = _primary_score(omen_detail, sport, line_move_pct=line_move_pct)
+      else:
+        # Live/Final — pull the frozen pick + the frozen pre-game home_prob/
+        # odds/factors (never the game dict's current odds, which may have
+        # moved or gone off the board since kickoff).
+        gdate = _et_date(game.get('game_time_utc') or '')
+        stored = preds.get((gdate, home_name, away_name))
+        if not stored or not stored.rec_market:
+          continue
+        pick = {'market': stored.rec_market, 'side': stored.rec_side,
+                'abbr': stored.rec_abbr, 'label': stored.rec_label,
+                'edge': stored.rec_edge, 'kelly': stored.rec_kelly,
+                'amer_odds': stored.rec_amer_odds, 'ev_pct': stored.rec_ev_pct,
+                'pick_rank': stored.rec_pick_rank, 'pips': stored.rec_pips}
+        omen_score = None
+        score_kind = 'omen'
+        if stored.home_prob is not None and stored.home_odds and stored.away_odds:
+          omen_detail = _omen_score(stored.home_prob, stored.home_odds, stored.away_odds,
+                                     stored.factors_json or '[]', sport=sport, detail=True)
+          omen_score, score_kind = _primary_score(omen_detail, sport, line_move_pct=None)
+
       k_f = pick['kelly']
       if k_f >= 0.10:   k_label, k_cls = 'Strong', 'edge-pos'
       elif k_f >= 0.05: k_label, k_cls = 'Value',  'edge-pos'
       else:             k_label, k_cls = 'Lean',   'edge-neutral'
 
-      # Moneyline primary score — informative on every row regardless of
-      # which market earned the ★ (same convention as MLB's table), since
-      # it's read off the game's own home_prob/odds, not the picked market.
-      model = game.get('model') or {}
-      odds  = game.get('odds') or {}
-      omen_score = None
-      score_kind = 'omen'
-      hp, ho, ao = model.get('home_prob'), odds.get('home_best'), odds.get('away_best')
-      if hp is not None and ho is not None and ao is not None:
-        factors_json = json.dumps(model.get('factors') or [])
-        omen_detail = _omen_score(hp, ho, ao, factors_json, sport=sport, detail=True)
-        line_move_pct = None
-        if sport in _PHANTOM_SPORTS:
-          open_h, open_a = odds.get('opening_home'), odds.get('opening_away')
-          if open_h and open_a:
-            vf_h_open, vf_a_open = _vig_free_implied(open_h, open_a)
-            if vf_h_open is not None:
-              fav_home   = hp >= 0.5
-              pick_open  = vf_h_open if fav_home else vf_a_open
-              pick_curr  = odds.get('home_implied') if fav_home else odds.get('away_implied')
-              if pick_curr is not None:
-                line_move_pct = round((pick_curr - pick_open) * 100, 2)
-        omen_score, score_kind = _primary_score(omen_detail, sport, line_move_pct=line_move_pct)
+      # Final outcome, if graded — read off game['graded'] (already attached
+      # by _attach_graded_results, called before this in every route) rather
+      # than re-deriving win/loss here, so this always agrees with the
+      # Model Performance page. None for Preview/Live (no result yet).
+      outcome = None
+      if status == 'Final':
+        graded = (game.get('graded') or {}).get(pick['market'])
+        if graded is not None:
+          outcome = graded.get('won')
 
       # Sort key for the table below — the primary score, not edge (matches
       # MLB's own all_candidates/best_bets, which has always sorted this way).
@@ -7357,6 +7448,8 @@ def _edge_recommendations(days, sport, limit=15):
           'pips':         pick['pips'],
           'omen_score':   omen_score,
           'score_kind':   score_kind,
+          'status':       status,
+          'outcome':      outcome,
       })
 
   recommended.sort(key=lambda r: -(r['omen_score'] if r['omen_score'] is not None else -1))
