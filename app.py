@@ -5817,6 +5817,12 @@ def mlb_schedule():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
+  try:
+    slate = slate_overview.build(schedule[0]['games'], 'mlb') if schedule else None
+  except Exception:
+    app.logger.exception('slate overview failed')
+    slate = None
+
   resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
                          bankroll=bankroll, kelly_cap=kelly_cap,
                          open_bets=mlb_bets, day_nav=day_nav,
@@ -5824,7 +5830,7 @@ def mlb_schedule():
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(mlb_bets)} Open MLB Bet{'s' if len(mlb_bets) != 1 else ''}",
-                         sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB'))
+                         sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB', slate=slate))
   return _set_last_sport_cookie(resp, 'MLB')
 
 def _splits_agg(rows):
@@ -7468,8 +7474,13 @@ def nhl_schedule():
   _mark_favorites(schedule, 'NHL')
   _match_open_bets_to_games(schedule, sport='NHL')
   recommended = _edge_recommendations(schedule, 'NHL')
+  try:
+    slate = slate_overview.build(schedule[0]['games'], 'nhl') if schedule else None
+  except Exception:
+    app.logger.exception('slate overview failed')
+    slate = None
   resp = make_response(render_template('nhl_schedule.html', schedule=schedule, subnav_sport='NHL',
-                         recommended=recommended, day_nav=day_nav))
+                         recommended=recommended, day_nav=day_nav, slate=slate))
   return _set_last_sport_cookie(resp, 'NHL')
 
 @app.route('/nhl/game/<game_id>')
@@ -7555,8 +7566,13 @@ def wnba_schedule():
   _mark_favorites(schedule, 'WNBA')
   _match_open_bets_to_games(schedule, sport='WNBA')
   recommended = _edge_recommendations(schedule, 'WNBA')
+  try:
+    slate = slate_overview.build(schedule[0]['games'], 'wnba') if schedule else None
+  except Exception:
+    app.logger.exception('slate overview failed')
+    slate = None
   resp = make_response(render_template('wnba_schedule.html', schedule=schedule, subnav_sport='WNBA',
-                         recommended=recommended, day_nav=day_nav))
+                         recommended=recommended, day_nav=day_nav, slate=slate))
   return _set_last_sport_cookie(resp, 'WNBA')
 
 @app.route('/wnba/game/<game_id>')
@@ -7613,6 +7629,16 @@ def nfl_schedule():
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
+  # Map + "at a glance" facts for just today's slate within the week (a
+  # bye day with nothing today just shows nothing, same as the other
+  # sports' daily pages) — never let it take the page down.
+  try:
+    _today_day = next((d for d in week_ctx['days'] if d.get('is_today')), None)
+    slate = slate_overview.build(_today_day['games'], 'nfl') if _today_day else None
+  except Exception:
+    app.logger.exception('slate overview failed')
+    slate = None
+
   resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
                          recommended=_edge_recommendations(week_ctx['days'], 'NFL'),
                          open_bets=nfl_bets,
@@ -7620,7 +7646,7 @@ def nfl_schedule():
                          open_stats=open_stats, odds_last_fetch=odds_last_fetch,
                          odds_next_fetch=odds_next_fetch,
                          heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
-                         sync_next='/nfl'))
+                         sync_next='/nfl', slate=slate))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/game/<game_id>')

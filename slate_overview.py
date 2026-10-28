@@ -69,6 +69,21 @@ def _games_played(team):
     return (team.get('wins') or 0) + (team.get('losses') or 0)
 
 
+def _rest_days(team):
+    """team['rest_days'] everywhere except MLB, which nests it under
+    schedule_fatigue instead of exposing it on the team dict directly."""
+    rd = team.get('rest_days')
+    if rd is None:
+        rd = (team.get('schedule_fatigue') or {}).get('rest_days')
+    return rd
+
+
+def _game_id(g):
+    """g['game_id'] everywhere except MLB, which calls its primary id
+    game_pk instead."""
+    return g.get('game_id') or g.get('game_pk')
+
+
 def _win_pct(team):
     gp = _games_played(team)
     return (team.get('wins') or 0) / gp if gp else None
@@ -194,15 +209,16 @@ def _fact_back_to_back(games):
     for g in games:
         for side, other in (('away', 'home'), ('home', 'away')):
             t, o = g[side], g[other]
-            if t.get('rest_days') == 1:
+            if _rest_days(t) == 1:
                 tired.append((t, o))
     if not tired:
         return None
     if len(tired) == 1:
         t, o = tired[0]
         detail = '2nd night of a back-to-back'
-        if (o.get('rest_days') or 0) >= 2:
-            detail += f" · {_abbr(o)} is rested ({o['rest_days']} days)"
+        o_rest = _rest_days(o)
+        if (o_rest or 0) >= 2:
+            detail += f" · {_abbr(o)} is rested ({o_rest} days)"
         return {'label': 'BACK-TO-BACK', 'title': _abbr(t), 'detail': detail}
     return {'label': 'BACK-TO-BACKS',
             'title': ' · '.join(_abbr(t) for t, _ in tired[:5]),
@@ -310,9 +326,9 @@ def build_markers(games, sport='nba'):
             y += 2.4
         markers.append({
             '_x': x, '_y': y,
-            'id': str(g.get('game_id')),
+            'id': str(_game_id(g)),
             'game_key': g.get('game_key'),
-            'href': f"/{sport}/game/{g.get('game_id')}",
+            'href': f"/{sport}/game/{_game_id(g)}",
             'status': g.get('status'),
             'utc': g.get('game_time_utc'),
             'tz': venue['tz'],

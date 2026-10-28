@@ -144,7 +144,70 @@ _NBA_ALIASES = {
     'PHO': 'PHX', 'SAS': 'SA', 'UTA': 'UTAH', 'WAS': 'WSH',
 }
 
-_BY_SPORT = {'nfl': NFL_TEAMS, 'mlb': MLB_TEAMS, 'nba': NBA_TEAMS}
+# NHL rows are keyed by the official NHL API's own abbreviation (what
+# nhl_api.py's team dicts carry as team['abbrev'] — bridged from ESPN's
+# shorter spellings via _ESPN_TO_NHL_ABBREV in nhl_api.py before it ever
+# reaches here, so this table never sees 'NJ'/'LA'/'SJ'/'TB'). Arizona's
+# relocation means there's no 'ARI' row — Utah's franchise plays as 'UTA'.
+NHL_TEAMS = {
+    'ANA': ('Anaheim, CA',         33.8078, -117.8765, 'ice', True, 'America/Los_Angeles'),
+    'BOS': ('Boston, MA',          42.3662,  -71.0621, 'ice', True, 'America/New_York'),
+    'BUF': ('Buffalo, NY',         42.8750,  -78.8769, 'ice', True, 'America/New_York'),
+    'CGY': ('Calgary, AB',         51.0375, -114.0519, 'ice', True, 'America/Edmonton'),
+    'CAR': ('Raleigh, NC',         35.8033,  -78.7219, 'ice', True, 'America/New_York'),
+    'CHI': ('Chicago, IL',         41.8807,  -87.6742, 'ice', True, 'America/Chicago'),
+    'COL': ('Denver, CO',          39.7487, -105.0077, 'ice', True, 'America/Denver'),
+    'CBJ': ('Columbus, OH',        39.9692,  -83.0061, 'ice', True, 'America/New_York'),
+    'DAL': ('Dallas, TX',          32.7905,  -96.8103, 'ice', True, 'America/Chicago'),
+    'DET': ('Detroit, MI',         42.3411,  -83.0553, 'ice', True, 'America/Detroit'),
+    'EDM': ('Edmonton, AB',        53.5469, -113.4973, 'ice', True, 'America/Edmonton'),
+    'FLA': ('Sunrise, FL',         26.1584,  -80.3256, 'ice', True, 'America/New_York'),
+    'LAK': ('Los Angeles, CA',     34.0430, -118.2673, 'ice', True, 'America/Los_Angeles'),
+    'MIN': ('St. Paul, MN',        44.9447,  -93.1011, 'ice', True, 'America/Chicago'),
+    'MTL': ('Montreal, QC',        45.4961,  -73.5693, 'ice', True, 'America/Toronto'),
+    'NSH': ('Nashville, TN',       36.1593,  -86.7785, 'ice', True, 'America/Chicago'),
+    'NJD': ('Newark, NJ',          40.7336,  -74.1711, 'ice', True, 'America/New_York'),
+    'NYI': ('Elmont, NY',          40.7230,  -73.5872, 'ice', True, 'America/New_York'),
+    'NYR': ('New York, NY',        40.7505,  -73.9934, 'ice', True, 'America/New_York'),
+    'OTT': ('Ottawa, ON',          45.2969,  -75.9272, 'ice', True, 'America/Toronto'),
+    'PHI': ('Philadelphia, PA',    39.9012,  -75.1720, 'ice', True, 'America/New_York'),
+    'PIT': ('Pittsburgh, PA',      40.4395,  -79.9892, 'ice', True, 'America/New_York'),
+    'SJS': ('San Jose, CA',        37.3327, -121.9012, 'ice', True, 'America/Los_Angeles'),
+    'SEA': ('Seattle, WA',         47.6221, -122.3540, 'ice', True, 'America/Los_Angeles'),
+    'STL': ('St. Louis, MO',       38.6266,  -90.2026, 'ice', True, 'America/Chicago'),
+    'TBL': ('Tampa, FL',           27.9427,  -82.4518, 'ice', True, 'America/New_York'),
+    'TOR': ('Toronto, ON',         43.6435,  -79.3791, 'ice', True, 'America/Toronto'),
+    'UTA': ('Salt Lake City, UT',  40.7683, -111.9011, 'ice', True, 'America/Denver'),
+    'VAN': ('Vancouver, BC',       49.2778, -123.1089, 'ice', True, 'America/Vancouver'),
+    'VGK': ('Las Vegas, NV',       36.1028, -115.1784, 'ice', True, 'America/Los_Angeles'),
+    'WSH': ('Washington, DC',      38.8981,  -77.0209, 'ice', True, 'America/New_York'),
+    'WPG': ('Winnipeg, MB',        49.8926,  -97.1435, 'ice', True, 'America/Winnipeg'),
+}
+
+# WNBA rows are keyed by ESPN's WNBA abbreviation (what wnba_api.py's team
+# dicts carry as team['abbrev']/team['abbr'] — same ESPN basketball
+# scoreboard convention as NBA, but a different team set, so this is NOT
+# the same table as NBA_TEAMS: no CHA/DET/MEM/etc., and includes the two
+# 2026 expansion franchises (Portland, Toronto).
+WNBA_TEAMS = {
+    'ATL': ('College Park, GA',    33.6358,  -84.4461, 'hardwood', True, 'America/New_York'),
+    'CHI': ('Chicago, IL',         41.8534,  -87.6192, 'hardwood', True, 'America/Chicago'),
+    'CON': ('Uncasville, CT',      41.4932,  -72.0979, 'hardwood', True, 'America/New_York'),
+    'DAL': ('Arlington, TX',       32.7297,  -97.1081, 'hardwood', True, 'America/Chicago'),
+    'GS':  ('San Francisco, CA',   37.7680, -122.3877, 'hardwood', True, 'America/Los_Angeles'),
+    'IND': ('Indianapolis, IN',    39.7640,  -86.1555, 'hardwood', True, 'America/Indiana/Indianapolis'),
+    'LV':  ('Las Vegas, NV',       36.0908, -115.1719, 'hardwood', True, 'America/Los_Angeles'),
+    'LA':  ('Los Angeles, CA',     34.0430, -118.2673, 'hardwood', True, 'America/Los_Angeles'),
+    'MIN': ('Minneapolis, MN',     44.9795,  -93.2761, 'hardwood', True, 'America/Chicago'),
+    'NY':  ('Brooklyn, NY',        40.6826,  -73.9754, 'hardwood', True, 'America/New_York'),
+    'PHX': ('Phoenix, AZ',         33.4457, -112.0712, 'hardwood', True, 'America/Phoenix'),
+    'POR': ('Portland, OR',        45.5316, -122.6668, 'hardwood', True, 'America/Los_Angeles'),
+    'SEA': ('Seattle, WA',         47.6221, -122.3540, 'hardwood', True, 'America/Los_Angeles'),
+    'TOR': ('Toronto, ON',         43.6359,  -79.3617, 'hardwood', True, 'America/Toronto'),
+    'WSH': ('Washington, DC',      38.8277,  -76.9856, 'hardwood', True, 'America/New_York'),
+}
+
+_BY_SPORT = {'nfl': NFL_TEAMS, 'mlb': MLB_TEAMS, 'nba': NBA_TEAMS, 'nhl': NHL_TEAMS, 'wnba': WNBA_TEAMS}
 
 
 def get(abbr, sport='nfl'):
