@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Whispers — Dead Money{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+
+<div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
+    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}</span>
+    <h1 style="margin:0;">Whispers</h1>
+    <p class="small" style="margin:2px 0 0;">Everything that moved today: scores, lines, injuries, news, model flags.</p>
+</div>
+
+{% if items %}
+<div class="sport-chip-bar" id="whispers-type-filter">
+    <button type="button" class="sport-chip sport-chip-active" data-filter-type="ALL" onclick="whispersFilterByType('ALL', this)">All <span class="sport-chip-count">{{ items | length }}</span></button>
+    {% for t in items | map(attribute='type') | unique | list %}
+    <button type="button" class="sport-chip" data-filter-type="{{ t }}" onclick="whispersFilterByType('{{ t }}', this)">{{ t | title }} <span class="sport-chip-count">{{ items | selectattr('type', 'equalto', t) | list | length }}</span></button>
+    {% endfor %}
+</div>
+
+<ol class="card whisper-list" id="whisper-list" style="list-style:none; margin:0; padding:4px 0;">
+{% for w in items %}
+<li class="whisper-row" data-whisper-type="{{ w.type }}">
+    <span class="whisper-type whisper-type-{{ w.type | lower }}">{{ w.type }}</span>
+    <span class="whisper-body">
+        <span class="whisper-meta">
+            {% if w.sport %}<span class="whisper-sport">{{ w.sport }}</span>{% endif %}
+            {% if w.game %}{% if w.href %}<a href="{{ w.href }}" class="whisper-game">{{ w.game }}</a>{% else %}<span class="whisper-game">{{ w.game }}</span>{% endif %}{% endif %}
+        </span>
+        <span class="whisper-text">{{ w.text }}</span>
+    </span>
+</li>
+{% endfor %}
+</ol>
+{% else %}
+<div class="card"><p class="small" style="margin:0;">Dead quiet. Nothing's moved yet today.</p></div>
+{% endif %}
+
+</div>
+<script>
+function whispersFilterByType(type, btn) {
+    document.querySelectorAll('#whispers-type-filter .sport-chip').forEach(function (c) { c.classList.remove('sport-chip-active'); });
+    btn.classList.add('sport-chip-active');
+    document.querySelectorAll('#whisper-list .whisper-row').forEach(function (row) {
+        row.style.display = (type === 'ALL' || row.getAttribute('data-whisper-type') === type) ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

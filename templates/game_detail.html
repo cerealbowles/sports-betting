@@ -3,11 +3,35 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-.gdp { --gdp-bg:#0D0E16; --gdp-surface:#151724; --gdp-surface2:#1B1E2E; --gdp-surface3:#11131E;
-       --gdp-border:#272B3F; --gdp-text:#EEF0F6; --gdp-muted:#A3A8BF; --gdp-dim:#8C91AB;
-       --gdp-good:#8EE07A; --gdp-amber:#F5C04E; --gdp-bad:#FF7A7A;
+/* Aliased to the app-wide Dead Money tokens (static/styles.css :root)
+   instead of its own standalone dark palette — this page used to drift
+   visually from the rest of the app (lighter blue-black vs the app's
+   purple-black, its own green/amber/red vs the shared win/orange/loss).
+   Keeping the --gdp-* names (so none of the rules below have to change)
+   but pointing them at the real tokens unifies the look without touching
+   any of this file's layout/JS. */
+.gdp { --gdp-bg:var(--bg); --gdp-surface:var(--bg-card); --gdp-surface2:var(--bg-card-2); --gdp-surface3:var(--bg-input);
+       --gdp-border:var(--border); --gdp-text:var(--text); --gdp-muted:var(--silver); --gdp-dim:var(--text-muted);
+       --gdp-good:var(--win); --gdp-amber:var(--orange); --gdp-bad:var(--loss);
        background:var(--gdp-bg); color:var(--gdp-text); font-variant-numeric:tabular-nums;
        margin:0; padding:16px; box-sizing:border-box; }
+.gdp .gdp-team-name, .gdp .gdp-section-head span:first-child { font-family:var(--font-display); font-weight:400; letter-spacing:0.3px; }
+.gdp .gdp-team-name { font-size:19px; }
+.gdp .gdp-kickoff, .gdp .gdp-pick-val, .gdp .gdp-score { font-family:var(--font-cond); }
+.gdp .gdp-pick-price b, .gdp .price, .gdp .gdp-vgrid b, .gdp .gdp-pill { font-family:var(--font-mono); }
+.gdp .gdp-score {
+    display:flex; align-items:baseline; justify-content:center; gap:10px;
+    font-size:44px; font-weight:600; line-height:1; margin:2px 0;
+}
+.gdp .gdp-score .lead { color:var(--text); }
+.gdp .gdp-score .trail { color:var(--text-muted); }
+.gdp .gdp-score-sep { font-size:22px; color:var(--text-muted); align-self:center; }
+.gdp .gdp-live-badge {
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; font-weight:800; letter-spacing:0.08em; color:var(--orange);
+    text-transform:uppercase;
+}
+.gdp .gdp-live-dot { width:7px; height:7px; border-radius:50%; background:var(--orange); animation: live-dot-pulse 1.6s ease-in-out infinite; }
 .gdp a { color: var(--gdp-muted); text-decoration:none; }
 .gdp .gdp-topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .gdp .gdp-back { display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:14px; }
@@ -180,7 +204,16 @@
     </div>
 
     <div class="gdp-center">
+      {% if game and game.status in ('Live', 'Final') and game.away.score is not none and game.home.score is not none %}
+      <span class="gdp-live-badge">{% if game.status == 'Live' %}<span class="gdp-live-dot"></span>Live{% else %}Final{% endif %}</span>
+      <div class="gdp-score">
+        <span class="{{ 'lead' if game.away.score > game.home.score else 'trail' }}">{{ game.away.score }}</span>
+        <span class="gdp-score-sep">–</span>
+        <span class="{{ 'lead' if game.home.score > game.away.score else 'trail' }}">{{ game.home.score }}</span>
+      </div>
+      {% else %}
       <div class="gdp-kickoff game-time" data-utc="{{ detail.game.kickoff_utc }}">—</div>
+      {% endif %}
       <div class="gdp-venue">{{ detail.game.venue }}{% if detail.game.weather %} · {{ detail.game.weather.temp }}°F{% if detail.game.weather.gust_mph %} · Gust {{ detail.game.weather.gust_mph }}mph{% endif %}{% if detail.game.weather.precip_pct %} · {{ detail.game.weather.precip_pct }}% rain{% endif %}{% endif %}</div>
       <div class="gdp-pills">
         {% if detail.fanduel.spread.home.line is not none %}<span class="gdp-pill">{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span>{% endif %}

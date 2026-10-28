@@ -2810,6 +2810,93 @@ body.embed-mode .container { padding-bottom: 0; }
 .omen-low    { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 .omen-skip   { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 
+/* ── Today hub — live scoreboard strip ──
+   Cross-sport "what's live right now" row, fed by all_games_today/
+   live_games_today (app.py _rebuild_hub_cache) — real score + clock pulled
+   straight from each sport's own schedule data, not a separate fetch. */
+.live-strip {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    margin-bottom: 14px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.live-strip::-webkit-scrollbar { display: none; }
+.live-strip-card {
+    flex: 0 0 182px;
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    text-decoration: none; color: var(--text);
+    transition: border-color 0.15s ease;
+}
+.live-strip-card.has-edge { border-color: var(--border-warn); background: var(--card-2nd); }
+.live-strip-card:hover { border-color: var(--border-strong); }
+.live-strip-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.64rem; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+}
+.live-strip-league { color: var(--text-muted); }
+.live-strip-clock { display: flex; align-items: center; gap: 4px; color: var(--orange); white-space: nowrap; }
+.live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); flex-shrink: 0; animation: live-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes live-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-strip-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.live-strip-team { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 800; font-size: 0.85rem; }
+.live-strip-team img { width: 16px; height: 16px; object-fit: contain; flex-shrink: 0; }
+.live-strip-abbr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-strip-score { font-family: var(--font-mono); font-weight: 600; font-size: 0.95rem; color: var(--text-muted); }
+.live-strip-score.lead { color: var(--text); }
+.live-strip-bases { position: relative; width: 30px; height: 22px; margin: 0 auto; flex-shrink: 0; }
+.live-strip-base { position: absolute; width: 7px; height: 7px; border: 1.5px solid var(--border-strong); transform: rotate(45deg); }
+.live-strip-base.on { border-color: var(--orange); background: var(--orange); }
+.live-strip-base.b1 { right: 1px; bottom: 4px; }
+.live-strip-base.b2 { left: 50%; top: 0; margin-left: -3.5px; }
+.live-strip-base.b3 { left: 1px; bottom: 4px; }
+.live-strip-edge { font-size: 0.66rem; font-weight: 700; color: var(--win); }
+
+/* ── Stats — Power Board ── */
+.power-board-table { width:100%; border-collapse:collapse; font-size:0.84rem; margin-top:10px; }
+.power-board-table th {
+    text-align:left; padding:8px; color:var(--text-muted); font-size:0.66rem;
+    font-weight:700; text-transform:uppercase; letter-spacing:0.4px;
+    border-bottom:1px solid var(--border);
+}
+.power-board-table td { padding:9px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.power-board-table tr:last-child td { border-bottom:0; }
+.form-pip {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:17px; height:17px; border-radius:4px; font-size:9px; font-weight:800;
+}
+.form-pip-w { background:rgba(168,240,122,0.14); color:var(--win); }
+.form-pip-l { background:rgba(255,178,122,0.1); color:var(--loss); }
+
+/* ── Whispers feed ── */
+.whisper-row {
+    display:flex; gap:12px; padding:12px 16px;
+    border-top:1px solid var(--border);
+}
+.whisper-row:first-child { border-top:0; }
+.whisper-type {
+    flex:0 0 52px; font-size:0.6rem; font-weight:800; letter-spacing:0.08em;
+    padding-top:2px; white-space:nowrap;
+}
+.whisper-type-live   { color:var(--orange); }
+.whisper-type-final  { color:var(--text-muted); }
+.whisper-type-line   { color:var(--warn-text); }
+.whisper-type-injury { color:var(--loss); }
+.whisper-type-model  { color:var(--win); }
+.whisper-type-news   { color:var(--silver); }
+.whisper-body { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1; }
+.whisper-meta { display:flex; align-items:center; gap:8px; font-size:0.68rem; font-weight:700; color:var(--text-muted); }
+.whisper-sport { letter-spacing:0.06em; }
+.whisper-game { color:var(--silver); text-decoration:none; }
+.whisper-game:hover { color:var(--text); }
+.whisper-text { font-size:0.86rem; line-height:1.45; color:var(--text); }
+
 /* ── Today hub — per-sport summary cards ── */
 .hub-sport-grid {
     display: grid;

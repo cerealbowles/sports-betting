@@ -18,9 +18,46 @@
 <div class="schedule-body">
 
 <div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
-    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}</span>
+    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}{% if live_games_today %} · <span style="color:var(--orange);">{{ live_games_today | length }} live</span>{% endif %}</span>
     <h1 style="margin:0;">{{ _flavor }}</h1>
 </div>
+
+{% if live_games_today %}
+<div class="live-strip" aria-label="Live scores">
+{% for g in live_games_today %}
+<a class="live-strip-card{% if g.edge_pick %} has-edge{% endif %}" href="{{ g.href or '#' }}">
+    <div class="live-strip-head">
+        <span class="live-strip-league">{{ g.icon }} {{ g.sport }}</span>
+        <span class="live-strip-clock"><span class="live-dot"></span>{{ g.live_clock or 'Live' }}</span>
+    </div>
+    <div class="live-strip-row">
+        <span class="live-strip-team">
+            {% if g.away_logo %}<img src="{{ g.away_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
+            <span class="live-strip-abbr">{{ g.away_abbr }}</span>
+        </span>
+        <span class="live-strip-score{% if g.away_score is not none and g.home_score is not none and g.away_score > g.home_score %} lead{% endif %}">{{ g.away_score if g.away_score is not none else '–' }}</span>
+    </div>
+    <div class="live-strip-row">
+        <span class="live-strip-team">
+            {% if g.home_logo %}<img src="{{ g.home_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
+            <span class="live-strip-abbr">{{ g.home_abbr }}</span>
+        </span>
+        <span class="live-strip-score{% if g.away_score is not none and g.home_score is not none and g.home_score > g.away_score %} lead{% endif %}">{{ g.home_score if g.home_score is not none else '–' }}</span>
+    </div>
+    {% if g.bases %}
+    <div class="live-strip-bases" role="img" aria-label="Runners on base">
+        <span class="live-strip-base b2{{ ' on' if g.bases.second }}"></span>
+        <span class="live-strip-base b3{{ ' on' if g.bases.third }}"></span>
+        <span class="live-strip-base b1{{ ' on' if g.bases.first }}"></span>
+    </div>
+    {% endif %}
+    {% if g.edge_pick %}
+    <span class="live-strip-edge">● Your bet: {{ g.edge_pick.pick_label }}</span>
+    {% endif %}
+</a>
+{% endfor %}
+</div>
+{% endif %}
 
 {% if top_picks %}
 {% set _lock = top_picks[0] %}
@@ -96,8 +133,11 @@
       {% for g in s.all_games[:8] %}
         <li>
             <span class="hub-pick-matchup">{{ g.matchup }}</span>
+            {% if g.status in ('Final', 'Live') and g.away_score is not none and g.home_score is not none %}
+            <span class="mono" style="font-size:0.72rem; color:var(--silver); margin-right:4px;">{{ g.away_score }}–{{ g.home_score }}</span>
+            {% endif %}
             {% if g.status == 'Final' %}<span class="hub-pick-label" style="color:var(--text-muted);">Final</span>
-            {% elif g.status == 'Live' %}<span class="hub-pick-label" style="color:var(--win);">Live</span>
+            {% elif g.status == 'Live' %}<span class="hub-pick-label" style="color:var(--win);">{{ g.live_clock or 'Live' }}</span>
             {% elif g.game_time_utc %}<span class="hub-pick-label game-time" data-utc="{{ g.game_time_utc }}" style="color:var(--text-muted);">—</span>{% endif %}
         </li>
       {% endfor %}

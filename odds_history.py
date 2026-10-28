@@ -147,6 +147,45 @@ def record(sport, game_key, home_odds, away_odds, home_spread=None,
         pass
 
 
+def recent_moves(limit=20):
+    """Cross-sport feed of today's odds moves for the Whispers page — every
+    snapshot row recorded since midnight ET that is NOT a game's first
+    (opening) snapshot, newest first, with the previous values attached so
+    the caller can show "moved X -> Y" without a second round trip per row.
+    record() only writes a row when something actually changed, so every
+    non-opening row here already IS a move."""
+    since = _today_et_start_utc()
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                'SELECT sport, game_key, home_odds, away_odds, home_spread, '
+                'total_line, recorded_at FROM odds_snapshot '
+                'WHERE recorded_at >= ? ORDER BY recorded_at DESC LIMIT ?',
+                (since, limit * 4),
+            ).fetchall()
+            out = []
+            for sport, game_key, home_odds, away_odds, home_spread, total_line, recorded_at in rows:
+                prev = c.execute(
+                    'SELECT home_odds, away_odds, home_spread, total_line FROM odds_snapshot '
+                    'WHERE sport=? AND game_key=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1',
+                    (sport, game_key, recorded_at),
+                ).fetchone()
+                if not prev:
+                    continue  # this row WAS the opening snapshot, not a move
+                out.append({
+                    'sport': sport, 'game_key': game_key, 'recorded_at': recorded_at,
+                    'home_odds': home_odds, 'away_odds': away_odds,
+                    'prev_home_odds': prev[0], 'prev_away_odds': prev[1],
+                    'home_spread': home_spread, 'prev_home_spread': prev[2],
+                    'total_line': total_line, 'prev_total_line': prev[3],
+                })
+                if len(out) >= limit:
+                    break
+            return out
+    except Exception:
+        return []
+
+
 def save_pregame(sport, game_key, payload):
     """Overwrite the stored pre-game odds display payload for a game. Called on
     every pre-game refresh, so once a game starts (and callers stop saving) the

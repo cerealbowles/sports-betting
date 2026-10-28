@@ -59,6 +59,10 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
 _ET = ZoneInfo('America/New_York')
+# Matches the trailing hour-bucket odds_api._normalize appends to a
+# game_key (e.g. "..._2026-10-28T19") — stripped when odds_history's
+# game_key is turned into a human-readable matchup label (/whispers).
+_ODDS_GAME_KEY_HOUR_RE = re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
 
 # app.py
 # Simple Flask app for sports betting with Kelly criterion, open/closed bets and space to tweak formula using historical bets.
@@ -4374,22 +4378,55 @@ def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None):
     return result
 
 
-def _schedule_matchups(schedule):
-  """Flat list of {'matchup', 'game_time_utc', 'status'} for every game in a
-  schedule (list of {'games': [...]} day dicts) — used by the Today hub so a
-  sport with games but no qualifying pick still shows its actual slate
-  instead of just 'no picks'. Tolerates both abbr/abbrev key naming used
-  across the sport-specific *_api.py modules (MLB uses 'abbr', everyone
-  else 'abbrev')."""
+def _schedule_matchups(schedule, sport=None):
+  """Flat list of per-game summaries for every game in a schedule (list of
+  {'games': [...]} day dicts) — used by the Today hub so a sport with games
+  but no qualifying pick still shows its actual slate instead of just 'no
+  picks'. Tolerates both abbr/abbrev key naming used across the
+  sport-specific *_api.py modules (MLB uses 'abbr', everyone else
+  'abbrev').
+
+  Also carries live score/clock so the hub's unified game list can show
+  real in-progress state instead of just a status label — the same fields
+  each sport's own schedule-page card already renders from this same game
+  dict (inning_info/bases for MLB, live_clock for NHL; NFL/CFB/NBA/WNBA
+  schedule cards show only score + 'Live', so that's all we surface for
+  them too — nothing invented beyond what the app already displays
+  elsewhere). `game_id`/`game_pk` link straight to that sport's game-center
+  page, same path each sport's own card uses."""
   out = []
   for day in (schedule or []):
     for g in day.get('games', []):
       away = g.get('away') or {}
       home = g.get('home') or {}
+      game_id = g.get('game_pk') if sport == 'MLB' else g.get('game_id')
       out.append({
           'matchup':       f"{away.get('abbrev') or away.get('abbr') or ''} @ {home.get('abbrev') or home.get('abbr') or ''}",
+          'away_abbr':     away.get('abbrev') or away.get('abbr') or '',
+          'home_abbr':     home.get('abbrev') or home.get('abbr') or '',
+          'away_name':     away.get('name', ''),
+          'home_name':     home.get('name', ''),
+          'away_logo':     away.get('logo_url', ''),
+          'home_logo':     home.get('logo_url', ''),
           'game_time_utc': g.get('game_time_utc', ''),
           'status':        g.get('status', ''),
+          'away_score':    away.get('score'),
+          'home_score':    home.get('score'),
+          'live_clock':    g.get('inning_info') or g.get('live_clock') or '',
+          'bases':         g.get('bases'),
+          'href':          (f"/{sport.lower()}/game/{game_id}" if (sport and game_id) else ''),
+          # Tonight's Power Board (the /stats page) needs each side's record
+          # — NHL exposes wins/losses as rec_w/rec_l (+ rec_otl), everyone
+          # else as plain wins/losses. 'form' is only actually populated by
+          # MLB/NHL's own schedule builders today (see mlb_api.py:733,
+          # nhl_api.py:523) — NFL/NBA/WNBA/CFB leave it [] here, so it's
+          # shown when present and silently omitted otherwise.
+          'away_wins':     away.get('wins', away.get('rec_w')),
+          'away_losses':   away.get('losses', away.get('rec_l')),
+          'home_wins':     home.get('wins', home.get('rec_w')),
+          'home_losses':   home.get('losses', home.get('rec_l')),
+          'away_form':     (away.get('form') or [])[-5:],
+          'home_form':     (home.get('form') or [])[-5:],
       })
   return out
 
@@ -4420,7 +4457,7 @@ def _hub_sport_data(sport, icon, href, today_str):
         # this; the hub only needs to read what's already there.
         _attach_graded_results(schedule, 'MLB')
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
-        all_games = _schedule_matchups(schedule)
+        all_games = _schedule_matchups(schedule, sport='MLB')
         all_candidates = _mlb_candidates(schedule)
         best_bets = _mlb_best_bets(schedule, all_candidates)
         ranked = sorted(best_bets or all_candidates[:5], key=lambda b: -b['adj_edge'])
@@ -4473,7 +4510,7 @@ def _hub_sport_data(sport, icon, href, today_str):
         _stamp_dow(schedule, sport)
         _attach_graded_results(schedule, sport)
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
-        all_games = _schedule_matchups(schedule)
+        all_games = _schedule_matchups(schedule, sport=sport)
         recommended = _edge_recommendations(schedule, sport, limit=5)
         for r in recommended:
           g = r['game']
@@ -4543,9 +4580,26 @@ def _rebuild_hub_cache():
   unified_picks.sort(key=lambda p: -(p['omen_score'] if p['omen_score'] is not None else -1))
   unified_picks = unified_picks[:12]
 
+  # Cross-sport live scoreboard for the hub — every in-progress game across
+  # all 6 sports, newest/edge-flagged first, so "live stats on the home
+  # page" isn't scoped to whichever sport happens to have a pick tonight.
+  _edge_by_matchup = {p['matchup']: p for p in unified_picks}
+  all_games_today = []
+  for summary in sport_summaries:
+    for g in summary['all_games']:
+      pick = _edge_by_matchup.get(g['matchup'])
+      all_games_today.append({**g, 'sport': summary['sport'], 'icon': summary['icon'],
+                              'edge_pick': pick})
+  _status_rank = {'Live': 0, 'Scheduled': 1, 'Final': 2}
+  all_games_today.sort(key=lambda g: (
+      _status_rank.get(g['status'], 1),
+      0 if g['edge_pick'] else 1,
+      g['game_time_utc'] or ''))
+  live_games_today = [g for g in all_games_today if g['status'] == 'Live']
+
   today_display = _fmt(today, '%A, %B %-d')
 
-  _hub_cache['data'] = (sport_summaries, unified_picks, today_display)
+  _hub_cache['data'] = (sport_summaries, unified_picks, today_display, all_games_today, live_games_today)
   _hub_cache['ts'] = time.time()
   with _hub_refresh_lock:
     _hub_refreshing = False
@@ -4584,9 +4638,156 @@ def index():
     if not already_refreshing:
       threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
 
-  sport_summaries, unified_picks, today_display = _hub_cache['data']
+  sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _hub_cache['data']
   return render_template('today.html', today_display=today_display,
-                         sport_summaries=sport_summaries, top_picks=unified_picks)
+                         sport_summaries=sport_summaries, top_picks=unified_picks,
+                         all_games_today=all_games_today, live_games_today=live_games_today)
+
+
+def _ensure_hub_cache():
+  global _hub_refreshing
+  now = time.time()
+  if _hub_cache['data'] is None:
+    _rebuild_hub_cache()
+  elif (now - _hub_cache['ts']) >= _HUB_CACHE_TTL:
+    with _hub_refresh_lock:
+      already_refreshing = _hub_refreshing
+      _hub_refreshing = True
+    if not already_refreshing:
+      threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
+  return _hub_cache['data']
+
+
+@app.route('/stats')
+def stats_page():
+  """Tonight's cross-sport Power Board — every team playing today, grouped
+  by sport, with its W-L record and (where the schedule builder already
+  computes it — MLB/NHL, see mlb_api.py:733/nhl_api.py:523) recent form.
+
+  Deliberately scoped to TONIGHT's teams rather than full-league
+  standings: there is no full-league standings fetch anywhere in the
+  codebase for NFL/NBA/WNBA/CFB (each sport module only parses one team's
+  record at a time, per matchup, while building today's schedule — see
+  _parse_record/_record_to_wl in those modules), so a true 30/32/82-team
+  Power Board would need a brand-new per-sport standings endpoint call for
+  sports that don't play tonight too. Tonight's teams are already fully
+  built as part of the hub cache, so this reuses that for free and stays
+  honest about what data actually exists."""
+  _, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
+
+  teams_by_sport = {}
+  for g in all_games_today:
+    for side in ('away', 'home'):
+      abbr = g[f'{side}_abbr']
+      if not abbr:
+        continue
+      bucket = teams_by_sport.setdefault(g['sport'], {})
+      if abbr in bucket:
+        continue
+      bucket[abbr] = {
+          'abbr': abbr, 'name': g[f'{side}_name'], 'logo': g[f'{side}_logo'],
+          'wins': g[f'{side}_wins'], 'losses': g[f'{side}_losses'],
+          'form': g[f'{side}_form'], 'matchup': g['matchup'], 'href': g['href'],
+      }
+
+  def _pct(t):
+    w, l = t['wins'], t['losses']
+    if w is None or l is None or (w + l) == 0:
+      return -1.0
+    return w / (w + l)
+
+  sport_boards = []
+  for sport, icon, _endpoint in _HUB_SPORTS:
+    teams = sorted(teams_by_sport.get(sport, {}).values(), key=_pct, reverse=True)
+    if teams:
+      sport_boards.append({'sport': sport, 'icon': icon, 'teams': teams})
+
+  return render_template('stats.html', today_display=today_display, sport_boards=sport_boards,
+                         top_picks=unified_picks)
+
+
+@app.route('/whispers')
+def whispers_page():
+  """Cross-sport feed of what moved today — the real, already-ingested
+  signals this codebase has, merged and sorted newest first. Nothing here
+  is fabricated: a quiet day for a given signal just contributes nothing.
+
+  Sources: live/final scores + model edge flags (free — already in the hub
+  cache), odds moves (odds_history.recent_moves — a real changes-only log),
+  news (NewsSentiment) and injury-status changes (InjuryStatus.updated_at,
+  the closest thing to a change timestamp that table has — see its
+  docstring above)."""
+  _summaries, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
+  today_str = datetime.now(_ET).strftime('%Y-%m-%d')
+  now_utc = datetime.now(timezone.utc)
+  items = []
+
+  for g in all_games_today:
+    if g['status'] == 'Live':
+      score = (f"{g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']} — "
+               f"{g['live_clock']}" if g['live_clock'] else f"{g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']}.")
+      items.append({'ts': now_utc, 'type': 'LIVE', 'sport': g['sport'],
+                    'game': g['matchup'], 'href': g['href'], 'text': score})
+    elif g['status'] == 'Final' and g['away_score'] is not None and g['home_score'] is not None:
+      try:
+        ts = datetime.fromisoformat(g['game_time_utc'].replace('Z', '+00:00')) if g['game_time_utc'] else now_utc
+      except ValueError:
+        ts = now_utc
+      items.append({'ts': ts, 'type': 'FINAL', 'sport': g['sport'], 'game': g['matchup'],
+                    'href': g['href'],
+                    'text': f"Final: {g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']}."})
+
+  for p in unified_picks[:8]:
+    # MLB's pick_label is a bare team abbr ("MIL") so the market needs
+    # spelling out; everyone else's already says it ("TOR ML", "SEA +1.5"),
+    # so appending "(ml)" again would just be noise.
+    mkt_suffix = '' if p['market'].lower() in p['pick_label'].lower() else f" ({p['market']})"
+    items.append({'ts': now_utc, 'type': 'MODEL', 'sport': p['sport'], 'game': p['matchup'],
+                  'href': p['href'],
+                  'text': f"Model flags {p['pick_label']}{mkt_suffix} at "
+                          f"{'+' if p['edge'] > 0 else ''}{p['edge']}% edge — {p['k_label']}."})
+
+  import odds_history as _oh
+  _odds_key_to_sport = {v: k for k, v in _SPORT_ODDS_KEY.items()}
+  for m in _oh.recent_moves(limit=20):
+    try:
+      ts = datetime.fromisoformat(m['recorded_at'])
+    except ValueError:
+      continue
+    sport = _odds_key_to_sport.get(m['sport'], m['sport'])
+    # game_key is "away team_home team_YYYY-MM-DDTHH" (odds_api._normalize
+    # output) — strip the trailing hour bucket and title-case the rest for
+    # a readable-enough matchup label without a second lookup.
+    label = _ODDS_GAME_KEY_HOUR_RE.sub('', m['game_key']).replace('_', ' @ ').title()
+    if m['home_spread'] != m['prev_home_spread'] and m['home_spread'] is not None:
+      text = f"{label}: spread moved {m['prev_home_spread']} → {m['home_spread']}."
+    elif m['total_line'] != m['prev_total_line'] and m['total_line'] is not None:
+      text = f"{label}: total moved {m['prev_total_line']} → {m['total_line']}."
+    else:
+      text = f"{label}: moneyline moved {m['prev_away_odds']}/{m['prev_home_odds']} → {m['away_odds']}/{m['home_odds']}."
+    items.append({'ts': ts, 'type': 'LINE', 'sport': sport, 'game': label, 'href': '', 'text': text})
+
+  news = (NewsSentiment.query.filter(NewsSentiment.date == today_str)
+          .order_by(NewsSentiment.published_at.desc(), NewsSentiment.created_at.desc()).limit(15).all())
+  for n in news:
+    ts = n.published_at or n.created_at
+    if ts and ts.tzinfo is None:
+      ts = ts.replace(tzinfo=timezone.utc)
+    items.append({'ts': ts or now_utc, 'type': 'NEWS', 'sport': n.sport, 'game': '', 'href': '',
+                  'text': f"{n.player_name + ': ' if n.player_name else ''}{n.headline}"})
+
+  injuries = (InjuryStatus.query.filter(InjuryStatus.date == today_str)
+              .order_by(InjuryStatus.updated_at.desc()).limit(15).all())
+  for inj in injuries:
+    ts = inj.updated_at
+    if ts and ts.tzinfo is None:
+      ts = ts.replace(tzinfo=timezone.utc)
+    items.append({'ts': ts or now_utc, 'type': 'INJURY', 'sport': inj.sport, 'game': '', 'href': '',
+                  'text': f"{inj.player_name} ({inj.position or inj.sport}) — {inj.status}."})
+
+  items.sort(key=lambda x: x['ts'], reverse=True)
+  return render_template('whispers.html', today_display=today_display, items=items[:40])
+
 
 @app.route('/history')
 def history():
