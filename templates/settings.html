@@ -1,152 +1,170 @@
 {% extends 'base.html' %}
 {% block title %}Settings · Dead Money{% endblock %}
 {% block content %}
-<div class="card" style="max-width:520px;margin:0 auto;">
-  <h2 style="margin-bottom:20px;font-size:1.1rem;">Settings</h2>
+{% set cap = (settings.percent_bankroll or 0) * 100 %}
+{% set cap_cls = 'good' if cap <= 5 else ('warn' if cap <= 10 else 'bad') %}
+{% set storage_old = odds_stats and odds_stats.age_days is not none and odds_stats.age_days >= 90 %}
+<div class="schedule-body">
 
-  <form method="post" action="{{ url_for('save_settings') }}">
+<div class="hub-greeting">
+  <div>
+    <span class="hub-kicker">Bankroll · Alerts · Teams · Data</span>
+    <h1 class="hub-title">The Crypt Keeper</h1>
+  </div>
+</div>
 
-    <!-- Bankroll ─────────────────────────────────────────── -->
-    <div style="margin-bottom:24px;">
-      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Bankroll</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <label style="display:block;">
-          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Amount ($)</div>
-          <input type="number" name="bankroll" value="{{ settings.bankroll }}" min="0" step="0.01"
-                 style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.85rem;">
-        </label>
-        <label style="display:block;">
-          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Kelly cap (%)</div>
-          <input type="number" name="percent_bankroll" value="{{ (settings.percent_bankroll * 100) | round(1) }}" min="0" max="100" step="0.1"
-                 style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.85rem;">
-        </label>
-      </div>
-      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:8px;line-height:1.5;">
-        Kelly cap limits any single bet to this % of the bankroll regardless of the Kelly fraction. 2–5% is typical.
-      </p>
-    </div>
+<section class="set-attn" aria-label="Needs attention">
+  {% if cap > 5 %}
+  <a href="#sizing" class="set-attn-card bad"><span class="gy-tag bad">Risk</span><span><strong>Kelly cap is <span data-cap-label>{{ cap | round(1) | string | replace('.0', '') }}%</span>.</strong> <span class="muted">The app's own guidance is 2–5%.</span></span></a>
+  {% endif %}
+  <a href="#data" class="set-attn-card warn"><span class="gy-tag warn">Mismatch</span><span><strong>Odds come from DraftKings</strong> <span class="muted">(via ESPN), but you bet FanDuel.</span></span></a>
+  {% if storage_old %}
+  <a href="#data" class="set-attn-card"><span class="gy-tag">Storage</span><span><strong>{{ odds_stats.age_days }} days of line snapshots.</strong> <span class="muted">Past the 90-day roll-up point.</span></span></a>
+  {% endif %}
+</section>
 
-    <!-- Notifications ────────────────────────────────────── -->
-    {% set _in = "width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;" %}
-    {% set _btn = "font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;" %}
-    <div style="margin-bottom:24px;">
-      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Notifications · Discord channels</div>
-      <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 12px;line-height:1.5;">
-        One webhook per channel. A channel left blank falls back to Default, so alerts keep flowing while you set them up.<br>
-        To get a webhook URL: Discord channel → Edit → Integrations → Webhooks → New Webhook → Copy URL.
-      </p>
-      {% for key, ch in discord_channels.items() %}
-      <div style="margin-bottom:12px;">
-        <label style="display:block;margin-bottom:6px;">
-          <div style="font-size:0.75rem;font-weight:700;margin-bottom:2px;">{{ ch.label }}</div>
-          <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:5px;">{{ ch.hint }}</div>
-          <input type="url" class="webhook-input" data-channel="{{ key }}"
-                 name="{{ 'discord_webhook_url' if key == 'default' else 'discord_channel_' ~ key }}"
-                 {% if key == 'default' %}id="webhook-input"{% endif %}
-                 value="{{ channel_urls.get(key, '') }}"
-                 placeholder="{{ 'https://discord.com/api/webhooks/…' if key == 'default' else 'Blank = use Default' }}"
-                 style="{{ _in }}">
+<div class="set-cols">
+  <nav class="set-index" aria-label="Settings sections">
+    <a href="#sizing">Bankroll &amp; sizing{% if cap > 5 %}<span class="dot {{ cap_cls }}" data-cap-dot></span>{% endif %}</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#teams">Favorite teams</a>
+    <a href="#data">Data &amp; odds<span class="dot warn"></span></a>
+    <a href="#maint">Grave digging</a>
+  </nav>
+
+  <form class="set-main" id="settings-form" method="post" action="{{ url_for('save_settings') }}">
+
+    <section id="sizing" class="card set-card" aria-labelledby="sz-h">
+      <h2 id="sz-h" class="gy-h2">Bankroll &amp; sizing</h2>
+      <p class="set-sub">Kelly sizing is bankroll-wide, not per sport.</p>
+      <div class="set-sizing">
+        <label class="set-bankroll">
+          <span class="gy-kpi-label">Bankroll ($)</span>
+          <input type="number" name="bankroll" id="set-bankroll" value="{{ settings.bankroll }}" min="0" step="0.01" class="mono">
         </label>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <button type="button" class="test-webhook" data-channel="{{ key }}" style="{{ _btn }}">Send test</button>
-          <span class="test-result" data-channel="{{ key }}" style="font-size:0.72rem;"></span>
+        <div class="set-cap">
+          <label for="set-cap" class="set-cap-label"><span class="gy-kpi-label">Kelly cap</span><span class="mono set-cap-val {{ cap_cls }}" id="set-cap-val">{{ cap | round(1) }}%</span></label>
+          <input id="set-cap" type="range" name="percent_bankroll" min="1" max="25" step="0.5" value="{{ cap | round(1) }}">
+          <div class="set-cap-scale mono"><span>1%</span><span class="band" aria-hidden="true"></span><span class="guide">2–5% guided</span><span class="end">25%</span></div>
         </div>
       </div>
+      <div class="set-cap-stats">
+        <div class="set-mini"><span class="gy-kpi-label">Max single bet</span><span class="mono {{ cap_cls }}" id="set-maxbet"></span></div>
+        <div class="set-mini"><span class="gy-kpi-label">Max-size losses to lose 99%</span><span class="mono" id="set-bust"></span></div>
+        <p class="set-cap-note" id="set-cap-note"></p>
+      </div>
+    </section>
+
+    <section id="alerts" class="card set-card set-card-flush" aria-labelledby="al-h">
+      <div class="set-card-pad">
+        <h2 id="al-h" class="gy-h2">Haunt my phone when…</h2>
+        <p class="set-sub" style="margin-bottom:0;">Each alert routes to a Discord channel. A blank channel falls back to Default. Picks post at noon ET; Omen checks every 2 hours, 8 am–8 pm ET. To get a webhook: Discord channel → Edit → Integrations → Webhooks → New Webhook → Copy URL.</p>
+      </div>
+      {% for key, ch in discord_channels.items() %}
+      {% set has_url = channel_urls.get(key) %}
+      <div class="set-channel">
+        <div class="set-channel-head">
+          <span class="set-channel-name">{{ ch.label }}</span>
+          {% if has_url %}<span class="gy-tag good">Connected</span>{% elif key == 'default' %}<span class="gy-tag bad">Not set</span>{% else %}<span class="gy-tag">Using default</span>{% endif %}
+          <span class="set-channel-hint">{{ ch.hint }}</span>
+        </div>
+        <div class="set-webhook">
+          <label class="gy-field set-webhook-field"><span class="sr-only">{{ ch.label }} webhook URL</span>
+            <input type="url" class="webhook-input mono" data-channel="{{ key }}"
+                   name="{{ 'discord_webhook_url' if key == 'default' else 'discord_channel_' ~ key }}"
+                   value="{{ channel_urls.get(key, '') }}"
+                   placeholder="{{ 'https://discord.com/api/webhooks/…' if key == 'default' else 'Blank = use Default' }}">
+          </label>
+          <button type="button" class="gy-btn test-webhook" data-channel="{{ key }}">Send test</button>
+          <span class="test-result small" data-channel="{{ key }}"></span>
+        </div>
+        {% for akey, a in discord_alerts.items() if a.channel == key %}
+        <label class="set-switch-row{{ ' soon' if not a.live }}">
+          <input type="checkbox" role="switch" class="set-switch" name="alert_{{ akey }}"{% if alert_prefs[akey] %} checked{% endif %}>
+          <span>{{ a.label }}</span>
+          {% if not a.live %}<span class="gy-tag">Coming soon</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
       {% endfor %}
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;">
-        <button type="button" id="send-daily-picks" style="{{ _btn }}">Send today's picks now</button>
-        <span id="test-result" style="font-size:0.72rem;"></span>
+      <div class="set-channel set-channel-foot">
+        <span class="small" id="test-result"></span>
+        <button type="button" class="gy-btn set-accent-btn" id="send-daily-picks">Send today's picks now</button>
+      </div>
+    </section>
+
+    <section id="teams" class="card set-card" aria-labelledby="ft-h">
+      <h2 id="ft-h" class="gy-h2">★ Favorite teams</h2>
+      <p class="set-sub">Their games get pulled to the top of each schedule. <span id="fav-status"></span></p>
+      <div class="set-teams">
+        {% for sport in favorite_sports %}
+        <div class="fav-sport set-team-box" data-sport="{{ sport }}">
+          <span class="gy-kpi-label">{{ sport }}</span>
+          <div class="fav-chips set-chips">
+            <label class="set-add-team"><span class="sr-only">Add a {{ sport }} team</span>
+              <input type="text" class="fav-input" list="fav-list-{{ sport }}" placeholder="+ Add team" autocomplete="off">
+            </label>
+          </div>
+          <datalist id="fav-list-{{ sport }}"></datalist>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="data" class="card set-card" aria-labelledby="dt-h">
+      <h2 id="dt-h" class="gy-h2" style="margin-bottom:16px;">Data &amp; odds</h2>
+      <div class="set-data">
+        <div class="set-box warn">
+          <div class="set-box-head"><span class="gy-kpi-label">Odds source</span><span class="gy-tag warn">Not your book</span></div>
+          <div class="set-box-title">ESPN feed · DraftKings lines</div>
+          <p class="set-sub" style="margin:6px 0 0;">No API key, no quota. But edge, EV and CLV are measured against DraftKings prices, not the FanDuel prices you actually take.</p>
+        </div>
+        <div class="set-box">
+          <span class="gy-kpi-label">Line snapshots</span>
+          {% if odds_stats and odds_stats.count > 0 %}
+          <div class="set-snap-stats">
+            <div><span class="mono">{{ '{:,}'.format(odds_stats.count) }}</span><span class="small">snapshots</span></div>
+            <div><span class="mono">{{ '{:,}'.format(odds_stats.n_games) }}</span><span class="small">games</span></div>
+            <div><span class="mono">{{ (odds_stats.est_bytes / 1048576) | round(1) }} MB</span><span class="small">on disk</span></div>
+          </div>
+          {% if odds_stats.age_days is not none %}
+          {% set span = [odds_stats.age_days, 90] | max %}
+          <div class="set-age" role="img" aria-label="{{ odds_stats.age_days }} days of history{{ ', past the 90-day roll-up mark' if storage_old }}">
+            <span style="width:{{ (odds_stats.age_days / span * 100) | round(1) }}%;" class="{{ 'warn' if storage_old }}"></span>
+            <i style="left:{{ (90 / span * 100) | round(1) }}%;"></i>
+          </div>
+          <div class="set-age-labels mono"><span>{{ odds_stats.oldest[5:10] | replace('-', '/') if odds_stats.oldest else '' }} · oldest</span><span>90d</span>{% if storage_old %}<span>{{ odds_stats.age_days }}d</span>{% endif %}</div>
+          {% endif %}
+          <p class="set-sub" style="margin:10px 0 0;">Purging paused while the line-movement-profile sample builds. Only pre-game odds are recorded.</p>
+          {% else %}
+          <p class="set-sub" style="margin:8px 0 0;">No odds snapshots recorded yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section id="maint" class="card set-card set-danger" aria-labelledby="mt-h">
+      <h2 id="mt-h" class="gy-h2">Grave digging</h2>
+      <p class="set-sub">Heavy jobs that rewrite stored data. Each asks to confirm before running.</p>
+      <div class="set-job">
+        <div><div class="set-job-title">Run 2026 backfill</div><div class="set-sub" style="margin:3px 0 0;">Re-scores every completed 2026 game with current model weights, updates the database and refits Platt calibration. Run after any model weight change.</div></div>
+        <button type="button" class="gy-btn set-danger-btn" id="run-backfill">Run backfill…</button>
+      </div>
+      <div class="set-job">
+        <div><div class="set-job-title">Repair pick_roi</div><div class="set-sub" style="margin:3px 0 0;">Recomputes stored pick ROI from settled results. <span id="repair-result"></span></div></div>
+        <button type="button" class="gy-btn" id="repair-pick-roi">Repair…</button>
+      </div>
+    </section>
+
+    <div class="set-savebar" id="set-savebar">
+      <span class="small" id="set-dirty"><span class="dot"></span><span id="set-dirty-text">All changes saved</span></span>
+      <div class="gy-foot-actions" style="padding:0;">
+        <button type="reset" class="gy-btn">Discard</button>
+        <button type="submit" class="gy-primary set-save">Save settings</button>
       </div>
     </div>
-
-    <div style="margin-bottom:24px;">
-      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:6px;">Haunt my phone when…</div>
-      {% for key, a in discord_alerts.items() %}
-      <label style="display:flex;align-items:center;gap:12px;min-height:44px;font-size:0.82rem;border-top:{{ '0' if loop.first else '1px solid var(--border)' }};">
-        <input type="checkbox" name="alert_{{ key }}"{% if alert_prefs[key] %} checked{% endif %} style="width:18px;height:18px;accent-color:var(--orange);flex-shrink:0;">
-        <span style="flex:1;">{{ a.label }}</span>
-        <span style="font-size:0.66rem;color:var(--text-muted);white-space:nowrap;">{{ discord_channels[a.channel].label }}{% if not a.live %} · <span style="color:var(--warn-text);">coming soon</span>{% endif %}</span>
-      </label>
-      {% endfor %}
-      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:8px;line-height:1.5;">
-        Daily picks post at noon ET. Omen Score alerts run every 2 hours, 8 am – 8 pm ET. "Coming soon" alerts save your choice now and start firing once their triggers ship.
-      </p>
-    </div>
-
-    <button type="submit"
-            style="width:100%;padding:10px;background:var(--orange);border:none;border-radius:var(--radius-sm);color:#fff;font-size:0.85rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">
-      Save Settings
-    </button>
-
   </form>
 </div>
-
-<!-- Favorite Teams ───────────────────────────────────── -->
-<div class="card" style="max-width:520px;margin:14px auto 0;">
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">★ Favorite Teams</div>
-  <p style="font-size:0.72rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
-    Games for these teams are pulled to the top of each schedule in their own section.
-  </p>
-  {% for sport in favorite_sports %}
-  <div class="fav-sport" data-sport="{{ sport }}" style="margin-bottom:14px;">
-    <div style="font-size:0.75rem;font-weight:700;margin-bottom:6px;">{{ sport }}</div>
-    <div class="fav-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;"></div>
-    <div style="display:flex;gap:8px;">
-      <input type="text" class="fav-input" list="fav-list-{{ sport }}" placeholder="Add a team…" autocomplete="off"
-             style="flex:1;min-width:0;padding:7px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;">
-      <datalist id="fav-list-{{ sport }}"></datalist>
-      <button type="button" class="fav-add"
-              style="font-size:0.75rem;padding:6px 14px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);cursor:pointer;font-weight:600;">Add</button>
-    </div>
-  </div>
-  {% endfor %}
-  <span id="fav-status" style="font-size:0.72rem;color:var(--text-muted);"></span>
-</div>
-
-<!-- Model Backfill ───────────────────────────────────── -->
-<div class="card" style="max-width:520px;margin:14px auto 0;">
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Model · 2026 Backfill</div>
-  <p style="font-size:0.72rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-    Re-scores all completed 2026 games with the current model weights, updates the database, and refits Platt calibration. Run this after any model weight change.
-  </p>
-  <button type="button" id="run-backfill"
-          style="padding:9px 18px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.83rem;font-weight:700;cursor:pointer;">
-    Run 2026 Backfill
-  </button>
-  <button type="button" id="repair-pick-roi"
-          style="margin-left:10px;padding:9px 18px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.83rem;font-weight:700;cursor:pointer;">
-    Repair pick_roi
-  </button>
-  <span id="repair-result" style="margin-left:12px;font-size:0.75rem;color:var(--text-muted);"></span>
-</div>
-
-<!-- Odds Source ──────────────────────────────────────────── -->
-<div class="card" style="max-width:520px;margin:14px auto 0;">
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Odds Source</div>
-  <p style="font-size:0.78rem;color:var(--text-muted);">Spread &amp; moneyline sourced from ESPN (DraftKings) — no API key needed, no request quota.</p>
-</div>
-
-<!-- Odds Snapshot Storage ───────────────────────────────── -->
-<div class="card" style="max-width:520px;margin:14px auto 0;">
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Odds Snapshot Storage</div>
-  {% if odds_stats and odds_stats.count > 0 %}
-  <p style="font-size:0.78rem;color:var(--text);margin:0 0 6px;">
-    <strong>{{ odds_stats.count }}</strong> snapshots across <strong>{{ odds_stats.n_games }}</strong> games
-    &nbsp;·&nbsp; ~<strong>{{ (odds_stats.est_bytes / 1024) | round(1) }} KB</strong>
-  </p>
-  <p style="font-size:0.72rem;color:var(--text-muted);margin:0;line-height:1.5;">
-    Oldest snapshot: {{ odds_stats.oldest[:10] if odds_stats.oldest else '—' }}
-    ({{ odds_stats.age_days if odds_stats.age_days is not none else '—' }} days ago)
-    {% if odds_stats.age_days is not none and odds_stats.age_days >= 90 %}
-      <br><span style="color:var(--orange);font-weight:700;">⚠ 90+ days of history collected — consider rolling this up into per-game movement categories instead of raw odds.</span>
-    {% endif %}
-  </p>
-  <p style="font-size:0.70rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
-    Purging is disabled while we build a sample for line-movement-profile analysis (Early sharp / Late sharp / Sustained / Reversal). Only pre-game (Preview) odds are recorded — in-game price swings are excluded.
-  </p>
-  {% else %}
-  <p style="font-size:0.78rem;color:var(--text-muted);">No odds snapshots recorded yet.</p>
-  {% endif %}
 </div>
 
 <!-- Backfill modal ───────────────────────────────────── -->
@@ -161,6 +179,43 @@
 </div>
 
 <script>
+/* ── Kelly cap readout + unsaved-changes bar ─────────────── */
+(function () {
+  var form = document.getElementById('settings-form');
+  var cap = document.getElementById('set-cap'), bank = document.getElementById('set-bankroll');
+  function cls(c) { return c <= 5 ? 'good' : (c <= 10 ? 'warn' : 'bad'); }
+  function sizing() {
+    var c = parseFloat(cap.value), b = parseFloat(bank.value) || 0, k = cls(c);
+    var lbl = (c % 1 ? c.toFixed(1) : String(c)) + '%';
+    var v = document.getElementById('set-cap-val');
+    v.textContent = lbl; v.className = 'mono set-cap-val ' + k;
+    cap.className = k;
+    document.querySelectorAll('[data-cap-label]').forEach(function (n) { n.textContent = lbl; });
+    var mb = document.getElementById('set-maxbet');
+    mb.textContent = '$' + (b * c / 100).toFixed(2); mb.className = 'mono ' + k;
+    document.getElementById('set-bust').textContent = Math.ceil(Math.log(0.01) / Math.log(1 - c / 100)) + ' max losses';
+    var note = document.getElementById('set-cap-note');
+    note.textContent = c <= 5 ? 'Inside the guided range. A losing streak trims the roll instead of ending it.'
+      : c <= 10 ? 'Aggressive. A cold week can take a big bite out of the roll.'
+      : 'Any single bet can take ' + (c >= 20 ? 'a quarter' : 'a big slice') + ' of the roll. This is how a bankroll hits zero.';
+    note.className = 'set-cap-note ' + (c <= 5 ? '' : k);
+  }
+  var initial = new FormData(form), dirty = false;
+  function snapshot(fd) { var o = []; fd.forEach(function (v, k) { o.push(k + '=' + v); }); return o.sort().join('&'); }
+  var base = snapshot(initial);
+  function track() {
+    dirty = snapshot(new FormData(form)) !== base;
+    document.getElementById('set-savebar').classList.toggle('dirty', dirty);
+    document.getElementById('set-dirty-text').textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+  }
+  form.addEventListener('input', function () { sizing(); track(); });
+  form.addEventListener('change', track);
+  form.addEventListener('reset', function () { setTimeout(function () { sizing(); track(); }, 0); });
+  form.addEventListener('submit', function () { dirty = false; });
+  window.addEventListener('beforeunload', function (e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+  sizing();
+})();
+
 document.querySelectorAll('.test-webhook').forEach(function (btn) {
   btn.addEventListener('click', function () {
     var ch     = btn.dataset.channel;
@@ -237,22 +292,26 @@ document.getElementById('send-daily-picks').addEventListener('click', function (
   function render(box) {
     var sport = box.getAttribute('data-sport');
     var chips = box.querySelector('.fav-chips');
-    chips.innerHTML = '';
+    var adder = chips.querySelector('.set-add-team');
+    chips.querySelectorAll('.set-chip').forEach(function (c) { c.remove(); });
     (favs[sport] || []).forEach(function (name) {
       var chip = document.createElement('span');
-      chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;background:var(--orange-dim);border:1px solid var(--orange);border-radius:999px;font-size:0.75rem;font-weight:600;color:var(--orange);';
-      chip.appendChild(document.createTextNode('★ ' + name));
+      chip.className = 'set-chip';
+      var star = document.createElement('span');
+      star.className = 'star';
+      star.textContent = '★';
+      chip.appendChild(star);
+      chip.appendChild(document.createTextNode(name));
       var x = document.createElement('button');
       x.type = 'button';
-      x.textContent = '✕';
+      x.textContent = '×';
       x.setAttribute('aria-label', 'Remove ' + name);
-      x.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;font-size:0.72rem;padding:0 2px;';
       x.addEventListener('click', function () {
         favs[sport] = favs[sport].filter(function (n) { return n !== name; });
         render(box); save();
       });
       chip.appendChild(x);
-      chips.appendChild(chip);
+      chips.insertBefore(chip, adder);
     });
   }
 
@@ -287,7 +346,7 @@ document.getElementById('send-daily-picks').addEventListener('click', function (
       input.value = '';
       render(box); save();
     }
-    box.querySelector('.fav-add').addEventListener('click', add);
+    input.addEventListener('change', function () { if (known.indexOf(input.value.trim()) >= 0) add(); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   });
 })();
@@ -323,6 +382,7 @@ function _backfillRow(text, status) {
 }
 
 document.getElementById('run-backfill').addEventListener('click', function () {
+  if (!confirm('Re-score every completed 2026 game and refit calibration? This rewrites stored predictions.')) return;
   var modal  = document.getElementById('backfillModal');
   var title  = document.getElementById('backfillTitle');
   var steps  = document.getElementById('backfillSteps');
@@ -380,6 +440,7 @@ document.getElementById('run-backfill').addEventListener('click', function () {
 document.getElementById('repair-pick-roi').addEventListener('click', function () {
   var btn = this;
   var res = document.getElementById('repair-result');
+  if (!confirm('Recompute stored pick ROI from settled results?')) return;
   btn.disabled = true;
   btn.textContent = 'Repairing…';
   res.textContent = '';
@@ -391,7 +452,7 @@ document.getElementById('repair-pick-roi').addEventListener('click', function ()
         res.style.color = 'var(--loss)';
       } else {
         res.textContent = '✓ Repaired ' + d.repaired + ' of ' + d.total + ' records';
-        res.style.color = 'var(--profit)';
+        res.style.color = 'var(--win)';
       }
     })
     .catch(function () {
@@ -399,7 +460,7 @@ document.getElementById('repair-pick-roi').addEventListener('click', function ()
       res.style.color = 'var(--loss)';
     })
     .finally(function () {
-      btn.textContent = 'Repair pick_roi';
+      btn.textContent = 'Repair…';
       btn.disabled = false;
     });
 });

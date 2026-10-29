@@ -1,118 +1,46 @@
-{# Shared "Recommended Bets" stats card — the ★ picks for the current
-   bet_type replayed over resolved games, flat 1u at the stored price.
-   Included from both the moneyline branch and the spread branch of
-   model_performance.html so the card looks the same everywhere; relies on
-   `rec_bets`, `bet_type` and `sport` already being in template context. #}
+{# "★ Picks replayed" — the ★ picks for the current bet_type replayed over
+   resolved games, flat 1u at the stored price. Rail card beside "What the
+   body says" on the Model page; relies on `rec_bets`, `bet_type` and
+   `sport` in template context. #}
 {% if rec_bets %}
-<!-- ══ Recommended Bets ══ -->
-<div class="zone-divider">
-    <h3>Recommended Bets</h3>
-    <span class="zone-sub">the ★ {{ bet_type }} picks replayed over resolved games · flat 1u at the stored price</span>
-    <span class="zone-line"></span>
-</div>
-<div class="dashboard" style="margin-bottom:14px;">
-    <div class="stat-card">
-        <div class="stat-label">Record</div>
-        <div class="stat-value">{{ rec_bets.wins }}-{{ rec_bets.losses }}</div>
-        <div class="stat-sub">{{ rec_bets.n }} picks</div>
+<section class="card mp-stars" aria-labelledby="star-h">
+    <div class="gy-h2-row" style="margin-bottom:4px;">
+        <h2 id="star-h" class="gy-h2 sm">★ Picks replayed</h2>
+        {% if rec_bets.n < 30 %}<span class="gy-tag warn">n={{ rec_bets.n }} · too early</span>{% else %}<span class="gy-tag">n={{ rec_bets.n }}</span>{% endif %}
     </div>
-    <div class="stat-card">
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-value">{{ rec_bets.win_rate }}%</div>
-        <div class="stat-sub">{% if rec_bets.baseline_wr is not none %}other favorites {{ rec_bets.baseline_wr }}% (n={{ rec_bets.baseline_n }}){% else %}&nbsp;{% endif %}</div>
+    <p class="small" style="margin:0 0 14px;">Flat 1u at the price stored at prediction time</p>
+    <div class="mp-star-grid">
+        <div><span class="gy-kpi-label">Record</span><span class="mono">{{ rec_bets.wins }}–{{ rec_bets.losses }}</span></div>
+        <div><span class="gy-kpi-label">Units</span><span class="mono" style="color:{{ 'var(--win)' if rec_bets.units >= 0 else 'var(--loss)' }};">{{ '+' if rec_bets.units > 0 }}{{ rec_bets.units }}u</span></div>
+        <div><span class="gy-kpi-label">ROI</span><span class="mono" style="color:{{ 'var(--win)' if rec_bets.roi >= 0 else 'var(--loss)' }};">{{ '+' if rec_bets.roi > 0 }}{{ rec_bets.roi }}%</span></div>
+        <div><span class="gy-kpi-label">Avg edge</span><span class="mono">{{ '+' if rec_bets.avg_edge > 0 }}{{ rec_bets.avg_edge }}%</span></div>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">Units</div>
-        <div class="stat-value {{ 'status-win' if rec_bets.units >= 0 else 'status-loss' }}">{{ '+' if rec_bets.units > 0 }}{{ rec_bets.units }}u</div>
-        <div class="stat-sub">flat 1u stakes</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">ROI</div>
-        <div class="stat-value {{ 'status-win' if rec_bets.roi >= 0 else 'status-loss' }}">{{ '+' if rec_bets.roi > 0 }}{{ rec_bets.roi }}%</div>
-        <div class="stat-sub">avg edge {{ '+' if rec_bets.avg_edge > 0 }}{{ rec_bets.avg_edge }}%</div>
-    </div>
-</div>
-
-{% if rec_bets.since_fix and rec_bets.since_fix.n < rec_bets.n %}
-<div class="card" style="margin-bottom:14px;padding:10px 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">
-        Since {{ rec_bets.calibration_fix_date }} calibration fix
-    </div>
-    <div style="font-size:0.85rem;">
-        <span style="font-weight:700;">{{ rec_bets.since_fix.wins }}-{{ rec_bets.since_fix.losses }}</span>
-        <span style="color:var(--text-muted);">({{ rec_bets.since_fix.n }} picks)</span>
-        · <span class="{{ 'calib-err-ok' if rec_bets.since_fix.roi > 0 else 'calib-err-neg' }}">{{ '+' if rec_bets.since_fix.roi > 0 }}{{ rec_bets.since_fix.roi }}% ROI</span>
-        · <span class="{{ 'status-win' if rec_bets.since_fix.units >= 0 else 'status-loss' }}">{{ '+' if rec_bets.since_fix.units > 0 }}{{ rec_bets.since_fix.units }}u</span>
-    </div>
-    <p class="section-note" style="margin:0;flex-basis:100%;">Picks before this date may have been made under an under-shrunk model-vs-market calibration (a persistence bug reset the live-recalibrated rate back to a stale value on every deploy) — the all-time numbers above include that period.</p>
-</div>
-{% endif %}
-
-{% if rec_bets.cum | length >= 2 %}
-{% set cmin = ([0] + rec_bets.cum) | min %}
-{% set cmax = ([0] + rec_bets.cum) | max %}
-{% set span = (cmax - cmin) if cmax > cmin else 1 %}
-{% set cnt = rec_bets.cum | length %}
-<div class="card" style="margin-bottom:14px;padding:12px 14px;">
-    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;">Cumulative units</div>
-    <svg viewBox="0 0 300 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block;">
-        <line x1="0" x2="300" y1="{{ 76 - ((0 - cmin) / span * 72) }}" y2="{{ 76 - ((0 - cmin) / span * 72) }}" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+    {% if rec_bets.cum | length >= 2 %}
+    {% set cmin = ([0] + rec_bets.cum) | min %}{% set cmax = ([0] + rec_bets.cum) | max %}
+    {% set span = (cmax - cmin) if cmax > cmin else 1 %}{% set cnt = rec_bets.cum | length %}
+    <svg role="img" aria-label="Cumulative units, ending at {{ rec_bets.units }}u" viewBox="0 0 300 60" preserveAspectRatio="none" class="mp-star-spark">
+        <line x1="0" x2="300" y1="{{ 56 - ((0 - cmin) / span * 52) }}" y2="{{ 56 - ((0 - cmin) / span * 52) }}" stroke="var(--border-strong)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
         <polyline fill="none" stroke="{{ 'var(--win)' if rec_bets.units >= 0 else 'var(--loss)' }}" stroke-width="2" vector-effect="non-scaling-stroke"
-                  points="{% for v in rec_bets.cum %}{{ (loop.index0 / (cnt - 1) * 300) | round(1) }},{{ (76 - ((v - cmin) / span * 72)) | round(1) }} {% endfor %}"/>
+                  points="{% for v in rec_bets.cum %}{{ (loop.index0 / (cnt - 1) * 300) | round(1) }},{{ (56 - ((v - cmin) / span * 52)) | round(1) }} {% endfor %}"/>
     </svg>
-</div>
-{% endif %}
-
-<details class="score-details">
-  <summary>
-    <span class="sd-title">By Month</span>
-    <span class="sd-teaser">{{ rec_bets.by_month | length }} month{{ 's' if rec_bets.by_month | length != 1 }}</span>
-  </summary>
-  <div class="score-details-body">
-  <div class="calib-scroll">
-  <table class="calib-table" style="width:100%;">
-    <thead><tr><th>Month</th><th>Picks</th><th>Record</th><th>Win%</th><th>Units</th><th>ROI%</th></tr></thead>
-    <tbody>
-    {% for m in rec_bets.by_month %}
-    <tr>
-      <td style="font-weight:700;">{{ m.month }}</td>
-      <td>{{ m.n }}</td>
-      <td>{{ m.record }}</td>
-      <td><span class="{{ 'calib-err-ok' if m.win_rate >= 55 else ('calib-err-pos' if m.win_rate >= 50 else 'calib-err-neg') }}">{{ m.win_rate }}%</span></td>
-      <td><span class="{{ 'calib-err-ok' if m.units > 0 else 'calib-err-neg' }}">{{ '+' if m.units > 0 }}{{ m.units }}u</span></td>
-      <td><span class="{{ 'calib-err-ok' if m.roi > 0 else 'calib-err-neg' }}">{{ '+' if m.roi > 0 }}{{ m.roi }}%</span></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  </div>
-</details>
-
-<details class="score-details" open>
-  <summary>
-    <span class="sd-title">Recent Picks</span>
-    <span class="sd-teaser">last {{ rec_bets.recent | length }}</span>
-  </summary>
-  <div class="score-details-body">
-  <div class="calib-scroll">
-  <table class="calib-table" style="width:100%;">
-    <thead><tr><th>Date</th><th>Pick</th><th>Odds</th><th>Edge</th><th>Result</th><th>Units</th></tr></thead>
-    <tbody>
-    {% for r in rec_bets.recent %}
-    <tr>
-      <td style="color:var(--text-muted);">{{ r.date[5:] }}</td>
-      <td style="font-weight:700;">{{ r.pick }} <span style="font-weight:400;color:var(--text-muted);">vs {{ r.opp }}</span></td>
-      <td>{{ '+' if r.amer > 0 }}{{ r.amer }}</td>
-      <td>{{ '+' if r.edge > 0 }}{{ r.edge }}%</td>
-      <td><span class="{{ 'calib-err-ok' if r.won else 'calib-err-neg' }}">{{ 'W' if r.won else 'L' }}</span></td>
-      <td><span class="{{ 'calib-err-ok' if r.profit > 0 else 'calib-err-neg' }}">{{ '+' if r.profit > 0 }}{{ r.profit }}u</span></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <p class="section-note">Replayed from the odds and model probability stored at prediction time, so it reflects what the ★ would have said then.{% if bet_type == 'moneyline' and sport == 'MLB' %} MLB uses the consensus-calibrated probability but not the rank-history blend, so live stars can differ slightly.{% endif %}</p>
-  </div>
-</details>
+    {% endif %}
+    <ul class="mp-star-list">
+        {% for r in rec_bets.recent[:5] %}
+        <li><span><span class="mono muted">{{ r.date[5:] }}</span> <strong>{{ r.pick }}</strong> vs {{ r.opp }}</span><span class="mono">{{ '+' if r.amer > 0 }}{{ r.amer }} · <span style="color:{{ 'var(--win)' if r.profit > 0 else 'var(--loss)' }};">{{ '+' if r.profit > 0 }}{{ r.profit }}u</span></span></li>
+        {% endfor %}
+    </ul>
+    {% if rec_bets.baseline_wr is not none %}<p class="small" style="margin:10px 0 0;">Other favorites won {{ rec_bets.baseline_wr }}% (n={{ rec_bets.baseline_n }}).</p>{% endif %}
+    {% if rec_bets.since_fix and rec_bets.since_fix.n < rec_bets.n %}
+    <p class="small" style="margin:8px 0 0;">Since the {{ rec_bets.calibration_fix_date }} calibration fix: <strong style="color:var(--text);">{{ rec_bets.since_fix.wins }}-{{ rec_bets.since_fix.losses }}</strong> · <span style="color:{{ 'var(--win)' if rec_bets.since_fix.roi > 0 else 'var(--loss)' }};">{{ '+' if rec_bets.since_fix.roi > 0 }}{{ rec_bets.since_fix.roi }}% ROI</span>. Earlier picks ran on an under-shrunk calibration.</p>
+    {% endif %}
+    {% if rec_bets.by_month %}
+    <details class="mp-star-months">
+        <summary>By month</summary>
+        <table class="gy-table mp-table" style="min-width:0;">
+            <thead><tr><th scope="col">Month</th><th scope="col" class="r">Record</th><th scope="col" class="r">Units</th><th scope="col" class="r">ROI</th></tr></thead>
+            <tbody>{% for m in rec_bets.by_month %}<tr><th scope="row">{{ m.month }}</th><td class="r mono">{{ m.record }}</td><td class="r mono" style="color:{{ 'var(--win)' if m.units > 0 else 'var(--loss)' }};">{{ '+' if m.units > 0 }}{{ m.units }}u</td><td class="r mono" style="color:{{ 'var(--win)' if m.roi > 0 else 'var(--loss)' }};">{{ '+' if m.roi > 0 }}{{ m.roi }}%</td></tr>{% endfor %}</tbody>
+        </table>
+    </details>
+    {% endif %}
+</section>
 {% endif %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}NFL Lineup Builder — Dead Money{% endblock %}
+{% block title %}The Lab — NFL Fantasy — Dead Money{% endblock %}
 
 {% block head %}
 <style>
@@ -96,324 +96,409 @@
 {% block content %}
 <div class="schedule-body">
 
-{% set objective_labels = {'sim_median': 'Sim Median', 'sim_ceiling': 'Sim Ceiling', 'risk_adjusted': 'Consistent'} %}
-{% set current_sport = 'NFL' %}
-{% set active_tool = 'fantasy' %}
-{% include "_sport_pills.html" %}
-<div role="group" aria-label="Fantasy view" class="sport-chip-bar">
-    <button type="button" class="sport-chip sport-chip-active" id="dfs-view-tab-builder" onclick="dfsShowView('builder')">Builder</button>
-    <button type="button" class="sport-chip" id="dfs-view-tab-rankings" onclick="dfsShowView('rankings')">Rankings</button>
-    <a href="{{ url_for('nfl_compare', week=week_ctx.week) }}" class="sport-chip">Compare</a>
-    <a href="{{ url_for('nfl_recap_page') }}" class="sport-chip">Recap</a>
+{% set colors = {'safe': 'var(--purple-text)', 'bal': 'var(--orange)', 'ceil': 'var(--warn-text)'} %}
+{% macro k(v) %}${{ '%.1f' % (v / 1000) }}k{% endmacro %}
+
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">NFL · Week {{ week_ctx.week }} · ${{ '{:,}'.format(salary_cap) }} cap · sims rerun daily</span>
+        <h1 class="hub-title">The Lab</h1>
+    </div>
+    <ol class="lab-flow" aria-label="Workflow">
+        <li><a href="#games"><span class="mono n">1</span>Games <span class="mono c">{{ selected_ids | length }}/{{ all_games | length }}</span></a></li>
+        <li aria-hidden="true">→</li>
+        <li><a href="#players"><span class="mono n">2</span>Player points <span class="mono c">{{ usable_count }}</span></a></li>
+        <li aria-hidden="true">→</li>
+        <li><a href="#lineups"><span class="mono n">3</span>Lineups <span class="mono c">{{ builds | selectattr('res') | list | length }}</span></a></li>
+    </ol>
+</div>
+
+<div class="lab-subnav">
+    <div class="gy-seg" role="group" aria-label="Fantasy view">
+        <button type="button" class="on" id="dfs-view-tab-builder" aria-pressed="true" onclick="dfsShowView('builder')">Builder</button>
+        <button type="button" id="dfs-view-tab-rankings" aria-pressed="false" onclick="dfsShowView('rankings')">Rankings</button>
+        <a href="{{ url_for('nfl_compare', week=week_ctx.week) }}" class="gy-seg-a">Compare</a>
+        <a href="{{ url_for('nfl_recap_page') }}" class="gy-seg-a">Recap</a>
+    </div>
+    <div class="lab-weeknav">
+        {% if week_ctx.prev_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.prev_week) }}" class="gy-btn">◂ Week {{ week_ctx.prev_week }}</a>{% endif %}
+        <span class="mono">Week {{ week_ctx.week }}{% if week_ctx.is_current_week %} · current{% endif %}</span>
+        {% if week_ctx.next_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.next_week) }}" class="gy-btn">Week {{ week_ctx.next_week }} ▸</a>{% endif %}
+    </div>
 </div>
 
 <div id="dfs-view-rankings-panel" hidden>
-<h1>Players</h1>
-<p class="dfs-subhead">Projected FanDuel points for every skill player and DST in this week's slate — same ranking table as the old standalone Players page, now folded in here since it was showing the same pool this page already builds. Click a name for their recent game log and any news coverage.</p>
+<p class="dfs-subhead">Projected FanDuel points for every skill player and DST in this week's slate. Click a name for their recent game log and any news coverage.</p>
 {% include "_nfl_player_rankings.html" %}
 </div>
 
-<div id="dfs-view-builder-panel">
-<h1>Salary Cap Lineup Builder</h1>
-<p class="dfs-subhead">Synthetic salaries + projections fit from this app's own stored stats — not real FanDuel pricing or injury news. Pick which games count, then take the optimizer's best lineup under the cap.</p>
-
-<div class="week-nav-header">
-    {% if week_ctx.prev_week %}
-    <a href="{{ url_for('nfl_lineup', week=week_ctx.prev_week) }}" class="week-nav-btn">◂ Week {{ week_ctx.prev_week }}</a>
-    {% else %}
-    <span class="week-nav-btn week-nav-disabled">◂</span>
-    {% endif %}
-    <div class="week-nav-title">
-        Week {{ week_ctx.week }}
-        {% if week_ctx.is_current_week %}<span class="week-current-badge">Current</span>{% endif %}
-    </div>
-    {% if week_ctx.next_week %}
-    <a href="{{ url_for('nfl_lineup', week=week_ctx.next_week) }}" class="week-nav-btn">Week {{ week_ctx.next_week }} ▸</a>
-    {% else %}
-    <span class="week-nav-btn week-nav-disabled">▸</span>
-    {% endif %}
-</div>
+<div id="dfs-view-builder-panel" class="lab">
 
 {% if not all_games %}
-<div class="card offseason-card">
-    <div class="offseason-icon">🏈</div>
-    <div class="offseason-title">No games found for Week {{ week_ctx.week }}</div>
-</div>
+<div class="card mp-empty">No games found for Week {{ week_ctx.week }}.</div>
 {% else %}
 
-<form method="get" action="{{ url_for('nfl_lineup') }}" class="card dfs-game-picker" id="dfs-game-form">
-    <input type="hidden" name="week" value="{{ week_ctx.week }}">
-    <input type="hidden" name="filtered" value="1">
+<form method="get" action="{{ url_for('nfl_lineup') }}" id="dfs-game-form">
+<input type="hidden" name="week" value="{{ week_ctx.week }}">
+<input type="hidden" name="filtered" value="1">
+{% for pid in locks %}<input type="hidden" name="lock" value="{{ pid }}">{% endfor %}
+{% for pid in bans %}<input type="hidden" name="ban" value="{{ pid }}">{% endfor %}
 
-    <details class="lineup-details dfs-settings-details">
-    <summary class="lineup-summary dfs-settings-summary">
-        Roster, Cap &amp; Games
-        <span class="dfs-settings-summary-line">{{ selected_ids|length }}/{{ all_games|length }} games · {{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap{% if objective != 'projection' %} · {{ objective_labels[objective] }}{% endif %}</span>
-    </summary>
-    <div class="dfs-settings-body">
+{# ── 1. Games ── #}
+<section id="games" class="card lab-card" aria-labelledby="g-h">
+    <div class="lab-head">
+        <div>
+            <h2 id="g-h" class="gy-h2"><span class="mono lab-step">1</span>Simulate the slate</h2>
+            <p class="set-sub" style="margin-bottom:0;">150 drive-by-drive sims per game. Tick a game to include or drop it; open it for the sim.</p>
+        </div>
+        <div class="gy-seg lab-presets" role="group" aria-label="Slate preset">
+            <button type="button" onclick="dfsToggleGroup(true)">All <span class="mono">{{ all_games | length }}</span></button>
+            {% for group in games_by_slot %}
+            <button type="button" onclick="dfsToggleGroup(false); dfsToggleGroup(true, '{{ group.key }}')">{{ group.label }} <span class="mono">{{ group.games | length }}</span></button>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="lab-games">
+        {% for g in all_games %}
+        {% set on = g.game_id in selected_ids %}
+        <div class="lab-game{{ ' on' if on }}" data-game="{{ g.game_id }}">
+            <label class="lab-game-pick">
+                <span class="lab-game-top"><span class="game-time" data-utc="{{ g.game_time_utc }}">—</span><span class="lab-check"><input type="checkbox" name="games" value="{{ g.game_id }}" data-slot="{{ g.slot_key }}"{% if on %} checked{% endif %} onchange="this.closest('.lab-game').classList.toggle('on', this.checked)"> <span class="lbl-in">In</span><span class="lbl-out">Out</span></span></span>
+                <span class="lab-game-row"><span>{{ g.away.abbrev }}</span><span class="mono">{{ g.sim.away_avg_score | round | int if g.sim else '' }}</span></span>
+                <span class="lab-game-row"><span>{{ g.home.abbrev }}</span><span class="mono">{{ g.sim.home_avg_score | round | int if g.sim else '' }}</span></span>
+                {% if g.sim %}<span class="lab-wp" title="{{ g.away.abbrev }} {{ g.sim.away_win_pct }}% · {{ g.home.abbrev }} {{ g.sim.home_win_pct }}%"><span style="width:{{ g.sim.away_win_pct }}%;"></span><span class="h"></span></span>{% else %}<span class="lab-wp none"></span>{% endif %}
+            </label>
+            {% if g.sim %}<button type="button" class="lab-open" aria-expanded="false" onclick="labOpenSim('{{ g.game_id }}', this)">Open sim ▾</button>{% else %}<span class="lab-open none">No sim yet</span>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% for g in all_games if g.sim %}
+    <div class="lab-sim" id="sim-{{ g.game_id }}" hidden>
+        <div class="lab-sim-main">
+            <div class="gy-kpi-label">{{ g.away.abbrev }} @ {{ g.home.abbrev }} · {{ g.sim.n_sims }} sims</div>
+            <div class="lab-sim-score"><span class="abbr">{{ g.away.abbrev }}</span><span class="mono">{{ g.sim.away_avg_score | round(1) }}–{{ g.sim.home_avg_score | round(1) }}</span><span class="abbr" style="color:var(--orange);">{{ g.home.abbrev }}</span></div>
+            <div class="small">{{ g.away.abbrev }} <span class="mono">{{ g.sim.away_win_pct }}%</span> · {{ g.home.abbrev }} <span class="mono">{{ g.sim.home_win_pct }}%</span> to win</div>
+            <table class="lab-q mono">
+                <thead><tr><th scope="col">Avg</th><th scope="col">Q1</th><th scope="col">Q2</th><th scope="col">Q3</th><th scope="col">Q4</th></tr></thead>
+                <tbody>
+                    <tr><th scope="row">{{ g.away.abbrev }}</th>{% for v in g.sim.away_quarter_avg %}<td>{{ v | round(1) }}</td>{% endfor %}</tr>
+                    <tr><th scope="row">{{ g.home.abbrev }}</th>{% for v in g.sim.home_quarter_avg %}<td>{{ v | round(1) }}</td>{% endfor %}</tr>
+                </tbody>
+            </table>
+            <a href="{{ url_for('nfl_sim_detail_page', game_id=g.game_id) }}" class="small" style="color:var(--orange); font-weight:800; text-decoration:none;">Full sim →</a>
+        </div>
+        {% for side in g.sim_starters %}
+        <div class="lab-sim-side">
+            <div class="gy-kpi-label">{{ side.team }} starters · median pts</div>
+            {% for pl in side.players %}
+            <div class="lab-sim-pl"><span class="pos">{{ pl.position }}</span><span class="nm"><span>{{ pl.player_name }}</span><span class="trk"><i style="width:{{ ([pl.sim_median / 25 * 100, 100] | min) | round }}%;"></i></span></span><span class="mono">{{ pl.sim_median | round(1) }}</span></div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    <details class="lab-settings">
+        <summary>Roster &amp; cap · <span class="small">{{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap · target {{ target }}</span></summary>
+        <div class="lab-settings-row">
+            {% for pos in ['QB', 'RB', 'WR', 'TE', 'FLEX', 'DST'] %}
+            <label class="lab-num">{{ pos }}<input type="number" name="req_{{ pos | lower }}" min="0" max="6" value="{{ roster_requirements[pos] }}"></label>
+            {% endfor %}
+            <label class="lab-num wide">Salary cap<input type="number" name="cap" step="100" min="20000" max="200000" value="{{ salary_cap }}"></label>
+            <label class="lab-num" title="Require this many WR/TE from the QB's own team when that team's top catcher already makes the lineup. 0 = off.">Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}"></label>
+            <label class="lab-num wide" title="The lineup score the overlay chart and the 'clears' column measure against.">Score target<input type="number" name="target" min="60" max="250" value="{{ target }}"></label>
+        </div>
+    </details>
+    <div class="lab-foot">
+        <span class="small">Changes to games or settings re-run the three builds.</span>
+        <button type="submit" class="gy-primary lab-run">Rebuild lineups</button>
+    </div>
+</section>
+</form>
 
-    <div class="dfs-settings">
-        <div class="dfs-settings-hdr">Roster &amp; Cap Settings</div>
-        <div class="dfs-settings-row">
-            <label class="dfs-settings-field">QB<input type="number" name="req_qb" min="0" max="6" value="{{ roster_requirements.QB }}"></label>
-            <label class="dfs-settings-field">RB<input type="number" name="req_rb" min="0" max="6" value="{{ roster_requirements.RB }}"></label>
-            <label class="dfs-settings-field">WR<input type="number" name="req_wr" min="0" max="6" value="{{ roster_requirements.WR }}"></label>
-            <label class="dfs-settings-field">TE<input type="number" name="req_te" min="0" max="6" value="{{ roster_requirements.TE }}"></label>
-            <label class="dfs-settings-field">FLEX<input type="number" name="req_flex" min="0" max="6" value="{{ roster_requirements.FLEX }}"></label>
-            <label class="dfs-settings-field">DST<input type="number" name="req_dst" min="0" max="6" value="{{ roster_requirements.DST }}"></label>
-            <label class="dfs-settings-field dfs-cap-field">Salary Cap<input type="number" name="cap" id="dfs-cap-input" step="100" min="20000" max="200000" value="{{ salary_cap }}"></label>
-            <span class="dfs-cap-presets">
-                <button type="button" onclick="document.getElementById('dfs-cap-input').value=60000">$60K</button>
-                <button type="button" onclick="document.getElementById('dfs-cap-input').value=70000">$70K</button>
-                <button type="button" onclick="document.getElementById('dfs-cap-input').value=80000">$80K</button>
-                <button type="button" onclick="document.getElementById('dfs-cap-input').value=100000">$100K</button>
-            </span>
-            <label class="dfs-settings-field" title="Require this many WR/TE from the same team as your QB — the standard GPP 'stack' tactic: when the QB has a big passing game, his pass-catchers' lines move with it, raising your lineup's ceiling together instead of each player's upside being an independent coin flip. 0 = off; matters for large-field, top-heavy tournaments, not cash games.">
-                🔗 Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}">
-            </label>
-            <label class="dfs-settings-field" title="Caps how many players can be priced in the bottom tier of their position (percentile < {{ (methodology.balance_low_percentile * 100) | round | int }}%) — an attempt to force a less stars-and-scrubs build. Backtested across 27 real completed weeks first: it made actual outcomes WORSE at every setting that changed anything (real lineups look balanced in hindsight because some low-projection players happen to overperform that week — forcing MORE of them in blind, pre-game, with no signal for which ones will break out, just trades a good pick for a worse one). Off by default for that reason; max value ({{ skill_roster_size }}) = off, lower values are experimental and backtested to underperform.">
-                ⚖️ Max Low-Tier<input type="number" name="max_low_tier" min="0" max="{{ skill_roster_size }}" value="{{ max_low_tier_input }}">
-            </label>
-            <label class="dfs-settings-field" title="What the optimizer maximizes. Projection = this app's fitted point estimate (the default). Sim Median / Sim Ceiling come from the game simulator's validated, correlated Monte Carlo run (150 draws/game) — Sim Ceiling targets each player's own 80th-percentile outcome, favoring upside over the safest point estimate. Consistent penalizes Projection by each player's OWN week-to-week scoring volatility (recent_stddev) — favors a steady performer over a boom-bust one with the same raw projection. Any player the simulator doesn't cover (every DST, or a player the daily run hasn't caught yet) falls back to Projection so it stays pickable.">
-                🎲 Optimize for
-                <select name="objective">
-                    <option value="projection"{% if objective == 'projection' %} selected{% endif %}>Projection</option>
-                    <option value="sim_median"{% if objective == 'sim_median' %} selected{% endif %}>Sim Median</option>
-                    <option value="sim_ceiling"{% if objective == 'sim_ceiling' %} selected{% endif %}>Sim Ceiling</option>
-                    <option value="risk_adjusted"{% if objective == 'risk_adjusted' %} selected{% endif %}>Consistent</option>
+{% if not selected_ids %}
+<div class="card mp-empty">No games selected — tick at least one game above to build a pool.</div>
+{% else %}
+
+{# ── 2. Player points ── #}
+{% set outs = pool | selectattr('likely_out') | list %}
+<section id="players" class="card lab-card" aria-labelledby="p-h">
+    <div class="lab-head">
+        <div>
+            <h2 id="p-h" class="gy-h2"><span class="mono lab-step">2</span>Read the player points</h2>
+            <p class="set-sub" style="margin-bottom:0;">Each curve is that player's simulated points. Boom = 20+ (TE 15+, DST 10+). Bust = under 5 (DST under 2).</p>
+        </div>
+        <div class="lab-tools">
+            <div class="lab-pos" role="group" aria-label="Position" id="lab-pos">
+                {% for pos in ['All', 'QB', 'RB', 'WR', 'TE', 'DST'] %}<button type="button" data-pos="{{ pos }}" aria-pressed="{{ 'true' if loop.first else 'false' }}"{% if loop.first %} class="on"{% endif %}>{{ pos }}</button>{% endfor %}
+            </div>
+            <label class="gy-field">Sort
+                <select id="lab-sort">
+                    <option value="med">Median</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
                 </select>
             </label>
         </div>
     </div>
-
-    <div class="dfs-game-picker-hdr">
-        <span>Games in this slate ({{ selected_ids|length }}/{{ all_games|length }})</span>
-        <span class="dfs-game-picker-actions">
-            <button type="button" onclick="dfsToggleGroup(true)">All</button>
-            <button type="button" onclick="dfsToggleGroup(false)">None</button>
-        </span>
+    {% if outs %}
+    <div class="lab-out">
+        <span class="gy-tag bad">Likely out</span>
+        <span>{{ outs | length }} player{{ ' projects' if outs | length == 1 else 's project' }} 12+ but the sim says under 2.5: {% for p in outs %}{{ p.name }} ({{ p.projection }} → {{ p.sim_median }}){{ ', ' if not loop.last }}{% endfor %}. Excluded from every build.</span>
+        <button type="button" class="gy-btn" id="lab-show-out" aria-pressed="false">Show them</button>
     </div>
-
-    {% for group in games_by_slot %}
-    <div class="dfs-slot-group">
-        <div class="dfs-slot-group-hdr">
-            <span>{{ group.label }} <span class="dfs-slot-count">({{ group.games|length }})</span></span>
-            <span class="dfs-game-picker-actions">
-                <button type="button" onclick="dfsToggleGroup(true, '{{ group.key }}')">All</button>
-                <button type="button" onclick="dfsToggleGroup(false, '{{ group.key }}')">None</button>
-            </span>
-        </div>
-        <div class="dfs-game-list">
-        {% for g in group.games %}
-            <label class="dfs-game-check">
-                <input type="checkbox" name="games" value="{{ g.game_id }}" data-slot="{{ group.key }}"{% if g.game_id in selected_ids %} checked{% endif %}>
-                <span>{{ g.away.abbrev }} @ {{ g.home.abbrev }}</span>
-                <span class="game-time" data-utc="{{ g.game_time_utc }}">—</span>
-            </label>
-        {% endfor %}
-        </div>
-    </div>
-    {% endfor %}
-
-    <button type="submit" class="dfs-apply-btn" style="margin-top:14px;">Update Pool</button>
-
-    </div>
-    </details>
-</form>
-
-{% if not selected_ids %}
-<div class="card">No games selected — check at least one game above to build a pool.</div>
-{% elif not optimal %}
-<div class="card">Not enough eligible players in the selected games to fill a full lineup (need at least {{ roster_requirements_summary }} across the games picked, each with enough stored game history to project). Try selecting more games, or lowering the roster requirements above.</div>
-{% else %}
-{% set qb_team = optimal.lineup | selectattr('slot', 'equalto', 'QB') | map(attribute='team') | list | first %}
-<div class="card dfs-optimal-card">
-    <div class="dfs-optimal-hdr">
-        <h2>Optimal Lineup</h2>
-        <span class="dfs-cap-meter"><strong>${{ '{:,}'.format(optimal.total_salary) }}</strong> / ${{ '{:,}'.format(salary_cap) }} cap · <strong>{{ optimal.total_projection }}</strong> proj pts{% if objective != 'projection' %} · optimized for {{ objective_labels[objective] }}{% endif %}{% if stack_min %} · 🔗 stacked with {{ qb_team }}{% endif %}</span>
-    </div>
-    {% if sim_range %}
-    <p class="dfs-sim-range" title="This lineup's TRUE combined simulated range from the game simulator's 150-draw Monte Carlo run, honoring real within-game correlation between teammates (e.g. a QB and his stacked WR1's big games happen together) — not just each player's own marginal estimate summed independently. Any DST or player the simulator doesn't cover contributes its flat projection to every draw.">
-        Simulated range: <strong>{{ sim_range.floor }}</strong> (p10) – <strong>{{ sim_range.median }}</strong> (median) – <strong>{{ sim_range.ceiling }}</strong> (p90)
-    </p>
     {% endif %}
-    <table class="table">
-        <thead><tr><th>Slot</th><th>Player</th><th>Team</th><th>Opp</th><th>Salary</th><th>Proj</th><th title="Standard deviation of this player's own last few games' fantasy points — lower means steadier real output, higher means boom/bust.">Consistency</th><th title="80th-percentile simulated outcome (dash = simulator doesn't cover this player, e.g. DST)">Sim Ceiling</th></tr></thead>
-        <tbody>
-        {% for p in optimal.lineup %}
-        <tr>
-            <td><span class="dfs-slot-badge">{{ p.slot }}</span></td>
-            <td>{{ p.name }}{% if stack_min and p.team == qb_team and p.slot in ('WR', 'TE') %} <span title="Stacked with the QB">🔗</span>{% endif %}</td>
-            <td>{{ p.team }}</td>
-            <td>{{ p.opponent }}</td>
-            <td>${{ '{:,}'.format(p.salary) }}</td>
-            <td>{{ p.projection }}</td>
-            <td>{{ '%.1f'|format(p.stddev) if p.stddev is not none else '—' }}</td>
-            <td>{{ p.sim_ceiling if p.game_id else '—' }}</td>
-        </tr>
+    <div class="gy-table-wrap">
+        <table class="gy-table lab-table" id="lab-table">
+            <thead><tr>
+                <th scope="col">Player</th>
+                <th scope="col" class="curve-h">Sim points <span>(−5 → 45)</span></th>
+                <th scope="col" class="r">Floor</th><th scope="col" class="r">Median</th><th scope="col" class="r">Ceiling</th>
+                <th scope="col" class="r">Boom</th><th scope="col" class="r">Bust</th><th scope="col" class="r">Salary</th>
+                <th scope="col" class="r">Lock / ban</th>
+            </tr></thead>
+            <tbody>
+            {% for p in pool %}
+            {% set L = p.id in locks %}{% set B = p.id in bans %}
+            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
+                <th scope="row">
+                    <span class="lab-pl">{{ p.name }}{% if p.likely_out %}<span class="gy-tag bad">Out?</span>{% endif %}{% if p.id in in_balanced %}<span class="lab-in">● in lineup</span>{% endif %}</span>
+                    <span class="lab-pl-sub">{{ p.position }} · {{ p.team }} vs {{ p.opponent }}</span>
+                </th>
+                <td class="curve">{% if p.curve %}<svg role="img" aria-label="{{ p.name }}: floor {{ p.sim_floor }}, median {{ p.sim_median }}, ceiling {{ p.sim_ceiling }}" viewBox="0 0 100 26" preserveAspectRatio="none"><line x1="10" y1="26" x2="10" y2="0" class="g"/><line x1="50" y1="26" x2="50" y2="0" class="g"/><polygon points="{{ p.curve }}" class="{{ 'out' if p.likely_out else ('in' if p.id in in_balanced else '') }}"/><line x1="{{ p.median_x }}" y1="26" x2="{{ p.median_x }}" y2="2" class="m"/></svg>{% else %}<span class="small">projection only</span>{% endif %}</td>
+                <td class="r mono muted">{{ p.sim_floor | round(1) if p.game_id else '—' }}</td>
+                <td class="r mono">{{ p.sim_median | round(1) }}</td>
+                <td class="r mono">{{ p.sim_ceiling | round(1) }}</td>
+                <td class="r mono" style="color:{{ 'var(--win)' if p.boom_pct and p.boom_pct >= 30 else 'var(--silver)' }};">{{ p.boom_pct ~ '%' if p.boom_pct is not none else '—' }}</td>
+                <td class="r mono" style="color:{{ '#ff8a8a' if p.bust_pct and p.bust_pct >= 40 else 'var(--silver)' }};">{{ p.bust_pct ~ '%' if p.bust_pct is not none else '—' }}</td>
+                <td class="r"><span class="mono">${{ '{:,}'.format(p.salary) }}</span>{% if p.value_per_k %}<span class="lab-vk mono">{{ p.value_per_k }}/k</span>{% endif %}</td>
+                <td class="r nowrap">
+                    <button type="button" class="lab-lb lock{{ ' on' if L }}" aria-pressed="{{ 'true' if L else 'false' }}" aria-label="Lock {{ p.name }}" data-act="lock" data-id="{{ p.id }}"{% if p.likely_out %} disabled{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></button>
+                    <button type="button" class="lab-lb ban{{ ' on' if B }}" aria-pressed="{{ 'true' if B else 'false' }}" aria-label="Ban {{ p.name }}" data-act="ban" data-id="{{ p.id }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M6.5 6.5l11 11"></path></svg></button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="lab-table-foot small"><span id="lab-shown"></span> Salaries are synthetic, so value per $1k is a tiebreaker only. Curves are each player's 150 simulated outcomes. <button type="button" class="gy-link-btn" id="lab-more">Show all</button></div>
+</section>
+
+{# ── 3. Lineups ── #}
+<section id="lineups" class="lab-lineups" aria-labelledby="l-h">
+    <div class="lab-head" style="padding:0;">
+        <div>
+            <h2 id="l-h" class="gy-h2"><span class="mono lab-step">3</span>Three ways to build</h2>
+            <p class="set-sub" style="margin-bottom:0;">Re-optimized from your games, locks and bans. Likely-out players are never used.</p>
+        </div>
+        {% if locks or bans %}
+        <div class="lab-note on">{% for b in builds %}{{ b.label }} {% if b.delta is not none %}<span class="mono">{{ '+' if b.delta >= 0 }}{{ b.delta }}</span>{% else %}—{% endif %}{{ ' · ' if not loop.last }}{% endfor %} median vs no locks/bans · <a href="{{ url_for('nfl_lineup', week=week_ctx.week, filtered=1, games=selected_ids | list, cap=salary_cap, target=target) }}">Clear {{ locks | length + bans | length }}</a></div>
+        {% else %}
+        <div class="lab-note">No locks or bans. Lock or ban players in step 2 and the three builds update with the cost shown here.</div>
+        {% endif %}
+    </div>
+
+    {% set drawn = builds | selectattr('res') | list %}
+    {% if drawn %}
+    <div class="card lab-overlay">
+        <div class="lab-overlay-head">
+            <span class="gy-kpi-label">Lineup score · how often each clears {{ target }}</span>
+            <span class="lab-legend">{% for b in drawn %}<span><i style="background:{{ colors[b.key] }};"></i>{{ b.label }} <span class="mono" style="color:{{ colors[b.key] }};">{{ b.res.dist.p_target ~ '%' if b.res.dist else '—' }}</span></span>{% endfor %}</span>
+        </div>
+        <div id="lab-overlay" class="lab-overlay-chart"></div>
+    </div>
+    {% endif %}
+
+    <div class="lab-builds">
+        {% for b in builds %}
+        <article class="card lab-build{{ ' bal' if b.key == 'bal' }}" aria-label="{{ b.label }} lineup">
+            <div class="lab-build-head">
+                <h3 class="lab-build-title" style="color:{{ colors[b.key] }};">{{ b.label }}</h3>
+                <p class="small">{{ b.desc }}</p>
+                {% if b.res and b.res.dist %}
+                <div class="lab-build-stats">
+                    <div><span class="gy-kpi-label">P10</span><span class="mono">{{ b.res.dist.floor | round(1) }}</span></div>
+                    <div><span class="gy-kpi-label">Median</span><span class="mono" style="color:{{ colors[b.key] }};">{{ b.res.dist.median | round(1) }}</span></div>
+                    <div><span class="gy-kpi-label">P90</span><span class="mono">{{ b.res.dist.ceiling | round(1) }}</span></div>
+                    <div><span class="gy-kpi-label">{{ target }}+</span><span class="mono">{{ b.res.dist.p_target }}%</span></div>
+                </div>
+                {% endif %}
+            </div>
+            {% if b.res %}
+            <ul class="lab-build-list">
+                {% for pl in b.res.lineup %}
+                <li><span class="slot">{{ pl.slot }}</span><span class="nm{{ ' locked' if pl.id in locks }}">{{ '● ' if pl.id in locks }}{{ pl.name }}</span><span class="mono sal">{{ k(pl.salary) }}</span><span class="mono">{{ pl[b.objective] | round(1) }}</span></li>
+                {% endfor %}
+            </ul>
+            <div class="lab-build-foot"><span>Salary <span class="mono" style="color:var(--text);">${{ '{:,}'.format(b.res.total_salary) }}</span></span><span>${{ '{:,}'.format(salary_cap - b.res.total_salary) }} left</span></div>
+            {% else %}
+            <p class="small lab-build-empty">Not enough eligible players in these games (need {{ roster_requirements_summary }}).</p>
+            {% endif %}
+        </article>
         {% endfor %}
-        </tbody>
-    </table>
-</div>
+    </div>
+</section>
+
+{# ── Stacks ── #}
+{% if stacks %}
+<section class="card lab-card lab-pad" aria-labelledby="st-h">
+    <div class="gy-h2-row" style="margin-bottom:14px;">
+        <h2 id="st-h" class="gy-h2">Stacks that rise together</h2>
+        <span class="small">Quarterback + his pass catcher, from the games you picked</span>
+    </div>
+    <div class="lab-stacks">
+        {% for s in stacks %}
+        <div class="set-mini">
+            <span class="gy-kpi-label">{{ s.team }} vs {{ s.opp }}</span>
+            <span class="lab-stack-names">{{ s.qb }} <span style="color:var(--orange);">+</span> {{ s.wr }}</span>
+            <div class="lab-stack-stats">
+                <div><span class="gy-kpi-label">Median</span><span class="mono">{{ s.med }}</span></div>
+                <div><span class="gy-kpi-label">Ceiling</span><span class="mono">{{ s.ceil }}</span></div>
+                <div><span class="gy-kpi-label">Both boom</span><span class="mono" style="color:var(--warn-text);">{{ s.both_boom }}%</span></div>
+            </div>
+            <span class="mono small">${{ '{:,}'.format(s.sal) }} combined</span>
+        </div>
+        {% endfor %}
+    </div>
+    <p class="small" style="margin:12px 0 0;">"Both boom" counts the simulated games where both players cleared their boom line in the same game — the joint number a sim can give you and a projection can't.</p>
+</section>
 {% endif %}
 
-{% if pool %}
-<div class="card dfs-pool-section">
-    <div class="dfs-pool-toolbar">
-        <input type="search" id="dfs-pool-search" class="filter-input" placeholder="Search player or team…" oninput="dfsApplyPoolFilters()">
-        <div class="sport-chip-bar" id="dfs-pos-filter">
-            <button type="button" class="sport-chip sport-chip-active" data-pos="ALL" onclick="dfsFilterPos('ALL', this)">All <span class="sport-chip-count">{{ pool|length }}</span></button>
-            {% for pos in ['QB', 'RB', 'WR', 'TE', 'DST'] %}
-            {% set cnt = pool | selectattr('position', 'equalto', pos) | list | length %}
-            {% if cnt %}
-            <button type="button" class="sport-chip" data-pos="{{ pos }}" onclick="dfsFilterPos('{{ pos }}', this)">{{ pos }} <span class="sport-chip-count">{{ cnt }}</span></button>
-            {% endif %}
+{# ── Post-mortem ── #}
+{% if recap %}
+<section class="card lab-card lab-pad" aria-labelledby="pm-h">
+    <h2 id="pm-h" class="gy-h2" style="margin-bottom:14px;">Post-mortem: can you trust the sim?</h2>
+    <div class="lab-pm">
+        <div class="lab-pm-bars">
+            <span class="gy-kpi-label">Share of the best possible score · {{ recap.weeks }} week{{ 's' if recap.weeks != 1 }}</span>
+            {% set top = recap.methods | map(attribute='share') | max %}
+            {% for m in recap.methods %}
+            <div class="lab-pm-row"><span class="lbl" style="color:{{ 'var(--orange)' if m.label == 'Sim median' else ('var(--warn-text)' if m.label == 'Sim ceiling' else 'var(--silver)') }};">{{ m.label }}</span><span class="trk"><i style="width:{{ m.share }}%; background:{{ 'var(--orange)' if m.label == 'Sim median' else ('var(--warn-text)' if m.label == 'Sim ceiling' else '#8a7f8c') }};"></i></span><span class="mono">{{ m.share }}%</span><span class="small">{{ m.won }} of {{ recap.weeks }} wks</span></div>
             {% endfor %}
+            <a href="{{ url_for('nfl_recap_page') }}" class="small" style="color:var(--orange); font-weight:800; text-decoration:none;">Week-by-week recap →</a>
         </div>
+        {% if recap.zeros %}
+        <div class="lab-zeros">
+            <span class="gy-kpi-label" style="color:#ff8a8a;">Week {{ recap.zeros_week }} zeros</span>
+            <ul>{% for z in recap.zeros %}<li><span>{{ z.name }}</span><span class="mono">{{ z.projection }} → 0.0</span></li>{% endfor %}</ul>
+            <p class="small">Projected but didn't produce. The likely-out check above now runs before every build.</p>
+        </div>
+        {% endif %}
     </div>
-    <table class="table" id="dfs-pool-table">
-        <thead>
-        <tr>
-            <th>Player</th>
-            <th>Pos</th>
-            <th class="dfs-sort-th" data-sort-key="team">Team <span class="dfs-sort-arrow"></span></th>
-            <th>Opp</th>
-            <th class="dfs-sort-th" data-sort-key="salary">Salary <span class="dfs-sort-arrow"></span></th>
-            <th class="dfs-sort-th" data-sort-key="proj">Proj <span class="dfs-sort-arrow"></span></th>
-            <th class="dfs-sort-th" data-sort-key="stddev" title="Standard deviation of this player's own last few games' fantasy points — lower means steadier real output, higher means boom/bust. Dash if fewer than 2 games are stored yet.">Consistency <span class="dfs-sort-arrow"></span></th>
-            <th class="dfs-sort-th" data-sort-key="simfloor" title="10th/median/90th-percentile simulated outcome from the game simulator's 150-draw run — dash if this player isn't covered (e.g. DST)">Sim Floor/Med/Ceil <span class="dfs-sort-arrow"></span></th>
-        </tr>
-        </thead>
-        <tbody id="dfs-pool-tbody">
-        {% for p in pool %}
-        <tr data-position="{{ p.position }}" data-name="{{ p.name|lower }}" data-team="{{ p.team|lower }}" data-salary="{{ p.salary }}" data-proj="{{ p.projection }}" data-stddev="{{ p.stddev if p.stddev is not none else '' }}" data-simfloor="{{ p.sim_min if p.game_id else '' }}">
-            <td>{{ p.name }}</td>
-            <td><span class="dfs-slot-badge">{{ p.position }}</span></td>
-            <td>{{ p.team }}</td>
-            <td>{{ p.opponent }}</td>
-            <td>${{ '{:,}'.format(p.salary) }}</td>
-            <td>{{ p.projection }}</td>
-            <td>{{ '%.1f'|format(p.stddev) if p.stddev is not none else '—' }}</td>
-            <td>{% if p.game_id %}{{ p.sim_min }} / {{ p.sim_median }} / {{ p.sim_ceiling }}{% else %}—{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    <p id="dfs-pool-empty" class="dfs-pool-empty" hidden>No players match your filters.</p>
-</div>
+</section>
+{% endif %}
+
 {% endif %}
 
 {% include "_nfl_methodology.html" %}
-
 {% endif %}
-
 </div>
-
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script type="application/json" id="lab-draws">{{ {'target': target, 'builds': builds | selectattr('res') | map(attribute='key') | list, 'draws': (builds | selectattr('res') | map(attribute='res') | map(attribute='draws') | list)} | tojson }}</script>
 <script>
-/* ── Builder/Rankings in-page toggle (Recap stays a real link/page — only
-   these two share this page's already-fetched `pool`, so only these two
-   are worth avoiding a round-trip for) ── */
 function dfsShowView(view) {
-    var builderPanel  = document.getElementById('dfs-view-builder-panel');
-    var rankingsPanel = document.getElementById('dfs-view-rankings-panel');
-    var builderTab    = document.getElementById('dfs-view-tab-builder');
-    var rankingsTab   = document.getElementById('dfs-view-tab-rankings');
-    if (!builderPanel || !rankingsPanel || !builderTab || !rankingsTab) return;
     var showRankings = view === 'rankings';
-    builderPanel.hidden  = showRankings;
-    rankingsPanel.hidden = !showRankings;
-    builderTab.classList.toggle('sport-chip-active', !showRankings);
-    rankingsTab.classList.toggle('sport-chip-active', showRankings);
+    document.getElementById('dfs-view-builder-panel').hidden = showRankings;
+    document.getElementById('dfs-view-rankings-panel').hidden = !showRankings;
+    [['dfs-view-tab-builder', !showRankings], ['dfs-view-tab-rankings', showRankings]].forEach(function (t) {
+        var el = document.getElementById(t[0]); el.classList.toggle('on', t[1]); el.setAttribute('aria-pressed', t[1] ? 'true' : 'false');
+    });
 }
-
-document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
-    var utc = el.getAttribute('data-utc');
-    if (!utc) return;
-    try {
-        var d = new Date(utc);
-        if (isNaN(d)) return;
-        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
-    } catch(e) {}
+document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
+    var d = new Date(el.getAttribute('data-utc'));
+    if (!isNaN(d)) el.textContent = d.toLocaleDateString([], { weekday: 'short' }).toUpperCase() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 });
-
-/* ── Game picker: global "All"/"None" and per-slot-group "All"/"None" ── */
 function dfsToggleGroup(checked, slot) {
-    var selector = '#dfs-game-form input[type=checkbox]' + (slot ? '[data-slot="' + slot + '"]' : '');
-    document.querySelectorAll(selector).forEach(function(cb) { cb.checked = checked; });
-}
-
-/* ── Player pool: position chip filter + name/team search ── */
-var dfsPoolPos = 'ALL';
-function dfsFilterPos(pos, btn) {
-    dfsPoolPos = pos;
-    document.querySelectorAll('#dfs-pos-filter .sport-chip').forEach(function(c) { c.classList.remove('sport-chip-active'); });
-    btn.classList.add('sport-chip-active');
-    dfsApplyPoolFilters();
-}
-function dfsApplyPoolFilters() {
-    var searchEl = document.getElementById('dfs-pool-search');
-    var q = searchEl ? searchEl.value.toLowerCase().trim() : '';
-    var rows = document.querySelectorAll('#dfs-pool-tbody tr');
-    var visible = 0;
-    rows.forEach(function(row) {
-        var matchesPos = dfsPoolPos === 'ALL' || row.getAttribute('data-position') === dfsPoolPos;
-        var matchesSearch = !q || row.dataset.name.indexOf(q) !== -1 || row.dataset.team.indexOf(q) !== -1;
-        var show = matchesPos && matchesSearch;
-        row.style.display = show ? '' : 'none';
-        if (show) visible++;
+    document.querySelectorAll('#dfs-game-form input[name=games]' + (slot ? '[data-slot="' + slot + '"]' : '')).forEach(function (cb) {
+        cb.checked = checked; cb.closest('.lab-game').classList.toggle('on', checked);
     });
-    var empty = document.getElementById('dfs-pool-empty');
-    if (empty) empty.hidden = visible !== 0;
+}
+function labOpenSim(id, btn) {
+    var panel = document.getElementById('sim-' + id), open = panel.hidden;
+    document.querySelectorAll('.lab-sim').forEach(function (p) { p.hidden = true; });
+    document.querySelectorAll('.lab-open[aria-expanded]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); b.textContent = 'Open sim ▾'; b.closest('.lab-game').classList.remove('open'); });
+    panel.hidden = !open;
+    if (open) { btn.setAttribute('aria-expanded', 'true'); btn.textContent = 'Hide sim ▴'; btn.closest('.lab-game').classList.add('open'); }
 }
 
-/* ── Player pool: click-to-sort columns ── */
-(function() {
-    var table = document.getElementById('dfs-pool-table');
+/* ── Player table: position chips, sort, likely-out toggle, top-16 ── */
+(function () {
+    var table = document.getElementById('lab-table');
     if (!table) return;
-    var tbody = table.querySelector('tbody');
-    var ths = table.querySelectorAll('.dfs-sort-th');
-    if (!tbody || !ths.length) return;
-
-    var sortKey = 'proj', sortDir = -1;
-
-    function applySort() {
-        var rows = Array.from(tbody.querySelectorAll('tr'));
-        rows.sort(function(a, b) {
-            var av = a.dataset[sortKey], bv = b.dataset[sortKey];
-            if (sortKey === 'team') return av.localeCompare(bv) * sortDir;
-            return ((parseFloat(av) || 0) - (parseFloat(bv) || 0)) * sortDir;
+    var tbody = table.querySelector('tbody'), pos = 'All', showOut = false, all = false;
+    var rows = Array.from(tbody.rows);
+    function render() {
+        var key = document.getElementById('lab-sort').value;
+        var dir = key === 'bust' ? 1 : -1;
+        rows.sort(function (a, b) { return (parseFloat(a.dataset[key]) - parseFloat(b.dataset[key])) * dir; });
+        var n = 0, match = 0;
+        rows.forEach(function (r) {
+            tbody.appendChild(r);
+            var ok = (pos === 'All' || r.dataset.pos === pos) && (showOut || !r.dataset.out);
+            if (ok) match++;
+            r.hidden = !(ok && (all || n < 16));
+            if (ok) n++;
         });
-        rows.forEach(function(row) { tbody.appendChild(row); });
-        ths.forEach(function(th) {
-            var arrow = th.querySelector('.dfs-sort-arrow');
-            if (th.dataset.sortKey === sortKey) {
-                th.style.color = 'var(--text)';
-                if (arrow) arrow.textContent = sortDir > 0 ? ' ▲' : ' ▼';
-            } else {
-                th.style.color = '';
-                if (arrow) arrow.textContent = '';
-            }
-        });
+        document.getElementById('lab-shown').textContent = 'Showing ' + Math.min(match, all ? match : 16) + ' of ' + match + '.';
+        document.getElementById('lab-more').textContent = all ? 'Show top 16' : 'Show all';
     }
-
-    ths.forEach(function(th) {
-        th.addEventListener('click', function() {
-            var key = th.dataset.sortKey;
-            if (key === sortKey) {
-                sortDir *= -1;
-            } else {
-                sortKey = key;
-                sortDir = key === 'team' ? 1 : -1;
-            }
-            applySort();
-        });
+    document.getElementById('lab-pos').addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        pos = b.dataset.pos;
+        this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+        render();
     });
+    document.getElementById('lab-sort').addEventListener('change', render);
+    document.getElementById('lab-more').addEventListener('click', function () { all = !all; render(); });
+    var so = document.getElementById('lab-show-out');
+    if (so) so.addEventListener('click', function () { showOut = !showOut; so.textContent = showOut ? 'Hide them' : 'Show them'; so.setAttribute('aria-pressed', showOut ? 'true' : 'false'); render(); });
+    // Lock / ban: toggle the hidden form fields and rebuild.
+    tbody.addEventListener('click', function (e) {
+        var b = e.target.closest('.lab-lb'); if (!b) return;
+        var form = document.getElementById('dfs-game-form'), id = b.dataset.id, act = b.dataset.act, other = act === 'lock' ? 'ban' : 'lock';
+        var existing = form.querySelector('input[name="' + act + '"][value="' + CSS.escape(id) + '"]');
+        form.querySelectorAll('input[name="' + other + '"][value="' + CSS.escape(id) + '"]').forEach(function (i) { i.remove(); });
+        if (existing) existing.remove();
+        else { var i = document.createElement('input'); i.type = 'hidden'; i.name = act; i.value = id; form.appendChild(i); }
+        b.disabled = true;
+        form.submit();
+    });
+    render();
+})();
 
-    applySort();
-}());
+/* ── Lineup score overlay: smoothed histogram of each build's 150 joint draws ── */
+(function () {
+    var box = document.getElementById('lab-overlay');
+    if (!box) return;
+    var data = JSON.parse(document.getElementById('lab-draws').textContent);
+    var colors = { safe: 'var(--purple-text)', bal: 'var(--orange)', ceil: 'var(--warn-text)' };
+    var all = [].concat.apply([], data.draws.filter(Boolean));
+    if (!all.length) { box.innerHTML = '<p class="small">No simulated draws for these lineups yet.</p>'; return; }
+    var lo = Math.floor(Math.min.apply(null, all.concat([data.target])) / 10) * 10 - 10;
+    var hi = Math.ceil(Math.max.apply(null, all.concat([data.target])) / 10) * 10 + 10;
+    var W = 600, H = 160, step = (hi - lo) / 40;
+    function dens(d) {
+        var sd = Math.max(3, (hi - lo) / 30), out = [];
+        for (var x = lo; x <= hi; x += step) {
+            var s = 0; d.forEach(function (v) { s += Math.exp(-((x - v) * (x - v)) / (2 * sd * sd)); });
+            out.push(s / d.length);
+        }
+        return out;
+    }
+    var curves = data.draws.map(function (d) { return d ? dens(d) : null; });
+    var peak = Math.max.apply(null, [].concat.apply([], curves.filter(Boolean)));
+    var X = function (x) { return ((x - lo) / (hi - lo) * W).toFixed(1); };
+    var svg = '<line x1="0" y1="150" x2="600" y2="150" stroke="var(--border)" vector-effect="non-scaling-stroke"/>'
+        + '<line x1="' + X(data.target) + '" y1="0" x2="' + X(data.target) + '" y2="150" stroke="var(--text)" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>';
+    curves.forEach(function (c, i) {
+        if (!c) return;
+        var pts = c.map(function (v, j) { return X(lo + j * step) + ',' + (150 - v / peak * 140).toFixed(1); }).join(' ');
+        svg += '<polyline points="' + pts + '" fill="none" stroke="' + colors[data.builds[i]] + '" stroke-width="2.5" vector-effect="non-scaling-stroke"/>';
+    });
+    var ticks = '';
+    for (var t = 0; t <= 4; t++) ticks += '<span>' + Math.round(lo + (hi - lo) * t / 4) + '</span>';
+    box.innerHTML = '<svg role="img" aria-label="Simulated lineup score distributions with the ' + data.target + ' target marked" viewBox="0 0 600 160" preserveAspectRatio="none" width="100%" height="160">' + svg + '</svg>'
+        + '<div class="lab-ticks mono">' + ticks + '</div>';
+})();
 </script>
 {% endblock %}

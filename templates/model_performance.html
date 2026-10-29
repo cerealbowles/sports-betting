@@ -194,974 +194,268 @@
 {% endblock %}
 
 {% block content %}
+{% set is_ml = bet_type == 'moneyline' %}
+{% set st = spread_stats if not is_ml else none %}
+{% set cal_buckets = (buckets if is_ml else st.buckets) | selectattr('count') | list %}
+{% set pip_rows = ml_pip_stats if is_ml else st.pip_buckets %}
+{% set n_resolved = resolved if is_ml else st.n %}
+{% set _qs = request.args.to_dict() %}
+<div class="schedule-body mp">
 
-
-<div class="section-header" style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom: 14px; flex-wrap:wrap;">
-    <div style="display:flex; flex-direction:column; align-items:flex-start; gap:4px;">
-        <span style="font-family:var(--font-cond); font-size:0.78rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ sport }} · predictions vs outcomes</span>
-        <h1 style="margin:0;">The Autopsy</h1>
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">{{ sport }} · predictions vs outcomes{% if is_ml %} · {{ '{:,}'.format(resolved) }} resolved · {{ total - resolved }} pending{% elif st %} · {{ st.n }} picks graded{% endif %}</span>
+        <h1 class="hub-title">The Autopsy</h1>
     </div>
-    <a href="{{ url_for(sport_meta.schedule_endpoint) }}" class="sport-chip" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">{{ sport_meta.emoji }} {{ sport }} Schedule →</a>
-</div>
-
-{% set _bt_qs = request.args.to_dict() %}
-<div class="bet-type-tabs">
-    {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread')] %}
-    {% set _ = _bt_qs.update({'type': code}) %}
-    <a href="{{ url_for('model_performance', **_bt_qs) }}" class="bet-type-tab{% if bet_type == code %} active{% endif %}">{{ label }}</a>
-    {% endfor %}
+    <div class="mp-controls">
+        <label class="gy-field mp-sport">Sport
+            <select onchange="location.href=this.value" aria-label="Sport">
+                {% for code in sports %}
+                {% set _ = _qs.update({'sport': code}) %}
+                <option value="{{ url_for('model_performance', **_qs) }}"{% if code == sport %} selected{% endif %}>{{ code }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% set _ = _qs.update({'sport': sport}) %}
+        <div class="gy-seg" role="group" aria-label="Market">
+            {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread')] %}
+            {% set _ = _qs.update({'type': code}) %}
+            <a href="{{ url_for('model_performance', **_qs) }}" class="gy-seg-a{{ ' on' if bet_type == code }}"{% if bet_type == code %} aria-current="page"{% endif %}>{{ label }}</a>
+            {% endfor %}
+        </div>
+        <a href="{{ url_for(sport_meta.schedule_endpoint) }}" class="gy-btn mp-sched">Schedule →</a>
+    </div>
 </div>
 
 {% if total == 0 %}
-<div class="card" style="padding: 24px; text-align: center;">
-    <p style="color: var(--text-muted);">No predictions logged yet for {{ sport }}.
-        <a href="{{ url_for(sport_meta.schedule_endpoint) }}" style="color:var(--orange); font-weight:700; text-decoration:none;">
-            Visit the {{ sport }} page →
-        </a>
-    </p>
-</div>
-{% elif bet_type != 'moneyline' %}
-
-{% set bt_stats = spread_stats %}
-{% set bt_label = 'Spread' %}
-<!-- ══ Spread accuracy ══ -->
-<div class="perf-grid">
-    <div class="stat-card">
-        <div class="stat-label">Picks Tracked</div>
-        <div class="stat-value">{{ bt_stats.n }}</div>
-        <div class="stat-sub">{{ bt_stats.wins }}-{{ bt_stats.losses }} record</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Accuracy</div>
-        <div class="stat-value" style="color: {% if bt_stats.accuracy and bt_stats.accuracy >= 55 %}var(--win){% elif bt_stats.accuracy and bt_stats.accuracy < 50 %}var(--loss){% else %}var(--text){% endif %}">
-            {{ bt_stats.accuracy if bt_stats.accuracy is not none else '—' }}{% if bt_stats.accuracy is not none %}%{% endif %}
-        </div>
-        <div class="stat-sub">picks correct, pushes excluded</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">ROI</div>
-        <div class="stat-value {{ 'status-win' if bt_stats.roi and bt_stats.roi >= 0 else 'status-loss' }}">
-            {% if bt_stats.roi is not none %}{{ '+' if bt_stats.roi > 0 }}{{ bt_stats.roi }}%{% else %}—{% endif %}
-        </div>
-        <div class="stat-sub">flat 1u, stored price at pick time</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Brier Score</div>
-        <div class="stat-value" style="color: {% if bt_stats.brier and bt_stats.brier < 0.22 %}var(--win){% elif bt_stats.brier and bt_stats.brier > 0.25 %}var(--loss){% else %}var(--text){% endif %}">
-            {{ bt_stats.brier if bt_stats.brier is not none else '—' }}
-        </div>
-        <div class="stat-sub">lower is better · 0.25 = random</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Log Loss</div>
-        <div class="stat-value">{{ bt_stats.log_loss if bt_stats.log_loss is not none else '—' }}</div>
-        <div class="stat-sub">lower is better · ~0.69 = random</div>
-    </div>
-</div>
-
-<p class="section-note" style="margin-bottom:14px;">Spread picks are backfilled from history where possible: home win probability + the ESPN opening line already stored for past games feed <code>spread_proxy.cover_prob()</code>, graded against the actual final margin. Prices on backfilled rows assume standard -110 juice (ESPN's odds feed doesn't carry per-side pricing); rows tracked going forward use the real price from the sportsbook feed.</p>
-
-{% if bt_stats.n == 0 %}
-<div class="card" style="padding: 24px; text-align: center;">
-    <p style="color: var(--text-muted);">No {{ bt_label.lower() }} picks tracked yet for {{ sport }}.</p>
-</div>
-{% else %}
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Calibration</h2>
-        <span class="small">predicted vs actual hit rate for the model's picked side</span>
-    </div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Pred Range</th>
-                <th>Picks</th>
-                <th>Predicted</th>
-                <th>Actual</th>
-                <th>Error</th>
-                <th>ROI%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for b in bt_stats.buckets %}
-        <tr>
-            <td>{{ b.label }}</td>
-            <td>{{ b.count }}</td>
-            <td><span class="calib-bar-wrap"><span class="calib-bar calib-bar-pred" style="width:{{ b.mid }}%"></span></span>{{ b.mid }}%</td>
-            <td><span class="calib-bar-wrap"><span class="calib-bar calib-bar-act" style="width:{{ b.actual }}%"></span></span>{{ b.actual }}%</td>
-            <td>
-                <span class="{{ 'calib-err-ok' if b.error | abs <= 5 else ('calib-err-neg' if b.error | abs <= 10 else 'calib-err-pos') }}">
-                    {{ '+' if b.error > 0 }}{{ b.error }}%
-                </span>
-            </td>
-            <td>
-                {% if b.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Each row shows picks where the model's confidence in its picked side fell in that range. Error = actual − predicted. Near zero is well-calibrated.</p>
-</div>
-
-{% if bt_stats.pip_buckets %}
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Win Rate by Confidence Pips</h2>
-        <span class="small">same 1-6 pip scale shown on the game card chip</span>
-    </div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr><th>Pips</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
-        </thead>
-        <tbody>
-        {% for b in bt_stats.pip_buckets %}
-        <tr>
-            <td>{{ b.pips }}/6</td>
-            <td>{{ b.count }}</td>
-            <td><span class="{{ 'calib-err-ok' if b.win_rate >= 55 else ('calib-err-pos' if b.win_rate >= 50 else 'calib-err-neg') }}">{{ b.win_rate }}%</span></td>
-            <td>
-                {% if b.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Higher pips should show higher win rate if confidence tracks reality. A flat or inverted line means the pip scale isn't adding signal for this bet type.</p>
-</div>
-{% endif %}
-
-{% if spread_omen_bucket_stats %}
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Spread Omen Score</h2>
-        <span class="small">composite score (factor consensus + edge zone + calibration) · diagnostic, not yet used to gate picks</span>
-    </div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr><th>Score</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
-        </thead>
-        <tbody>
-        {% for s in spread_omen_bucket_stats %}
-        <tr>
-            <td>{{ s.label }}</td>
-            <td>{{ s.count }}</td>
-            <td><span class="{{ 'calib-err-ok' if s.win_rate >= 55 else ('calib-err-pos' if s.win_rate >= 50 else 'calib-err-neg') }}">{{ s.win_rate }}%</span></td>
-            <td>
-                {% if s.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if s.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if s.avg_roi > 0 }}{{ s.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">A spread-market sibling of MLB's Omen Score, blending how much the model's own reweighted factors agree with the pick, the edge-size zone, and the probability-calibration bucket — each weighted by how that bucket has actually performed historically. If higher scores show higher ROI here, that's a sign this score could tighten which spread picks earn a ★; if not, it isn't adding signal beyond the existing edge/Kelly bar.</p>
-</div>
-{% endif %}
-
-{% include "_recommended_bets_card.html" %}
-{% endif %}
-
+<div class="card mp-empty">No predictions logged yet for {{ sport }}. <a href="{{ url_for(sport_meta.schedule_endpoint) }}">Visit the {{ sport }} page →</a></div>
 {% else %}
 
-<!-- ── Summary stats ── -->
-<div class="perf-grid">
-    <div class="stat-card">
-        <div class="stat-label">Predictions</div>
-        <div class="stat-value">{{ total }}</div>
-        <div class="stat-sub">{{ resolved }} resolved · {{ total - resolved }} pending</div>
+{# ── Model health ── #}
+<section class="card gy-kpis mp-health" aria-label="Model health">
+    {% if is_ml %}
+    {% set base = (sport_meta.baseline | regex_first_number) %}
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Accuracy</span>{% if accuracy is not none and base %}<span class="gy-tag {{ 'good' if accuracy >= base else 'bad' }}">{{ '+' if accuracy >= base }}{{ (accuracy - base) | round(1) }} pts</span>{% endif %}</div>
+        <span class="gy-kpi-val mono">{{ accuracy if accuracy is not none else '—' }}{% if accuracy is not none %}%{% endif %}</span>
+        <div class="mp-meter" aria-hidden="true"><span style="width:{{ accuracy or 0 }}%;"></span>{% if base %}<i style="left:{{ base }}%;"></i>{% endif %}</div>
+        <span class="gy-kpi-sub">vs {{ sport_meta.baseline }} baseline</span>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">Accuracy</div>
-        <div class="stat-value" style="color: {% if accuracy and accuracy >= 55 %}var(--win){% elif accuracy and accuracy < 50 %}var(--loss){% else %}var(--text){% endif %}">
-            {{ accuracy }}%
-        </div>
-        <div class="stat-sub">baseline {{ sport_meta.baseline }}</div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Brier score</span>{% if brier is not none %}<span class="gy-tag {{ 'good' if brier < 0.25 else 'bad' }}">{{ 'Beats random' if brier < 0.25 else 'Worse than random' }}</span>{% endif %}</div>
+        <span class="gy-kpi-val mono">{{ brier if brier is not none else '—' }}</span>
+        <div class="mp-meter" aria-hidden="true"><span style="width:{{ ([0, (0.25 - (brier or 0.25)) / 0.25 * 100] | max) | round(1) }}%;"></span><i style="left:0;"></i></div>
+        <span class="gy-kpi-sub">lower is better · 0.25 = coin flip</span>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">Brier Score</div>
-        <div class="stat-value" style="color: {% if brier and brier < 0.22 %}var(--win){% elif brier and brier > 0.25 %}var(--loss){% else %}var(--text){% endif %}">
-            {{ brier if brier is not none else '—' }}
-        </div>
-        <div class="stat-sub">lower is better · 0.25 = random</div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Log loss</span>{% if log_loss is not none %}<span class="gy-tag {{ 'good' if log_loss < 0.693 else 'bad' }}">{{ 'Beats random' if log_loss < 0.693 else 'Worse than random' }}</span>{% endif %}</div>
+        <span class="gy-kpi-val mono">{{ log_loss if log_loss is not none else '—' }}</span>
+        <div class="mp-meter" aria-hidden="true"><span style="width:{{ ([0, (0.693 - (log_loss or 0.693)) / 0.693 * 100] | max) | round(1) }}%;"></span><i style="left:0;"></i></div>
+        <span class="gy-kpi-sub">lower is better · 0.69 = coin flip</span>
     </div>
-    {% if resolved == 0 %}
-    <div class="stat-card" style="grid-column: span 3; text-align: center; padding: 16px;">
-        <p class="small">No resolved predictions yet — check back after today's games finish.</p>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Predictions</span><span class="gy-tag">{{ total - resolved }} pending</span></div>
+        <span class="gy-kpi-val mono">{{ '{:,}'.format(total) }}</span>
+        <div class="mp-meter" aria-hidden="true"><span style="width:{{ (resolved / total * 100) | round(1) if total else 0 }}%;"></span></div>
+        <span class="gy-kpi-sub">{{ '{:,}'.format(resolved) }} resolved</span>
     </div>
     {% else %}
-    <div class="stat-card">
-        <div class="stat-label">Log Loss</div>
-        <div class="stat-value">{{ log_loss if log_loss is not none else '—' }}</div>
-        <div class="stat-sub">lower is better · ~0.69 = random</div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Picks tracked</span></div>
+        <span class="gy-kpi-val mono">{{ st.n }}</span>
+        <span class="gy-kpi-sub">{{ st.wins }}-{{ st.losses }} record</span>
+    </div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Accuracy</span>{% if st.accuracy is not none %}<span class="gy-tag {{ 'good' if st.accuracy >= 52.4 else 'bad' }}">{{ 'Beats -110' if st.accuracy >= 52.4 else 'Under -110' }}</span>{% endif %}</div>
+        <span class="gy-kpi-val mono">{{ st.accuracy if st.accuracy is not none else '—' }}{% if st.accuracy is not none %}%{% endif %}</span>
+        <div class="mp-meter" aria-hidden="true"><span style="width:{{ st.accuracy or 0 }}%;"></span><i style="left:52.4%;"></i></div>
+        <span class="gy-kpi-sub">pushes excluded · 52.4% breaks even at -110</span>
+    </div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">ROI</span></div>
+        <span class="gy-kpi-val mono" style="color:{{ 'var(--win)' if st.roi and st.roi >= 0 else 'var(--loss)' }};">{% if st.roi is not none %}{{ '+' if st.roi > 0 }}{{ st.roi }}%{% else %}—{% endif %}</span>
+        <span class="gy-kpi-sub">flat 1u, stored price at pick time</span>
+    </div>
+    <div>
+        <div class="mp-h-top"><span class="gy-kpi-label">Brier score</span>{% if st.brier is not none %}<span class="gy-tag {{ 'good' if st.brier < 0.25 else 'bad' }}">{{ 'Beats random' if st.brier < 0.25 else 'Worse than random' }}</span>{% endif %}</div>
+        <span class="gy-kpi-val mono">{{ st.brier if st.brier is not none else '—' }}</span>
+        <span class="gy-kpi-sub">log loss {{ st.log_loss if st.log_loss is not none else '—' }} · 0.25 = coin flip</span>
     </div>
     {% endif %}
-</div>
+</section>
 
-{% include "_recommended_bets_card.html" %}
-
-{% if resolved >= 1 %}
-
-<!-- ══ ZONE 1: Model Accuracy ══ -->
-<div class="zone-divider">
-    <h3>Model Accuracy</h3>
-    <span class="zone-sub">how well the model reads {{ sport_meta.noun }} data</span>
-    <span class="zone-line"></span>
-</div>
-
-{% if trend_weeks and trend_weeks|length > 1 %}
-<!-- ── Trend over time ── -->
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Trend Over Time</h2>
-        <span class="small">weekly win rate &amp; Brier score, all resolved predictions</span>
-    </div>
-    <div style="height:220px;">
-        <canvas id="chartTrend"></canvas>
-    </div>
-    <p class="section-note">One point per Mon–Sun week. Hover for sample size — sparse weeks (offseason edges, bye weeks) are noisy, not a verdict.</p>
-</div>
-<script type="application/json" id="trend-data">{{ trend_weeks | tojson }}</script>
-{% endif %}
-
-<!-- ── Calibration ── -->
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Calibration</h2>
-        <span class="small">predicted vs actual win rate for favored team</span>
-    </div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Pred Range</th>
-                <th>Games</th>
-                <th>Predicted</th>
-                <th>Actual</th>
-                <th>Error</th>
-                <th>ROI%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for b in buckets %}
-        <tr{% if b.count == 0 %} class="empty-bucket"{% endif %}>
-            <td>{{ b.label }}</td>
-            <td>{{ b.count or '—' }}</td>
-            <td>
-                {% if b.count > 0 %}
-                <span class="calib-bar-wrap"><span class="calib-bar calib-bar-pred" style="width:{{ b.mid }}%"></span></span>{{ b.mid }}%
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if b.actual is not none %}
-                <span class="calib-bar-wrap"><span class="calib-bar calib-bar-act" style="width:{{ b.actual }}%"></span></span>{{ b.actual }}%
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if b.error is not none %}
-                <span class="{{ 'calib-err-ok' if b.error | abs <= 5 else ('calib-err-neg' if b.error | abs <= 10 else 'calib-err-pos') }}">
-                    {{ '+' if b.error > 0 }}{{ b.error }}%
-                </span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if b.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Each row shows games where the model's favored team had that confidence range. Error = actual − predicted. Near zero is well-calibrated. Positive = model underestimated win rate. Negative = overestimated.</p>
-</div>
-
-{% if ml_pip_stats %}
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Win Rate by Confidence Pips</h2>
-        <span class="small">same 1-6 pip scale shown on the game card chip</span>
-    </div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr><th>Pips</th><th>Picks</th><th>Win Rate</th><th>ROI%</th></tr>
-        </thead>
-        <tbody>
-        {% for b in ml_pip_stats %}
-        <tr>
-            <td>{{ b.pips }}/6</td>
-            <td>{{ b.count }}</td>
-            <td><span class="{{ 'calib-err-ok' if b.win_rate >= 55 else ('calib-err-pos' if b.win_rate >= 50 else 'calib-err-neg') }}">{{ b.win_rate }}%</span></td>
-            <td>
-                {% if b.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if b.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Higher pips should show higher win rate if confidence tracks reality. A flat or inverted line means the pip scale isn't adding signal for Moneyline.</p>
-</div>
-{% endif %}
-
-{% endif %}
-
-{% if factor_stats %}
-<!-- ── Factor correlation ── -->
-<div class="card" style="margin-bottom: 14px;">
-    <div class="section-header" style="margin-bottom: 12px;">
-        <h2>Factor Correlation with Outcomes</h2>
-        <span class="small">how well each factor predicts home wins</span>
-    </div>
-    {% for f in factor_stats %}
-    <div class="factor-bar-row">
-        <span class="factor-label">{{ f.label }}</span>
-        <div class="factor-bar-outer">
-            <div class="factor-bar-inner {{ 'fcorr-pos' if f.corr >= 0 else 'fcorr-neg' }}"
-                 style="width: {{ (f.corr | abs * 100) | round(0) | int }}%"></div>
+{% set findings = model_findings(cal_buckets, pip_rows, factor_stats if is_ml else none) %}
+<div class="mp-row">
+    <section class="card mp-findings" aria-labelledby="find-h">
+        <div class="gy-h2-row mp-pad">
+            <h2 id="find-h" class="gy-h2">What the body says</h2>
+            <span class="small">Flagged automatically from the tables below</span>
         </div>
-        <span class="factor-corr {{ 'fcorr-pos-text' if f.corr >= 0 else 'fcorr-neg-text' }}">{{ '+' if f.corr > 0 }}{{ f.corr }}</span>
-        <span class="factor-n">n={{ f.n }}</span>
-    </div>
-    {% endfor %}
-    <p class="section-note" style="margin-top: 8px;">Pearson correlation between factor contribution and home team win. Positive = factor correctly signals home wins. Near zero = not predictive in your sample. Negative = factor currently backfiring.</p>
-</div>
-{% endif %}
-
-{% if rank_stats or rank_comparison or movement_stats or firing_stats or score_bucket_stats or market_agree_stats or consensus_stats or fav_dog_stats or closing_dist_stats %}
-<!-- ══ ZONE 2: Scoring & Market Signal ══ -->
-<div class="zone-divider">
-    <h3>Scoring &amp; Market Signal</h3>
-    <span class="zone-sub">how the omen score reads odds, line movement &amp; edge</span>
-    {% if fav_dog_stats %}
-    <span class="zone-chips" title="model pick classified by opening market side (vig-free prob ≥ 50% = Fav)">
-      {% for fd in fav_dog_stats %}
-      <span class="zone-chip">{{ fd.type }} <strong class="{{ 'chip-pos' if fd.avg_roi and fd.avg_roi > 0 else 'chip-neg' }}">{{ '+' if fd.avg_roi and fd.avg_roi > 0 }}{{ fd.avg_roi if fd.avg_roi is not none else '—' }}%</strong></span>
-      {% endfor %}
-    </span>
-    {% endif %}
-    <span class="zone-line"></span>
-</div>
-{% endif %}
-
-{% if rank_stats %}
-<!-- ── Rank performance ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Pick Rank Performance</span>
-        <span class="sd-sub">does the #1 pick outperform #2, #3?</span>
-        {% if rank_stats %}
-        <span class="sd-teaser">#{{ rank_stats[0].rank | replace('#','') }}: <strong>{{ rank_stats[0].win_rate }}%</strong> WR · {{ '+' if rank_stats[0].avg_roi and rank_stats[0].avg_roi > 0 }}{{ rank_stats[0].avg_roi if rank_stats[0].avg_roi is not none else '—' }}% ROI (n={{ rank_stats[0].count }})</span>
+        {% if findings %}
+        <ol class="mp-find-list">
+            {% for x in findings %}
+            <li>
+                <span class="gy-tag {{ x.kind }}">{{ x.tag }}</span>
+                <div><span class="mp-find-title">{{ x.title }}</span><span class="mp-find-detail">{{ x.detail }}</span></div>
+                <button type="button" class="gy-btn" data-go-tab="{{ x.tab }}">{{ {'cal': 'Calibration', 'pips': 'Pips', 'factors': 'Factors'}[x.tab] }}</button>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="small mp-pad" style="padding-top:0;">Nothing stands out yet — every bucket with 30+ games is within 5 points of its prediction.</p>
         {% endif %}
-    </summary>
-    <div class="score-details-body">
-    <div class="calib-scroll">
-    <table class="calib-table grade-perf-table">
-        <thead>
-            <tr>
-                <th class="grade-col-th"></th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Avg CLV</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for r in rank_stats %}
-        <tr>
-            <td class="grade-badge-cell">
-                <span class="grade-badge" style="background:rgba(255,255,255,0.05);color:var(--text);font-size:0.72rem;width:34px;">{{ r.rank }}</span>
-            </td>
-            <td>{{ r.count }}</td>
-            <td>
-                {% if r.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if r.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if r.avg_roi > 0 }}{{ r.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if r.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if r.lift_wr > 0 else ('lift-neg' if r.lift_wr < 0 else 'lift-zero') }}">{{ '+' if r.lift_wr > 0 }}{{ r.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if r.avg_clv is not none %}
-                <span class="{{ 'calib-err-ok' if r.avg_clv > 0 else ('calib-err-neg' if r.avg_clv < -0.5 else '') }}">{{ '+' if r.avg_clv > 0 }}{{ r.avg_clv }}%</span>
-                <span style="font-size:0.65rem;color:var(--text-muted)"> n={{ r.clv_n }}</span>
-                {% else %}<span style="color:var(--text-muted);font-size:0.72rem">accumulating</span>{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if r.win_rate >= 55 else ('calib-err-pos' if r.win_rate >= 50 else 'calib-err-neg') }}">{{ r.win_rate }}%</span>
-            </td>
-        </tr>
+        {% if not is_ml %}<p class="small mp-pad" style="padding-top:0;">Spread picks are backfilled from history where possible: home win probability + the stored ESPN opening line feed <code>spread_proxy.cover_prob()</code>, graded against the final margin. Backfilled rows assume -110; rows tracked going forward use the real price.</p>{% endif %}
+    </section>
+    {% include "_recommended_bets_card.html" %}
+</div>
+
+{% if n_resolved %}
+{% set tabs = [('cal', 'Calibration', cal_buckets | length ~ ' buckets'), ('pips', 'Confidence pips', (pip_rows or []) | length)] %}
+{% if is_ml and factor_stats %}{% set tabs = tabs + [('factors', 'Factors', factor_stats | length)] %}{% endif %}
+{% set has_signal = rank_stats or rank_comparison or movement_stats or firing_stats or score_bucket_stats or market_agree_stats or consensus_stats or fav_dog_stats or closing_dist_stats or dow_stats or travel_stats or spread_omen_bucket_stats %}
+{% if has_signal %}{% set tabs = tabs + [('signal', 'Market signal', '')] %}{% endif %}
+{% if pred_days %}{% set tabs = tabs + [('recent', 'Recent slates', pred_days | length)] %}{% endif %}
+{% if trend_weeks and trend_weeks|length > 1 %}{% set tabs = tabs + [('trend', 'Trend', 'weekly')] %}{% endif %}
+<section class="card mp-tabs" aria-label="Deep dives">
+    <div role="tablist" aria-label="Analysis" class="mp-tablist">
+        {% for id, label, hint in tabs %}
+        <button type="button" role="tab" id="tab-{{ id }}" aria-controls="panel-{{ id }}" aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}" data-tab="{{ id }}">{{ label }} <span class="mono">{{ hint }}</span></button>
         {% endfor %}
-        {% if baseline_wr is not none %}
-        <tr style="border-top: 1px solid var(--border);">
-            <td class="grade-badge-cell"><span style="font-size:0.68rem;color:var(--text-muted);padding-left:2px;">All</span></td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">—</td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">{% if baseline_roi is not none %}{{ '+' if baseline_roi > 0 }}{{ baseline_roi }}%{% else %}—{% endif %}</td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">baseline</td>
-            <td></td>
-            <td style="color:var(--text-muted);font-size:0.78rem;">{{ baseline_wr }}%</td>
-        </tr>
+    </div>
+
+    {# Calibration #}
+    <div role="tabpanel" id="panel-cal" aria-labelledby="tab-cal" class="mp-panel mp-split">
+        {% if cal_buckets %}
+        {% set xs = cal_buckets | map(attribute='mid') | list %}
+        {% set ys = (cal_buckets | map(attribute='actual') | list) + xs %}
+        {% set x0 = (xs | min) - 2 %}{% set x1 = (xs | max) + 2 %}
+        {% set y0 = (ys | min) - 4 %}{% set y1 = (ys | max) + 4 %}
+        {% set nmax = cal_buckets | map(attribute='count') | max %}
+        <div class="mp-cal-chart">
+            <h3 class="mp-h3">Predicted vs actual</h3>
+            <p class="small">Dots on the line are well calibrated. Below the line = model too confident. Dot size = {{ 'games' if is_ml else 'picks' }}.</p>
+            <div class="mp-scatter-wrap">
+                <div class="mp-scatter-y mono"><span style="top:0;">{{ y1 | round | int }}%</span><span style="bottom:0;">{{ y0 | round | int }}%</span></div>
+                <div class="mp-scatter" role="img" aria-label="Calibration: {% for b in cal_buckets %}{{ b.label }} predicted {{ b.mid }}%, actual {{ b.actual }}%{{ '; ' if not loop.last }}{% endfor %}">
+                    <svg aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <line x1="{{ (x0 - x0) }}" y1="{{ 100 - (x0 - y0) / (y1 - y0) * 100 }}" x2="100" y2="{{ 100 - (x1 - y0) / (y1 - y0) * 100 }}" stroke="var(--border-strong)" stroke-dasharray="5 5" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+                    </svg>
+                    {% for b in cal_buckets %}
+                    {% set err = b.error | abs %}
+                    <span title="{{ b.label }}: predicted {{ b.mid }}%, actual {{ b.actual }}% (n={{ b.count }})" class="mp-dot {{ 'bad' if err >= 5 else ('warn' if err >= 2 else 'good') }}"
+                          style="left:{{ ((b.mid - x0) / (x1 - x0) * 100) | round(1) }}%; top:{{ (100 - (b.actual - y0) / (y1 - y0) * 100) | round(1) }}%; width:{{ (10 + b.count / nmax * 22) | round | int }}px; height:{{ (10 + b.count / nmax * 22) | round | int }}px;"></span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="mp-scatter-x mono"><span>{{ x0 | round | int }}%</span><span>predicted →</span><span>{{ x1 | round | int }}%</span></div>
+        </div>
+        <div class="mp-cal-table gy-table-wrap">
+            <table class="gy-table mp-table">
+                <thead><tr><th scope="col">Confidence</th><th scope="col" class="r">{{ 'Games' if is_ml else 'Picks' }}</th><th scope="col" class="r">Actual</th><th scope="col" class="c">Miss (actual − pred)</th><th scope="col" class="r">ROI</th></tr></thead>
+                <tbody>
+                {% for b in cal_buckets %}
+                {% set err = b.error %}{% set cls = 'bad' if err | abs >= 5 else ('warn' if err | abs >= 2 else 'good') %}
+                <tr>
+                    <th scope="row" class="mono">{{ b.label }}</th>
+                    <td class="r mono muted">{{ b.count }}</td>
+                    <td class="r mono">{{ b.actual }}%</td>
+                    <td><div class="mp-miss"><div class="mp-miss-bar"><span class="neg">{% if err < 0 %}<i class="{{ cls }}" style="width:{{ ([err | abs / 13 * 100, 100] | min) | round }}%;"></i>{% endif %}</span><span class="pos">{% if err > 0 %}<i class="{{ cls }}" style="width:{{ ([err / 13 * 100, 100] | min) | round }}%;"></i>{% endif %}</span></div><span class="mono mp-c-{{ cls }}">{{ '+' if err > 0 }}{{ err }}</span></div></td>
+                    <td class="r mono" style="color:{{ 'var(--text-muted)' if b.avg_roi is none else ('var(--win)' if b.avg_roi > 0 else 'var(--loss)') }};">{% if b.avg_roi is not none %}{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}%{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}<p class="small">No calibration buckets yet.</p>{% endif %}
+    </div>
+
+    {# Confidence pips #}
+    <div role="tabpanel" id="panel-pips" aria-labelledby="tab-pips" class="mp-panel" hidden>
+        <h3 class="mp-h3">Win rate by confidence pips</h3>
+        <p class="small">Same 1–6 pip scale shown on the game card chip. Should climb left to right; bars that dip break the scale. ROI underneath.</p>
+        {% if pip_rows %}
+        <div class="mp-pips" role="img" aria-label="{% for b in pip_rows %}{{ b.pips }} pips {{ b.win_rate }}%{{ ', ' if not loop.last }}{% endfor %}">
+            {% for b in pip_rows %}
+            {% set dip = not loop.first and b.win_rate < pip_rows[loop.index0 - 1].win_rate %}
+            <div class="mp-pip-col"><span class="mono{{ ' mp-c-warn' if dip }}">{{ b.win_rate }}%</span><span class="bar{{ ' dip' if dip }}" style="height:{{ ([4, (b.win_rate - 30) / 50 * 200] | max) | round }}px;"></span></div>
+            {% endfor %}
+        </div>
+        <div class="mp-pips mp-pip-labels">
+            {% for b in pip_rows %}
+            <div><strong>{{ b.pips }}/6</strong><span class="mono small">n={{ b.count }}</span><span class="mono" style="color:{{ 'var(--text-muted)' if b.avg_roi is none else ('var(--win)' if b.avg_roi > 0 else 'var(--loss)') }};">{% if b.avg_roi is not none %}{{ '+' if b.avg_roi > 0 }}{{ b.avg_roi }}% ROI{% else %}—{% endif %}</span></div>
+            {% endfor %}
+        </div>
+        {% else %}<p class="small">No pip data yet.</p>{% endif %}
+    </div>
+
+    {% if is_ml and factor_stats %}
+    <div role="tabpanel" id="panel-factors" aria-labelledby="tab-factors" class="mp-panel mp-split" hidden>
+        <div style="flex:2 1 460px; min-width:0;">
+            <h3 class="mp-h3">Factor correlation with home wins</h3>
+            <p class="small">Pearson r between each factor's contribution and the home team winning.</p>
+            <div class="mp-factors">
+                {% for f in factor_stats %}
+                {% set fc = 'good' if f.corr >= 0.2 else ('warn' if f.corr >= 0.05 else ('bad' if f.corr < -0.05 else 'dim')) %}
+                <div class="mp-factor">
+                    <span class="lbl">{{ f.label }}</span>
+                    <span class="trk"><i class="{{ fc }}" style="width:{{ ([2, f.corr | abs / 0.35 * 100] | max) | round(0) }}%;"></i></span>
+                    <span class="mono mp-c-{{ fc }}">{{ '+' if f.corr > 0 }}{{ f.corr }}</span>
+                    <span class="mono small">n={{ '{:,}'.format(f.n) }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="mp-legend">
+            <div><span class="sw good"></span>Pulling weight (r ≥ 0.2)</div>
+            <div><span class="sw warn"></span>Weak (0.05–0.2)</div>
+            <div><span class="sw dim"></span>Dead weight (under 0.05)</div>
+            <div><span class="sw bad"></span>Backfiring (negative)</div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if has_signal %}
+    <div role="tabpanel" id="panel-signal" aria-labelledby="tab-signal" class="mp-panel" hidden>
+        <h3 class="mp-h3">How the {{ 'Omen Score' if is_ml else 'Spread Omen Score' }} reads the market</h3>
+        <p class="small">Odds, line movement, edge and situational splits. Thin samples are noisy, not a verdict.</p>
+        {% if fav_dog_stats %}
+        <div class="mp-signal-tiles">
+            {% for fd in fav_dog_stats %}
+            <div class="set-mini"><span class="gy-kpi-label">{{ fd.type }} ROI</span><span class="mono" style="font-size:1.5rem; color:{{ 'var(--win)' if fd.avg_roi and fd.avg_roi > 0 else 'var(--loss)' }};">{{ '+' if fd.avg_roi and fd.avg_roi > 0 }}{{ fd.avg_roi if fd.avg_roi is not none else '—' }}%</span><span class="small">model picks on the market {{ fd.type | lower }}</span></div>
+            {% endfor %}
+        </div>
         {% endif %}
-        </tbody>
-    </table>
+        {% if spread_omen_bucket_stats and not is_ml %}
+        <div class="gy-table-wrap" style="margin-bottom:14px;">
+            <table class="gy-table mp-table">
+                <thead><tr><th scope="col">Spread Omen</th><th scope="col" class="r">Picks</th><th scope="col" class="r">Win rate</th><th scope="col" class="r">ROI</th></tr></thead>
+                <tbody>{% for s in spread_omen_bucket_stats %}<tr><th scope="row" class="mono">{{ s.label }}</th><td class="r mono muted">{{ s.count }}</td><td class="r mono">{{ s.win_rate }}%</td><td class="r mono" style="color:{{ 'var(--text-muted)' if s.avg_roi is none else ('var(--win)' if s.avg_roi > 0 else 'var(--loss)') }};">{% if s.avg_roi is not none %}{{ '+' if s.avg_roi > 0 }}{{ s.avg_roi }}%{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+            </table>
+        </div>
+        {% endif %}
+        {% include "_model_signal_tables.html" %}
     </div>
-    <p class="section-note">Rank = daily recommendation order by adj. Kelly, frozen at first game of the day. #1 is the top pick. Lift = win rate above baseline (all picks with odds).</p>
-    </div>
-</details>
-{% endif %}
-
-{% if rank_comparison and rank_comparison_n > 0 %}
-<!-- ── Rank comparison: Omen vs Phantom ── -->
-<details class="score-details">
-  <summary>
-    <span class="sd-title">Rank Comparison</span>
-    <span class="sd-sub">Omen Score · Phantom Score</span>
-    <span class="sd-teaser">live: <strong>{{ 'Phantom' if rank_comparison_primary == 'phantom' else 'Omen' }}</strong> · n={{ rank_comparison_n }} games</span>
-  </summary>
-  <div class="score-details-body">
-  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 10px;">Retroactive Omen Score · Phantom Score · n={{ rank_comparison_n }} games (Phantom: n={{ rank_comparison_n_phantom }}) · <strong style="color:var(--text);">{{ sport }}</strong>'s ★ picks currently rank by <strong style="color:var(--text);">{{ 'Phantom Score' if rank_comparison_primary == 'phantom' else 'Omen Score' }}</strong></p>
-  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
-    All ranks computed retroactively from stored game data — not from stale <code>daily_rank</code>.<br>
-    <strong style="color:var(--text);">Omen Score</strong> 50% Consensus · 40% Edge · 10% Calib &nbsp;|&nbsp;
-    <strong style="color:var(--text);">Phantom Score</strong> 40% Edge · 30% Line Move · 20% Consensus · 10% Calib — line move = opening→close (CLV as fallback)
-  </p>
-  <div class="calib-scroll">
-  <table class="calib-table" style="width:100%;">
-    <thead>
-      <tr>
-        <th rowspan="2" style="text-align:left;padding:5px 10px;vertical-align:bottom;">Bucket</th>
-        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--orange);">Omen Score{% if rank_comparison_primary == 'omen' %} ★{% endif %}</th>
-        <th colspan="3" style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:0.68rem;color:var(--blue);">Phantom Score{% if rank_comparison_primary == 'phantom' %} ★{% endif %}</th>
-      </tr>
-      <tr>
-        <th style="padding:3px 8px;text-align:right;">n</th>
-        <th style="padding:3px 8px;text-align:right;">Win%</th>
-        <th style="padding:3px 8px;text-align:right;border-right:1px solid var(--border);">ROI%</th>
-        <th style="padding:3px 8px;text-align:right;">n</th>
-        <th style="padding:3px 8px;text-align:right;">Win%</th>
-        <th style="padding:3px 8px;text-align:right;border-right:1px solid var(--border);">ROI%</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for row in rank_comparison %}
-    <tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:7px 10px;font-weight:700;font-size:0.8rem;">{{ row.label }}</td>
-      {# Omen Score #}
-      <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.omen.n or '—' }}</td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-        {% if row.omen.wr is not none %}<span class="{{ 'calib-err-ok' if row.omen.wr >= 55 else ('calib-err-pos' if row.omen.wr >= 50 else 'calib-err-neg') }}">{{ row.omen.wr }}%</span>{% else %}—{% endif %}
-      </td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;border-right:1px solid var(--border);">
-        {% if row.omen.roi is not none %}<span class="{{ 'calib-err-ok' if row.omen.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.omen.roi > 0 }}{{ row.omen.roi }}%</span>{% else %}—{% endif %}
-      </td>
-      {# Phantom Score #}
-      <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.phantom.n or '—' }}</td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-        {% if row.phantom.wr is not none %}<span class="{{ 'calib-err-ok' if row.phantom.wr >= 55 else ('calib-err-pos' if row.phantom.wr >= 50 else 'calib-err-neg') }}">{{ row.phantom.wr }}%</span>{% else %}—{% endif %}
-      </td>
-      <td style="padding:7px 8px;text-align:right;font-size:0.78rem;border-right:1px solid var(--border);">
-        {% if row.phantom.roi is not none %}<span class="{{ 'calib-err-ok' if row.phantom.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.phantom.roi > 0 }}{{ row.phantom.roi }}%</span>{% else %}—{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <p class="section-note">Ranks retroactively computed — not from stored daily_rank. ★ marks whichever score actually drives this sport's live recommendation order. Phantom needs a market signal; n_phantom reflects games with opening or CLV data. Sharp Score was retired 2026-10-20 — it never beat either formula in any sport's backtest.</p>
-  </div>
-</details>
-{% endif %}
-
-{% if firing_stats %}
-<!-- ── Firing Efficiency ── -->
-<details class="score-details">
-  <summary>
-    <span class="sd-title">Firing Efficiency</span>
-    <span class="sd-sub">top-N picks/day by {{ 'Phantom Score' if rank_comparison_primary == 'phantom' else 'Omen Score' }}</span>
-    <span class="sd-teaser">{{ fire_total }} games · {{ fire_days }} days</span>
-  </summary>
-  <div class="score-details-body">
-  <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
-    Each day's games are ranked by {{ 'Phantom Score (this sport\'s live ranking score)' if rank_comparison_primary == 'phantom' else 'Omen Score' }}. "Top N" selects only the highest-ranked bets. Profitable% = fraction of picks where ROI &gt; 0. Lift = vs All picks baseline.
-  </p>
-
-  <!-- Main firing table -->
-  <div class="calib-scroll" style="margin-bottom:18px;">
-  <table class="calib-table" style="width:100%;">
-    <thead>
-      <tr>
-        <th>Selection</th>
-        <th>Games</th>
-        <th>Win%</th>
-        <th>Lift Win</th>
-        <th>Avg Edge</th>
-        <th>ROI%</th>
-        <th>Lift ROI</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for r in firing_stats %}
-    {% set is_all = r.n_pick is none %}
-    <tr {% if is_all %}style="border-top:1px solid var(--border);"{% endif %}>
-      <td style="font-weight:700;font-size:0.82rem;{% if is_all %}color:var(--text-muted);{% endif %}">{{ r.label }}</td>
-      <td {% if is_all %}style="color:var(--text-muted);font-size:0.78rem;"{% endif %}>{{ r.count }}</td>
-      <td>
-        <span class="{{ 'calib-err-ok' if r.win_rate >= 55 else ('calib-err-pos' if r.win_rate >= 50 else 'calib-err-neg') }}">{{ r.win_rate }}%</span>
-      </td>
-      <td>
-        {% if r.lift_wr is not none %}
-        <span class="lift-badge {{ 'lift-pos' if r.lift_wr > 0 else ('lift-neg' if r.lift_wr < 0 else 'lift-zero') }}">{{ '+' if r.lift_wr > 0 }}{{ r.lift_wr }}pp</span>
-        {% else %}<span style="color:var(--text-muted);font-size:0.72rem;">baseline</span>{% endif %}
-      </td>
-      <td>
-        {% if r.avg_edge is not none %}
-        <span class="{{ 'calib-err-ok' if r.avg_edge > 5 else ('calib-err-pos' if r.avg_edge > 0 else 'calib-err-neg') }}">{{ '+' if r.avg_edge > 0 }}{{ r.avg_edge }}%</span>
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if r.avg_roi is not none %}
-        <span class="{{ 'calib-err-ok' if r.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if r.avg_roi > 0 }}{{ r.avg_roi }}%</span>
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if r.lift_roi is not none %}
-        <span class="lift-badge {{ 'lift-pos' if r.lift_roi > 0 else ('lift-neg' if r.lift_roi < 0 else 'lift-zero') }}">{{ '+' if r.lift_roi > 0 }}{{ r.lift_roi }}pp</span>
-        {% else %}<span style="color:var(--text-muted);font-size:0.72rem;">baseline</span>{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-
-
-  <!-- ROI by Omen Score bucket: top-3 recommended vs all -->
-  {% if firing_bucket_stats %}
-  <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:10px;border-top:1px solid var(--border);padding-top:14px;">
-    ROI by {{ 'Phantom' if rank_comparison_primary == 'phantom' else 'Omen' }} Score Bucket — Top 3 vs All
-  </div>
-  <div class="calib-scroll">
-  <table class="calib-table" style="width:100%;">
-    <thead>
-      <tr>
-        <th>TS Bucket</th>
-        <th colspan="2" style="text-align:center;border-right:1px solid var(--border);">All picks</th>
-        <th colspan="2" style="text-align:center;">Top 3 / day</th>
-      </tr>
-      <tr>
-        <th></th>
-        <th style="text-align:right;">n</th>
-        <th style="text-align:right;border-right:1px solid var(--border);">ROI%</th>
-        <th style="text-align:right;">n</th>
-        <th style="text-align:right;">ROI%</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for b in firing_bucket_stats %}
-    {% if b.all_n > 0 %}
-    <tr>
-      <td style="font-weight:700;font-size:0.82rem;">{{ b.label }}</td>
-      <td style="text-align:right;color:var(--text-muted);">{{ b.all_n }}</td>
-      <td style="text-align:right;border-right:1px solid var(--border);">
-        {% if b.all_roi is not none %}
-        <span class="{{ 'calib-err-ok' if b.all_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.all_roi > 0 }}{{ b.all_roi }}%</span>
-        {% else %}—{% endif %}
-      </td>
-      <td style="text-align:right;color:var(--text-muted);">{{ b.rec_n }}</td>
-      <td style="text-align:right;">
-        {% if b.rec_roi is not none %}
-        <span class="{{ 'calib-err-ok' if b.rec_roi > 0 else 'calib-err-neg' }}">{{ '+' if b.rec_roi > 0 }}{{ b.rec_roi }}%</span>
-        {% else %}<span style="color:var(--text-muted);font-size:0.72rem;">—</span>{% endif %}
-      </td>
-    </tr>
-    {% endif %}
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-
-  <p class="section-note">Rankings retroactively assigned using {{ 'Phantom Score' if rank_comparison_primary == 'phantom' else 'Omen Score' }} computed from stored game data. Games without odds excluded from analysis. Profitable% = fraction where pick_roi &gt; 0. Edge = model prob − vig-free market implied.</p>
-  </div>
-</details>
-{% endif %}
-
-{% if score_bucket_stats %}
-<!-- ── Composite score buckets ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Score Bucket Performance</span>
-        <span class="sd-sub">ROI by raw composite score</span>
-        <span class="sd-teaser">{{ score_bucket_stats[0].label }}: <strong>{{ '+' if score_bucket_stats[0].avg_roi and score_bucket_stats[0].avg_roi > 0 }}{{ score_bucket_stats[0].avg_roi if score_bucket_stats[0].avg_roi is not none else '—' }}%</strong> ROI (n={{ score_bucket_stats[0].count }})</span>
-    </summary>
-    <div class="score-details-body">
-    <div class="calib-scroll">
-    <table class="calib-table grade-perf-table">
-        <thead>
-            <tr>
-                <th>Score Range</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for s in score_bucket_stats %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ s.label }}</td>
-            <td>{{ s.count }}</td>
-            <td>
-                {% if s.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if s.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if s.avg_roi > 0 }}{{ s.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if s.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if s.lift_wr > 0 else ('lift-neg' if s.lift_wr < 0 else 'lift-zero') }}">{{ '+' if s.lift_wr > 0 }}{{ s.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if s.win_rate >= 55 else ('calib-err-pos' if s.win_rate >= 50 else 'calib-err-neg') }}">{{ s.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Buckets align with grade thresholds — A is split to show if high-confidence A (0.80+) beats low-A (0.60–0.80). If it does consistently, use raw score as primary sort. A ≥ 0.60 · B ≥ 0.50 · C ≥ 0.25 · – below 0.25. Lift vs all-picks baseline.</p>
-    </div>
-</details>
-{% endif %}
-
-{% if market_agree_stats or closing_dist_stats or movement_stats %}
-<!-- ── Market signal: agreement, closing distance, movement profile ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Market Signal</span>
-        <span class="sd-sub">model vs opening/closing market &amp; line movement</span>
-        {% for m in market_agree_stats %}{% if m.label == '-2 to +5%' %}
-        <span class="sd-teaser">sweet spot: <strong>{{ '+' if m.avg_roi and m.avg_roi > 0 }}{{ m.avg_roi if m.avg_roi is not none else '—' }}%</strong> ROI (n={{ m.count }})</span>
-        {% endif %}{% endfor %}
-    </summary>
-    <div class="score-details-body">
-
-    {% if market_agree_stats %}
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:8px;">Market Agreement <span style="text-transform:none;font-weight:400;letter-spacing:0;">— model − opening vig-free market</span></div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Model vs Market</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for m in market_agree_stats %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ m.label }}</td>
-            <td>{{ m.count }}</td>
-            <td>
-                {% if m.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if m.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if m.avg_roi > 0 }}{{ m.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if m.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if m.lift_wr > 0 else ('lift-neg' if m.lift_wr < 0 else 'lift-zero') }}">{{ '+' if m.lift_wr > 0 }}{{ m.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if m.win_rate >= 55 else ('calib-err-pos' if m.win_rate >= 50 else 'calib-err-neg') }}">{{ m.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Positive = model more confident than market. -2 to +5% is the historically calibrated sweet spot. Large divergence (&gt;10%) tends to collapse ROI — used directly in the composite grade formula.</p>
     {% endif %}
 
-    {% if closing_dist_stats %}
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:18px 0 8px;border-top:1px solid var(--border);padding-top:14px;">Closing Line Distance <span style="text-transform:none;font-weight:400;letter-spacing:0;">— model prob − closing vig-free market</span></div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Model vs Close</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for cd in closing_dist_stats %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ cd.label }}</td>
-            <td>{{ cd.count }}</td>
-            <td>
-                {% if cd.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if cd.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if cd.avg_roi > 0 }}{{ cd.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if cd.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if cd.lift_wr > 0 else ('lift-neg' if cd.lift_wr < 0 else 'lift-zero') }}">{{ '+' if cd.lift_wr > 0 }}{{ cd.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if cd.win_rate >= 55 else ('calib-err-pos' if cd.win_rate >= 50 else 'calib-err-neg') }}">{{ cd.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Positive = model is above closing market (market moved against our pick). Negative = market closed higher than model (smart money agreed). Only games with closing odds captured are included — accumulating going forward.</p>
-    {% endif %}
-
-    {% if movement_stats %}
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:18px 0 8px;border-top:1px solid var(--border);padding-top:14px;">Movement Profile <span style="text-transform:none;font-weight:400;letter-spacing:0;">— line-movement shape vs outcomes · n={{ movement_n_total }} classified</span></div>
-    <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 14px;line-height:1.6;">
-      Pre-game moneyline movement on the model-pick side, classified from <code>odds_snapshot</code> history (capture started 2026-06-23; purging disabled).
-      Each shape is split <strong style="color:var(--win);">for</strong> (line moved toward our pick) vs <strong style="color:var(--loss);">against</strong> (moved toward the opponent) — "Late Sharp against" and "Late Sharp for" are different signals and were previously lumped together, which hid the distinction that actually matters.<br>
-      <strong style="color:var(--text);">Early sharp</strong> most of the move happens early, then flat &nbsp;|&nbsp;
-      <strong style="color:var(--text);">Late sharp</strong> flat early, moves near close &nbsp;|&nbsp;
-      <strong style="color:var(--text);">Sustained</strong> steady drift all window &nbsp;|&nbsp;
-      <strong style="color:var(--text);">Reversal</strong> moves one way then retraces (direction = net result) &nbsp;|&nbsp;
-      <strong style="color:var(--text);">Minimal</strong> only 2 snapshots — too few to tell shape, direction still known<br>
-      <strong style="color:var(--text);">Flat</strong> 3+ snapshots, net move under 0.5pp — not direction-split, the move is too small for direction to mean anything &nbsp;|&nbsp;
-      <strong style="color:var(--text);">Static</strong> only 1 pre-game snapshot ever recorded — the line genuinely never moved &nbsp;|&nbsp;
-      <strong style="color:var(--text);">No data</strong> zero pre-game snapshots recorded<br>
-      Each bucket needs n≥5 with stored ROI before it counts for anything beyond the 0.5 neutral prior — currently {{ movement_weights.n }} games qualify. Splitting direction roughly halves an already-thin sample per bucket — expect more 0.5-neutral buckets for a while.
-    </p>
-    <div class="calib-scroll">
-    <table class="calib-table" style="width:100%;">
-        <thead>
-            <tr>
-                <th style="text-align:left;padding:5px 10px;">Profile</th>
-                <th style="text-align:right;padding:5px 8px;">n</th>
-                <th style="text-align:right;padding:5px 8px;">Win%</th>
-                <th style="text-align:right;padding:5px 8px;">ROI%</th>
-                <th style="text-align:right;padding:5px 8px;">n w/ ROI</th>
-                <th style="text-align:right;padding:5px 8px;">Weight</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for row in movement_stats %}
-        <tr style="border-bottom:1px solid var(--border);">
-            <td style="padding:7px 10px;font-weight:700;font-size:0.8rem;">{{ row.label | replace('_', ' ') | title }}</td>
-            <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.n }}</td>
-            <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-                {% if row.wr is not none %}<span class="{{ 'calib-err-ok' if row.wr >= 55 else ('calib-err-pos' if row.wr >= 50 else 'calib-err-neg') }}">{{ row.wr }}%</span>{% else %}—{% endif %}
-            </td>
-            <td style="padding:7px 8px;text-align:right;font-size:0.78rem;">
-                {% if row.roi is not none %}<span class="{{ 'calib-err-ok' if row.roi > 0 else 'calib-err-neg' }}">{{ '+' if row.roi > 0 }}{{ row.roi }}%</span>{% else %}—{% endif %}
-            </td>
-            <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ row.roi_n }}</td>
-            <td style="padding:7px 8px;text-align:right;color:var(--text-muted);font-size:0.78rem;">{{ movement_weights.get(row.label, 0.5) }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Weight column is the live, credibility-blended value each profile contributes if/when wired into the Omen Score — sits at 0.5 (neutral) until n≥5 with stored ROI.</p>
-    {% endif %}
-
-    </div>
-</details>
-{% endif %}
-
-{% if dow_stats or travel_stats %}
-<!-- ── Situational splits: day of week, travel distance ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Situational Splits</span>
-        <span class="sd-sub">day of week &amp; travel distance — exploratory, not fed into the model</span>
-    </summary>
-    <div class="score-details-body">
-
-    {% if dow_stats %}
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:8px;">Day of Week</div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Day</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-                <th>Live Correction</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for d in dow_stats %}
-        {% set dow_live = spread_dow_stat(d.label, sport) if bet_type == 'spread' else dow_stat(d.label, sport) %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ d.label }}</td>
-            <td>{{ d.count }}</td>
-            <td>
-                {% if d.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if d.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if d.avg_roi > 0 }}{{ d.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if d.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if d.lift_wr > 0 else ('lift-neg' if d.lift_wr < 0 else 'lift-zero') }}">{{ '+' if d.lift_wr > 0 }}{{ d.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if d.win_rate >= 55 else ('calib-err-pos' if d.win_rate >= 50 else 'calib-err-neg') }}">{{ d.win_rate }}%</span>
-            </td>
-            <td>
-                {% if dow_live.correction %}
-                <span class="lift-badge {{ 'lift-pos' if dow_live.correction > 0 else 'lift-neg' }}" title="Full prediction history (n={{ dow_live.n }}), not just the window shown in the columns to the left — this is what's actually nudging live picks.">{{ '+' if dow_live.correction > 0 }}{{ (dow_live.correction * 25) | round(1) }}pp*</span>
-                {% else %}<span class="small" style="color:var(--text-muted);">neutral</span>{% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Weekday the game was played (ET calendar date), not kickoff/first-pitch local time. Small per-day samples (left columns, current odds-tracked window) — treat as a lead to dig into, not a standalone edge. <strong>Live Correction</strong> is the actual, sample-size-gated nudge wired into the model's own confidence (full history, "neutral" = hasn't cleared n≥5 or washes out once compared against what the model already believed for those games) — *approximate pp shift at a 50/50 reference point, the real effect varies by how confident the pick already is.</p>
-    {% endif %}
-
-    {% if travel_stats %}
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:18px 0 8px;border-top:1px solid var(--border);padding-top:14px;">Away-Team Travel Distance</div>
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Distance</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for t in travel_stats %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ t.label }}</td>
-            <td>{{ t.count }}</td>
-            <td>
-                {% if t.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if t.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if t.avg_roi > 0 }}{{ t.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if t.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if t.lift_wr > 0 else ('lift-neg' if t.lift_wr < 0 else 'lift-zero') }}">{{ '+' if t.lift_wr > 0 }}{{ t.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if t.win_rate >= 55 else ('calib-err-pos' if t.win_rate >= 50 else 'calib-err-neg') }}">{{ t.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">One-way haversine distance, away team's home stadium → this game's venue. Win%/ROI here is the model's pick result, not specifically whether the away team struggled — a long trip could help or hurt either side. Only available for NFL/MLB today (travel data not yet built out for NBA/WNBA/NHL/CFB).</p>
-    {% elif dow_stats %}
-    <p class="section-note" style="margin-top:14px;">Travel-distance split isn't available for {{ sport }} yet — stadium location data only covers NFL and MLB so far.</p>
-    {% endif %}
-
-    </div>
-</details>
-{% endif %}
-
-{% if consensus_stats %}
-<!-- ── Factor consensus ── -->
-<details class="score-details">
-    <summary>
-        <span class="sd-title">Factor Consensus</span>
-        <span class="sd-sub">% of significant factor weight supporting the pick</span>
-    </summary>
-    <div class="score-details-body">
-    <div class="calib-scroll">
-    <table class="calib-table">
-        <thead>
-            <tr>
-                <th>Factors Aligned</th>
-                <th>Games</th>
-                <th>ROI%</th>
-                <th>Lift</th>
-                <th>Win%</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for c in consensus_stats %}
-        <tr>
-            <td style="font-weight:700;font-size:0.82rem;">{{ c.label }}</td>
-            <td>{{ c.count }}</td>
-            <td>
-                {% if c.avg_roi is not none %}
-                <span class="{{ 'calib-err-ok' if c.avg_roi > 0 else 'calib-err-neg' }}">{{ '+' if c.avg_roi > 0 }}{{ c.avg_roi }}%</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                {% if c.lift_wr is not none %}
-                <span class="lift-badge {{ 'lift-pos' if c.lift_wr > 0 else ('lift-neg' if c.lift_wr < 0 else 'lift-zero') }}">{{ '+' if c.lift_wr > 0 }}{{ c.lift_wr }}pp</span>
-                {% else %}—{% endif %}
-            </td>
-            <td>
-                <span class="{{ 'calib-err-ok' if c.win_rate >= 55 else ('calib-err-pos' if c.win_rate >= 50 else 'calib-err-neg') }}">{{ c.win_rate }}%</span>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <p class="section-note">Consensus = aligned factor weight ÷ total factor weight (|contribution| &gt; 0.03). Unlike a raw count, this weights large factors more heavily so noise factors near zero don't dilute the signal. 80–100% = major factors agree; 40–60% = roughly split.</p>
-    </div>
-</details>
-{% endif %}
-{% endif %}
-{% if total != 0 %}
-
-<!-- ── Recent predictions ── -->
-<div class="section-header" style="margin-bottom: 10px;">
-    <h2>Recent Predictions</h2>
-    <a href="{{ url_for(sport_meta.schedule_endpoint) }}" style="color: var(--blue); font-size: 0.78rem; font-weight: 700; text-decoration: none;">{{ sport_meta.emoji }} {{ sport }} →</a>
-</div>
-{% if not pred_days %}
-<div class="card" style="padding: 24px; text-align: center;">
-    <p style="color:var(--text-muted);font-size:0.8rem;">No resolved predictions yet.</p>
-</div>
-{% endif %}
-{% for day in pred_days %}
-<details class="score-details"{% if loop.first %} open{% endif %}>
-    <summary>
-        <span class="sd-title">{{ day.date_label }}</span>
-        <span class="sd-teaser">
-            <span class="{{ 'calib-err-ok' if day.win_pct >= 55 else ('calib-err-pos' if day.win_pct < 45 else '') }}">{{ day.wins }}/{{ day.total }}</span> correct · {{ day.win_pct }}%
-        </span>
-    </summary>
-    <div class="score-details-body">
+    {% if pred_days %}
+    {% set days_asc = pred_days | reverse | list %}
+    {% set n_c = pred_days | sum(attribute='wins') %}{% set n_g = pred_days | sum(attribute='total') %}
+    <div role="tabpanel" id="panel-recent" aria-labelledby="tab-recent" class="mp-panel" hidden>
+        <div class="gy-h2-row" style="margin-bottom:14px;">
+            <h3 class="mp-h3" style="margin:0;">Last {{ pred_days | length }} slates · <span class="mono" style="color:{{ 'var(--win)' if n_g and n_c / n_g >= 0.55 else 'var(--text)' }};">{{ n_c }}/{{ n_g }} correct ({{ (n_c / n_g * 100) | round | int if n_g else 0 }}%)</span></h3>
+            <span class="small">Pick a night to see its games</span>
+        </div>
+        <div class="mp-days" role="group" aria-label="Slates">
+            {% for day in days_asc %}
+            {% set p = day.wins / day.total if day.total else 0 %}
+            <button type="button" class="mp-day {{ 'all' if p == 1 else ('most' if p >= 0.6 else ('half' if p >= 0.5 else 'low')) }}{{ ' on' if loop.last }}" aria-pressed="{{ 'true' if loop.last else 'false' }}" data-day="{{ loop.index0 }}" title="{{ day.date_label }}">
+                <span class="d">{{ day.date_label.split(' ')[-1] }}</span><span class="mono">{{ day.wins }}/{{ day.total }}</span>
+            </button>
+            {% endfor %}
+        </div>
+        {% for day in days_asc %}
+        <div class="mp-day-panel" data-day-panel="{{ loop.index0 }}"{% if not loop.last %} hidden{% endif %}>
+            <div class="gy-kpi-label" style="margin-bottom:10px;">{{ day.date_label }} · {{ day.wins }}/{{ day.total }} correct</div>
     {% for p in day.games %}
     <div class="pred-card">
       <div class="pred-header">
@@ -1196,15 +490,32 @@
       {% endif %}
     </div>
     {% endfor %}
+    
+        </div>
+        {% endfor %}
     </div>
-</details>
-{% endfor %}
+    {% endif %}
+
+    {% if trend_weeks and trend_weeks|length > 1 %}
+    <div role="tabpanel" id="panel-trend" aria-labelledby="tab-trend" class="mp-panel" hidden>
+        <h3 class="mp-h3">Weekly accuracy &amp; Brier</h3>
+        <p class="small">One point per Mon–Sun week. Hover for sample size — sparse weeks are noisy, not a verdict.</p>
+        <div style="height:240px;"><canvas id="chartTrend"></canvas></div>
+        <script type="application/json" id="trend-data">{{ trend_weeks | tojson }}</script>
+    </div>
+    {% endif %}
+</section>
+{% else %}
+<div class="card mp-empty">No resolved {{ 'predictions' if is_ml else 'spread picks' }} yet — check back after tonight's games finish.</div>
+{% endif %}
 
 {% endif %}
+</div>
 
 {% if trend_weeks and trend_weeks|length > 1 %}
 <script>
-(function () {
+window.mpDrawTrend = function () {
+  if (window.mpTrendDrawn) return; window.mpTrendDrawn = true;
   var el = document.getElementById('trend-data');
   if (!el) return;
   var weeks = JSON.parse(el.textContent);
@@ -1216,7 +527,7 @@
   Chart.defaults.font.family = "'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
   Chart.defaults.font.size   = 11;
 
-  var orange = '#ff7a1a', blue = '#60A5FA';
+  var orange = '#ff7a1a', blue = '#cbb8ff';
   var labels = weeks.map(function (w) { return w.label; });
   var wr     = weeks.map(function (w) { return w.win_rate; });
   var brier  = weeks.map(function (w) { return w.brier; });
@@ -1256,8 +567,44 @@
       }
     }
   });
-})();
+};
 </script>
 {% endif %}
 
+
+<script>
+(function () {
+    var tabs = Array.from(document.querySelectorAll('.mp-tablist [role=tab]'));
+    function show(id) {
+        tabs.forEach(function (t) {
+            var on = t.getAttribute('data-tab') === id;
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+            t.tabIndex = on ? 0 : -1;
+            var p = document.getElementById('panel-' + t.getAttribute('data-tab'));
+            if (p) p.hidden = !on;
+        });
+        if (id === 'trend' && window.mpDrawTrend) window.mpDrawTrend();
+    }
+    tabs.forEach(function (t, i) {
+        t.addEventListener('click', function () { show(t.getAttribute('data-tab')); });
+        t.addEventListener('keydown', function (e) {
+            var j = e.key === 'ArrowRight' ? i + 1 : (e.key === 'ArrowLeft' ? i - 1 : null);
+            if (j === null) return;
+            var n = tabs[(j + tabs.length) % tabs.length]; n.focus(); n.click();
+        });
+    });
+    document.querySelectorAll('[data-go-tab]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            show(b.getAttribute('data-go-tab'));
+            document.querySelector('.mp-tabs').scrollIntoView({ behavior: 'smooth' });
+        });
+    });
+    document.querySelectorAll('.mp-day').forEach(function (b) {
+        b.addEventListener('click', function () {
+            document.querySelectorAll('.mp-day').forEach(function (x) { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+            document.querySelectorAll('[data-day-panel]').forEach(function (p) { p.hidden = p.getAttribute('data-day-panel') !== b.getAttribute('data-day'); });
+        });
+    });
+})();
+</script>
 {% endblock %}

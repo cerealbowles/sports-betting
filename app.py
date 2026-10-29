@@ -5226,86 +5226,75 @@ def whispers_page():
 
 @app.route('/history')
 def history():
-  open_bets   = OpenBet.query.all()
-  closed_bets = ClosedBet.query.order_by(ClosedBet.closed_at.desc()).all()
-  stats       = compute_stats(open_bets, closed_bets)
-  chart_data  = compute_chart_data(closed_bets)
+  """Settled bets now live on the Bets page (Headstones) — keep old links,
+  the post-import redirect params and ?sport= working."""
+  args = {k: v for k, v in request.args.items() if k in ('imported', 'skipped', 'sport')}
+  return redirect(url_for('bets_page', **args) + '#settled')
 
-  settings  = Setting.query.first()
-  # Add open stakes back so unit_size isn't deflated by active positions
-  _adj_bankroll = (settings.bankroll + stats['open_staked']) if settings else 1.0
-  unit_size = max(0.01, round(_adj_bankroll * settings.percent_bankroll, 4))
 
-  real_closed = closed_bets
-
-  # CLV summary across all closed bets with a closing line
-  clv_vals = [b.clv for b in real_closed if b.clv is not None]
-  clv_stats = {
-      'avg':          round(sum(clv_vals) / len(clv_vals), 1) if clv_vals else None,
-      'positive_pct': round(sum(1 for v in clv_vals if v > 0) / len(clv_vals) * 100)
-                      if clv_vals else None,
-      'count':        len(clv_vals),
-  }
-
-  # Units profit
-  units_profit = round(stats['total_pl'] / unit_size, 2) if unit_size else 0
-
-  # Recent trend — last 10 real closed bets
-  recent = sorted(real_closed, key=lambda b: _naive(b.closed_at), reverse=True)[:10]
-  recent_wins = sum(1 for b in recent if b.outcome == 'win')
-  trend = {
-      'wins':   recent_wins,
-      'losses': len(recent) - recent_wins,
-      'n':      len(recent),
-      'up':     (recent_wins / len(recent)) > (stats['win_rate'] / 100) if recent else None,
-  }
-
-  # Sport list for filter dropdown
-  sports_list = sorted({(b.sport or '').strip() for b in real_closed if b.sport and b.sport.strip()})
-
-  imported = request.args.get('imported', type=int)
-  skipped  = request.args.get('skipped',  type=int)
-  # Optional ?sport=MLB — pre-applies the existing client-side sport filter
-  # so a link from a sport-scoped page (e.g. /mlb) lands already filtered,
-  # without needing a separate server-rendered history-per-sport route.
-  initial_sport = request.args.get('sport', '').strip().upper()
-  return render_template('history.html', closed_bets=closed_bets, stats=stats,
-                         chart_data=chart_data, imported=imported, skipped=skipped,
-                         unit_size=unit_size, clv_stats=clv_stats,
-                         units_profit=units_profit, trend=trend,
-                         sports_list=sports_list, initial_sport=initial_sport,
-                         subnav_sport=(initial_sport or None))
+def _team_abbr_from_key(game_key, side):
+  """'home name_away name_2026-10-27T00' -> short label for one side."""
+  parts = _GAME_KEY_TS_STRIP.sub('', game_key or '').split('_')
+  if len(parts) < 2:
+    return ''
+  name = parts[0] if side == 'home' else parts[1]
+  return name.title()
 
 
 @app.route('/bets')
 def bets_page():
-  """Everything currently riding, across every sport, on one screen — the gap
-  the old per-sport-tabs nav left uncovered (NHL never even got its own
-  open-bets section). Reuses the same annotate/tier/summarize helpers every
-  sport schedule page already calls (_annotate_open_bets etc. are sport-
-  agnostic — see their docstrings), just without a sport filter on the query.
+  """The Graveyard — every open bet (live + upcoming) and the settled ledger
+  on one screen. Open bets reuse the same annotate/tier/summarize helpers the
+  sport schedule pages call; settled-bet KPIs, the cumulative-units chart and
+  the activity bars are recomputed client-side per time range from
+  `closed_rows`, so switching 7d/30d/90d/All doesn't round-trip.
   """
   all_bets = OpenBet.query.order_by(
       OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
   closing_suggestions = _annotate_open_bets(all_bets)
   _tier_open_bets(all_bets)
-  open_stats = _open_bets_summary_stats(all_bets)
 
+  closed_bets = ClosedBet.query.order_by(ClosedBet.closed_at.desc()).all()
   settings = Setting.query.first()
   bankroll = settings.bankroll if settings else 0.0
-  _all_open_stats = compute_stats(all_bets, ClosedBet.query.all())
-  _adj_bankroll = bankroll + _all_open_stats['open_staked']
+  stats = compute_stats(all_bets, closed_bets)
+  _adj_bankroll = bankroll + stats['open_staked']
   unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
 
-  import odds_api as _oa
-  odds_last_fetch = _oa.get_last_fetch_time()
-  odds_next_fetch = _oa.get_next_fetch_time()
+  now = datetime.now(timezone.utc)
+  live_bets, upcoming_bets = [], []
+  for b in all_bets:
+    es = b.eventstart
+    if es is not None and es.tzinfo is None:
+      es = es.replace(tzinfo=timezone.utc)
+    b.started = es is not None and es <= now
+    b.minutes_out = int((es - now).total_seconds() // 60) if es is not None and not b.started else None
+    b.away_label = _team_abbr_from_key(b.game_key, 'away')
+    b.home_label = _team_abbr_from_key(b.game_key, 'home')
+    (live_bets if b.started else upcoming_bets).append(b)
 
-  return render_template('bets.html', open_bets=all_bets,
+  closed_rows = [{
+      't': _naive(cb.closed_at).isoformat(),
+      'u': round(cb.profit / unit_size, 4),
+      'stake': round(cb.stake, 2),
+      'profit': round(cb.profit, 2),
+      'o': cb.outcome,
+      'clv': cb.clv,
+      'sport': (cb.sport or 'Other').strip().upper() or 'OTHER',
+  } for cb in closed_bets]
+
+  sports_list = sorted({(b.sport or '').strip() for b in closed_bets if b.sport and b.sport.strip()})
+  initial_sport = request.args.get('sport', '').strip().upper()
+
+  import odds_api as _oa
+  return render_template('bets.html', open_bets=all_bets, live_bets=live_bets,
+                         upcoming_bets=upcoming_bets, closed_bets=closed_bets,
+                         closed_rows=closed_rows, stats=stats, bankroll=bankroll,
                          unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
-                         odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(all_bets)} Open Bet{'s' if len(all_bets) != 1 else ''}",
+                         odds_last_fetch=_oa.get_last_fetch_time(),
+                         sports_list=sports_list, initial_sport=initial_sport,
+                         imported=request.args.get('imported', type=int),
+                         skipped=request.args.get('skipped', type=int),
                          sync_next=url_for('bets_page'))
 
 
@@ -5313,7 +5302,7 @@ def bets_page():
 def import_bets():
   raw = request.form.get('csv_data', '').strip().lstrip('﻿')
   if not raw:
-    return redirect(url_for('history'))
+    return redirect(url_for('bets_page'))
 
   imported = 0
   skipped  = 0
@@ -5401,7 +5390,7 @@ def import_bets():
   except Exception:
     skipped += 1
 
-  return redirect(url_for('history', imported=imported, skipped=skipped))
+  return redirect(url_for('bets_page', imported=imported, skipped=skipped))
 
 @app.route('/service-worker.js')
 def service_worker():
@@ -5959,7 +5948,7 @@ def add_closed():
   )
   db.session.add(cb)
   db.session.commit()
-  return redirect(url_for('history'))
+  return redirect(url_for('bets_page') + '#settled')
 
 def _market_qualifies(pick_prob, mkt_implied, amer_odds):
   """Shared bet-worthiness gate for every market (ML/Spread/Total): positive
@@ -6690,6 +6679,70 @@ _SPORT_META = {
 
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
+
+
+def _model_findings(buckets, pip_stats, factor_stats, min_n=30):
+  """'What the body says' on the Model page — plain-language flags pulled
+  from the calibration buckets, pip buckets and factor correlations already
+  computed for the page. Only buckets with min_n+ games are judged, so a
+  thin bucket never headlines. Each finding names the tab it comes from."""
+  out = []
+  cal = [b for b in (buckets or []) if b.get('count') and b.get('count') >= min_n and b.get('error') is not None]
+  for b in sorted(cal, key=lambda b: b['error'])[:2]:
+    if b['error'] <= -5:
+      out.append({'tag': 'Overconfident', 'kind': 'bad', 'tab': 'cal',
+                  'title': f"{b['label']} picks won {b['actual']}%, {abs(b['error'])} points under (n={b['count']}).",
+                  'detail': 'The model is more sure than the results back up in this range.'})
+  for b in sorted(cal, key=lambda b: -b['error'])[:1]:
+    if b['error'] >= 5:
+      out.append({'tag': 'Underconfident', 'kind': 'good', 'tab': 'cal',
+                  'title': f"{b['label']} picks won {b['actual']}%, {b['error']} points over (n={b['count']}).",
+                  'detail': 'Results beat the stated confidence here — the model may be underselling these.'})
+  for b in cal:
+    if abs(b['error']) < 2 and b.get('avg_roi') is not None and b['avg_roi'] <= -5:
+      out.append({'tag': 'Priced in', 'kind': 'warn', 'tab': 'cal',
+                  'title': f"{b['label']} picks are calibrated ({'+' if b['error'] > 0 else ''}{b['error']}) but return {b['avg_roi']}% ROI.",
+                  'detail': 'Right about who wins, wrong about the price: the market already has these.'})
+      break
+  pips = [p for p in (pip_stats or []) if p.get('count') and p['count'] >= min_n]
+  rois = [p for p in pips if p.get('avg_roi') is not None]
+  if len(rois) >= 2:
+    best, worst = max(rois, key=lambda p: p['avg_roi']), min(rois, key=lambda p: p['avg_roi'])
+    if best['avg_roi'] > 0 and best['pips'] < worst['pips']:
+      out.append({'tag': 'Value', 'kind': 'good', 'tab': 'pips',
+                  'title': f"Low-pip picks pay best: {best['pips']}/6 returns {'+' if best['avg_roi'] > 0 else ''}{best['avg_roi']}% ROI while {worst['pips']}/6 returns {worst['avg_roi']}%.",
+                  'detail': 'The model finds value where the market disagrees, not where it is most sure.'})
+  for prev, cur in zip(pips, pips[1:]):
+    if cur['win_rate'] < prev['win_rate']:
+      out.append({'tag': 'Scale break', 'kind': 'warn', 'tab': 'pips',
+                  'title': f"{cur['pips']} pips ({cur['win_rate']}%) wins less often than {prev['pips']} pips ({prev['win_rate']}%).",
+                  'detail': f"The pip scale isn't adding signal between {prev['pips']} and {cur['pips']}."})
+      break
+  facs = [f for f in (factor_stats or []) if f.get('n') and f['n'] >= min_n]
+  if facs:
+    dead = min(facs, key=lambda f: abs(f['corr']))
+    top = max(facs, key=lambda f: f['corr'])
+    if abs(dead['corr']) < 0.05:
+      out.append({'tag': 'Dead weight', 'kind': '', 'tab': 'factors',
+                  'title': f"{dead['label']} has almost no link to outcomes (r = {'+' if dead['corr'] >= 0 else ''}{dead['corr']}, n={dead['n']:,}).",
+                  'detail': f"Candidate to down-weight or drop. {top['label']} ({'+' if top['corr'] >= 0 else ''}{top['corr']}) carries the most signal."})
+    for f in facs:
+      if f['corr'] < -0.05:
+        out.append({'tag': 'Backfiring', 'kind': 'bad', 'tab': 'factors',
+                    'title': f"{f['label']} currently points the wrong way (r = {f['corr']}, n={f['n']:,}).",
+                    'detail': 'Its contribution correlates with the home team losing in this sample.'})
+        break
+  return out[:6]
+
+
+app.jinja_env.globals['model_findings'] = _model_findings
+
+
+@app.template_filter('regex_first_number')
+def _regex_first_number(text):
+  """'~54% (home field)' -> 54.0; '~58-60%' -> 58.0; None when absent."""
+  m = re.search(r'\d+(?:\.\d+)?', text or '')
+  return float(m.group()) if m else None
 
 def _rb_extract_ml(p, sport):
   """Per-row extraction for the moneyline market: returns
@@ -8415,35 +8468,123 @@ def nfl_lineup():
     for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
   }
   stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
-  objective = request.args.get('objective', 'projection')
-  if objective not in ('projection', 'sim_median', 'sim_ceiling', 'risk_adjusted'):
-    objective = 'projection'
-  # Non-DST roster size: the max_low_tier UI field's own "off" value (see
-  # optimize_lineup()'s docstring — >= roster size disables the
-  # constraint). Computed from the user's actual roster settings above
-  # rather than hardcoded, so a customized roster size still disables
-  # correctly at its own max.
-  skill_roster_size = sum(c for pos, c in roster_requirements.items() if pos != 'DST')
-  max_low_tier_input = _clamp(request.args.get('max_low_tier', type=int), 0, skill_roster_size, skill_roster_size)
-  # None (not the literal "off" integer) once it's past to optimize_lineup/
-  # methodology_context — both treat None as the real "disabled" signal,
-  # so the methodology panel's on/off messaging doesn't go stale just
-  # because the UI field's "off" position is a specific number.
-  max_low_tier = max_low_tier_input if max_low_tier_input < skill_roster_size else None
+  target = _clamp(request.args.get('target', type=int), 60, 250, 150)
+  locks = [pid for pid in request.args.getlist('lock') if pid]
+  bans = set(pid for pid in request.args.getlist('ban') if pid)
 
+  season, wk = week_ctx['season'], week_ctx['week']
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
   nfl_fantasy.assign_salaries(pool)
+  draws_by_id = {}
   if pool:
-    nfl_fantasy.attach_sim_data(pool, week_ctx['season'], week_ctx['week'])
-  optimal = nfl_fantasy.optimize_lineup(pool, cap=salary_cap, roster_requirements=roster_requirements,
-                                          objective=objective,
-                                          stack_min=stack_min, max_low_tier=max_low_tier) if pool else None
-  sim_range = (nfl_fantasy.evaluate_lineup_distribution(optimal['lineup'], week_ctx['season'], week_ctx['week'])
-               if optimal else None)
+    nfl_fantasy.attach_sim_data(pool, season, wk)
+    draws_by_id = {pid: r['sim'] for pid, r in nfl_fantasy._sim_rows_by_player(season, wk).items() if r.get('sim')}
 
-  # position_rank — only nfl_players() set this before; needed here too
-  # now that _nfl_player_rankings.html's ranking table is shared between
-  # that page and this one's Rankings tab (see nfl_lineup.html).
+  # Likely out: projected for real volume but the simulator (which reads the
+  # current depth chart) barely plays them — the Week 7 zeros all looked like
+  # this. Never used in a build; shown flagged in the player table.
+  for p in pool:
+    p['likely_out'] = bool(p.get('game_id')) and p['projection'] >= 12 and p['sim_median'] < 2.5
+  usable = [p for p in pool if not p['likely_out']]
+  build_pool = [p for p in usable if p['id'] not in bans]
+  lock_ids = [pid for pid in locks if pid not in bans]
+
+  def _build(objective, with_locks=True):
+    pool_ = build_pool if with_locks else usable
+    res = nfl_fantasy.optimize_lineup(pool_, cap=salary_cap, roster_requirements=roster_requirements,
+                                      objective=objective, stack_min=stack_min,
+                                      locks=lock_ids if with_locks else None) if pool_ else None
+    if not res:
+      return None
+    dist = nfl_fantasy.evaluate_lineup_distribution(res['lineup'], season, wk)
+    res['draws'] = None
+    if dist:
+      d = dist.pop('draws')
+      dist['p_target'] = round(sum(1 for v in d if v >= target) / len(d) * 100)
+      res['draws'] = [round(v, 1) for v in d]
+    res['dist'] = dist
+    res['total_objective'] = round(sum(p[objective] for p in res['lineup']), 1)
+    return res
+
+  build_defs = [
+    ('safe', 'Safe', 'sim_floor', "Maximizes every player's sim floor (10th percentile). Fewest disasters."),
+    ('bal', 'Balanced', 'sim_median', 'Maximizes sim median. The middle-of-the-road build.'),
+    ('ceil', 'Ceiling', 'sim_ceiling', "Maximizes every player's sim ceiling (80th percentile). For top-heavy contests."),
+  ]
+  builds = []
+  for key, label, objective, desc in build_defs:
+    res = _build(objective)
+    base = _build(objective, with_locks=False) if (locks or bans) else None
+    builds.append({'key': key, 'label': label, 'objective': objective, 'desc': desc, 'res': res,
+                   'delta': (round(res['dist']['median'] - base['dist']['median'], 1)
+                             if res and base and res.get('dist') and base.get('dist') else None)})
+  balanced = builds[1]['res']
+  in_balanced = {p['id'] for p in balanced['lineup']} if balanced else set()
+
+  # Player density curves for the table: 2-pt bins from -5 to 45, smoothed.
+  def _curve(d):
+    bins = [0] * 25
+    for v in d:
+      bins[max(0, min(24, int((v + 5) // 2)))] += 1
+    sm = [(bins[max(0, i - 1)] + 2 * bins[i] + bins[min(24, i + 1)]) / 4 for i in range(25)]
+    peak = max(sm) or 1
+    pts = ['0,26'] + [f"{(i + 0.5) / 25 * 100:.1f},{26 - v / peak * 23:.1f}" for i, v in enumerate(sm)] + ['100,26']
+    return ' '.join(pts)
+  for p in pool:
+    d = draws_by_id.get(p['id'])
+    p['curve'] = _curve(d) if d else None
+    p['median_x'] = round(max(0, min(100, (p['sim_median'] + 5) / 50 * 100)), 1)
+    p['value_per_k'] = round(p['sim_median'] / (p['salary'] / 1000), 2) if p['salary'] else None
+
+  # Stacks: QB + his own WR/TE, judged on PAIRED draws (same simulated game),
+  # so "both boom" is the joint rate, not two marginals multiplied.
+  stacks = []
+  for q in (p for p in usable if p['position'] == 'QB' and p['id'] in draws_by_id):
+    for w in (p for p in usable if p['position'] in ('WR', 'TE') and p['team'] == q['team'] and p['id'] in draws_by_id):
+      a, b = draws_by_id[q['id']], draws_by_id[w['id']]
+      n = min(len(a), len(b))
+      tot = sorted(a[i] + b[i] for i in range(n))
+      w_boom = nfl_fantasy.BOOM_BUST_THRESHOLDS[w['position']][0]
+      stacks.append({'team': q['team'], 'opp': q.get('opponent'), 'qb': q['name'], 'wr': w['name'],
+                     'med': round(tot[n // 2], 1), 'ceil': round(tot[int(0.8 * (n - 1))], 1),
+                     'both_boom': round(sum(1 for i in range(n) if a[i] >= 20 and b[i] >= w_boom) / n * 100),
+                     'sal': q['salary'] + w['salary']})
+  stacks.sort(key=lambda s: -s['ceil'])
+
+  sim_games = nfl_stats_db.get_sim_game_summary_db(season, wk) if all_games else {}
+  sim_players = nfl_stats_db.get_sim_results_db(season, wk) if all_games else {}
+  for g in all_games:
+    sg = sim_games.get(g['game_id'])
+    g['sim'] = sg
+    g['slot_key'] = nfl_fantasy.classify_slate_slot(g['game_time_utc'])[0]
+    if sg:
+      teams = sim_players.get(g['game_id'], {})
+      g['sim_starters'] = []
+      for side in ('away', 'home'):
+        rows = teams.get(g[side].get('id')) or teams.get(str(g[side].get('id'))) or []
+        starters = [r['player'] for r in _nfl_sim_card_starters(rows) if r['player'] and r['slot'] != 'DST'][:5]
+        g['sim_starters'].append({'team': g[side]['abbrev'], 'players': starters})
+
+  # Post-mortem: every settled week's persisted recap, scored as share of
+  # that week's best possible lineup per method.
+  recap_rows = [r for r in NflRecapWeek.query.filter_by(season=season, is_feasible=True).order_by(NflRecapWeek.week).all()
+                if r.best_actual]
+  recap = None
+  if recap_rows:
+    methods = [('Projection', 'recommended_actual'), ('Sim median', 'sim_median_actual'), ('Sim ceiling', 'sim_ceiling_actual')]
+    rows = [r for r in recap_rows if all(getattr(r, f) is not None for _, f in methods)]
+    if rows:
+      winners = [max(methods, key=lambda m: getattr(r, m[1]))[0] for r in rows]
+      recap = {'weeks': len(rows), 'methods': [
+        {'label': lbl, 'share': round(sum(getattr(r, f) for r in rows) / sum(r.best_actual for r in rows) * 100, 1),
+         'won': winners.count(lbl)} for lbl, f in methods]}
+      last = rows[-1]
+      zeros = [p for p in json.loads(last.sim_median_players_json or '[]') + json.loads(last.recommended_players_json or '[]')
+               if p.get('actual') == 0 and p.get('projection')]
+      seen = set()
+      recap['zeros'] = [z for z in zeros if not (z['id'] in seen or seen.add(z['id']))][:5]
+      recap['zeros_week'] = last.week
+
   by_position = defaultdict(list)
   for p in pool:
     by_position[p['position']].append(p)
@@ -8451,8 +8592,7 @@ def nfl_lineup():
     players.sort(key=lambda p: p['projection'], reverse=True)
     for i, p in enumerate(players, start=1):
       p['position_rank'] = i
-
-  pool.sort(key=lambda p: p['projection'], reverse=True)
+  pool.sort(key=lambda p: p['sim_median'], reverse=True)
 
   req_parts = [f"{count} {pos}" for pos, count in roster_requirements.items() if count > 0]
   roster_requirements_summary = (', '.join(req_parts[:-1]) + ' and ' + req_parts[-1]) if len(req_parts) > 1 else (req_parts[0] if req_parts else 'no players')
@@ -8461,14 +8601,13 @@ def nfl_lineup():
 
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
-                         pool=pool, optimal=optimal, objective=objective, sim_range=sim_range,
+                         pool=pool, usable_count=len(usable), builds=builds, in_balanced=in_balanced,
+                         locks=lock_ids, bans=bans, stacks=stacks[:4], recap=recap, target=target,
                          salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
-                         max_low_tier=max_low_tier, max_low_tier_input=max_low_tier_input,
-                         skill_roster_size=skill_roster_size,
                          roster_requirements_summary=roster_requirements_summary,
                          methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min,
-                                                                       max_low_tier, sim_enabled=True,
-                                                                       objective=objective)))
+                                                                       None, sim_enabled=True,
+                                                                       objective='sim_median')))
   return _set_last_sport_cookie(resp, 'NFL')
 
 NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE'),

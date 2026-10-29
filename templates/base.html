@@ -59,13 +59,10 @@
         <nav class="site-nav" aria-label="Main">
             <div class="nav-main">
                 <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>Tonight</a>
-                <a href="{{ url_for('whispers_page') }}"{% if request.endpoint == 'whispers_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V10a7 7 0 0 1 14 0v10l-2.3-1.6L14.3 20 12 18.4 9.7 20l-2.4-1.6z"></path><circle cx="9.5" cy="10.5" r="0.8"></circle><circle cx="14.5" cy="10.5" r="0.8"></circle></svg>Whispers</a>
                 <a href="{{ url_for('stats_page') }}"{% if request.endpoint == 'stats_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19l5-6 4 3 7-9"></path></svg>Stats</a>
-                <a href="{{ url_for('bets_page') }}"{% if request.endpoint == 'bets_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v4a2 2 0 0 0 0 4v4H3v-4a2 2 0 0 0 0-4z"></path><path d="M13 7v12"></path></svg>Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</a>
-                <a href="{{ url_for('nfl_lineup') }}"{% if request.endpoint in ('nfl_lineup', 'nfl_players', 'nfl_player_detail', 'nfl_recap_page') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"></path></svg>Fantasy</a>
-                <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18"></path><path d="M5 16l5-6 4 3 6-8"></path></svg>Model</a>
-                <a href="{{ url_for('history') }}"{% if request.endpoint == 'history' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>History</a>
-                <a href="{{ url_for('settings_page') }}"{% if request.endpoint == 'settings_page' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>Settings</a>
+                <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>Model</a>
+                <a href="{{ url_for('bets_page') }}"{% if request.endpoint in ('bets_page', 'history') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"></path></svg>Bets{% if nav_open_bet_count %} <span class="nav-count">{{ nav_open_bet_count }}</span>{% endif %}</a>
+                <a href="{{ url_for('nfl_lineup') }}"{% if request.endpoint in ('nfl_lineup', 'nfl_players', 'nfl_player_detail', 'nfl_recap_page') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg>Fantasy</a>
             </div>
         </nav>
 
@@ -92,14 +89,6 @@
                 </svg>
                 <span class="lines-toggle-label">Lines</span>
             </button>
-            {% if global_exposure %}
-            <div class="topbar-bankroll" title="Bankroll — Kelly sizing is bankroll-wide, not per-sport.">
-                <span class="exposure-item">
-                    <span class="exposure-label">Bankroll</span>
-                    <span class="exposure-val">${{ '%.2f' % global_exposure.bankroll }}</span>
-                </span>
-            </div>
-            {% endif %}
             {# Pages that render _sport_pills.html already carry a full,
                always-visible sport switcher inline — the header's icon
                dropdown would just be a second way to do the same tap. #}
@@ -123,6 +112,12 @@
                 </div>
             </div>
             {% endif %}
+            <a href="{{ url_for('whispers_page') }}" class="topbar-icon{% if request.endpoint == 'whispers_page' %} active{% endif %}" aria-label="Whispers"{% if request.endpoint == 'whispers_page' %} aria-current="page"{% endif %}>
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"></path></svg>
+            </a>
+            <a href="{{ url_for('settings_page') }}" class="topbar-icon{% if request.endpoint == 'settings_page' %} active{% endif %}" aria-label="Settings"{% if request.endpoint == 'settings_page' %} aria-current="page"{% endif %}>
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><circle cx="12" cy="12" r="7.5"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"></path></svg>
+            </a>
         </div>
     </header>
     {% endif %}
@@ -136,26 +131,17 @@
     <a href="{{ _today_href }}" class="btb-item{% if _today_active %} active{% endif %}">
         <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg><span class="btb-label">Tonight</span>
     </a>
-    <a href="{{ url_for('whispers_page') }}" class="btb-item{% if request.endpoint == 'whispers_page' %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V10a7 7 0 0 1 14 0v10l-2.3-1.6L14.3 20 12 18.4 9.7 20l-2.4-1.6z"></path><circle cx="9.5" cy="10.5" r="0.8"></circle><circle cx="14.5" cy="10.5" r="0.8"></circle></svg><span class="btb-label">Whispers</span>
-    </a>
     <a href="{{ url_for('stats_page') }}" class="btb-item{% if request.endpoint == 'stats_page' %} active{% endif %}">
         <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19l5-6 4 3 7-9"></path></svg><span class="btb-label">Stats</span>
     </a>
-    <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint == 'bets_page' %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v4a2 2 0 0 0 0 4v4H3v-4a2 2 0 0 0 0-4z"></path><path d="M13 7v12"></path></svg><span class="btb-label">Bets{% if nav_open_bet_count %} ({{ nav_open_bet_count }}){% endif %}</span>
+    <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg><span class="btb-label">Model</span>
+    </a>
+    <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint in ('bets_page', 'history') %} active{% endif %}">
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"></path></svg><span class="btb-label">Bets{% if nav_open_bet_count %} {{ nav_open_bet_count }}{% endif %}</span>
     </a>
     <a href="{{ url_for('nfl_lineup') }}" class="btb-item{% if request.endpoint in ('nfl_lineup', 'nfl_players', 'nfl_player_detail', 'nfl_recap_page') %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"></path></svg><span class="btb-label">Fantasy</span>
-    </a>
-    <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18"></path><path d="M5 16l5-6 4 3 6-8"></path></svg><span class="btb-label">Model</span>
-    </a>
-    <a href="{{ url_for('history') }}" class="btb-item{% if request.endpoint == 'history' %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span class="btb-label">History</span>
-    </a>
-    <a href="{{ url_for('settings_page') }}" class="btb-item{% if request.endpoint == 'settings_page' %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg><span class="btb-label">Settings</span>
+        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg><span class="btb-label">Fantasy</span>
     </a>
 </nav>
 

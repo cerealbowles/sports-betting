@@ -1,0 +1,56 @@
+{# Add-past-bet modal + CSV bulk import, used on the Bets page. #}
+<!-- Add Past Bet Modal -->
+<div id="addClosedModal" class="modal-overlay" onclick="closeModalOutside(event)">
+    <div class="modal">
+        <button class="modal-close" onclick="closeAddClosedModal()" aria-label="Close">&#215;</button>
+        <h2 style="margin-bottom:16px;">Add Past Bet</h2>
+        <form method="post" action="{{ url_for('add_closed') }}">
+            <div class="form-row"><label>Name</label><input name="name" required placeholder="e.g. Broncos -3.5"></div>
+            <div class="form-row"><label>Event Start</label><input name="eventstart" type="datetime-local"></div>
+            <div class="form-row"><label>Sport</label><input name="sport" placeholder="e.g. NFL, NHL"></div>
+            <div class="form-row">
+                <label>Type</label>
+                <select name="bet_type">
+                    <option value="Moneyline">Moneyline</option>
+                    <option value="Spread">Spread</option>
+                    <option value="Over/Under">Over/Under</option>
+                    <option value="Player">Player</option>
+                </select>
+            </div>
+            <div class="form-row"><label>American Odds</label><input name="american_odds" type="text" inputmode="text" required placeholder="-110"></div>
+            <div class="form-row"><label>Win Probability (0–1)</label><input name="prob" type="number" step="0.01" inputmode="decimal" value="0.5" required></div>
+            <div class="form-row"><label>Stake ($)</label><input name="stake" type="number" step="0.01" inputmode="decimal" required placeholder="0.00"></div>
+            <div class="form-row">
+                <label>Outcome</label>
+                <select name="outcome">
+                    <option value="win">Win</option>
+                    <option value="loss">Loss</option>
+                </select>
+            </div>
+            <div class="form-row"><label>Closed At (optional)</label><input name="closed_at" type="datetime-local"></div>
+            <div class="form-row"><label>Notes (optional)</label><textarea name="notes" rows="2" style="resize:vertical; font-family:inherit; font-size:0.9rem; padding:9px 12px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--bg-input); color:var(--text); width:100%;"></textarea></div>
+            <button type="submit" style="width:100%; margin-top:4px;">Save Bet</button>
+        </form>
+    </div>
+</div>
+
+<!-- Bulk Import -->
+<details class="card import-card" id="import-card">
+    <summary class="import-summary">
+        <span>⬆ Bulk Import Past Bets</span>
+        <span class="import-hint">CSV paste</span>
+    </summary>
+    <div class="import-body">
+        <p class="import-desc">One bet per row. Header row required. <code>date</code> accepts <code>YYYY-MM-DD</code> or <code>MM/DD/YYYY</code>. All fields except <code>odds</code>, <code>stake</code>, and <code>outcome</code> are optional.</p>
+        <pre class="import-example">date,name,sport,bet_type,odds,prob,stake,outcome,notes
+2025-05-01,PIT ML,MLB,Moneyline,-115,0.55,25,win,Good pitching matchup
+2025-05-03,BUF -3.5,NFL,Spread,-110,0.52,30,loss,
+2025-05-05,NYR vs WSH Over 6,NHL,Over/Under,+102,0.50,20,win,</pre>
+        <form method="post" action="{{ url_for('import_bets') }}">
+            <textarea name="csv_data" class="import-textarea" rows="7" placeholder="Paste CSV rows here (include the header line)…" spellcheck="false"></textarea>
+            <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                <button type="submit">Import Bets</button>
+            </div>
+        </form>
+    </div>
+</details>

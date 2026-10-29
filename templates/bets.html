@@ -1,44 +1,468 @@
 {% extends "base.html" %}
 {% block title %}Bets — Dead Money{% endblock %}
 
-{% block content %}
+{% macro amer(v) %}{% if v is not none %}{{ '+' if v > 0 }}{{ v }}{% else %}—{% endif %}{% endmacro %}
+{% macro sched_url(b) -%}
+{%- set ep = {'MLB': 'mlb_schedule', 'NBA': 'nba_schedule', 'NFL': 'nfl_schedule', 'NHL': 'nhl_schedule', 'WNBA': 'wnba_schedule', 'CFB': 'cfb_schedule'}.get((b.sport or '') | upper) -%}
+{%- if ep and b.game_key %}{{ url_for(ep) }}#gc-{{ b.game_key }}{% endif -%}
+{%- endmacro %}
+{% macro bet_line(b) -%}
+{%- set t = (b.bet_type or 'Moneyline') | lower -%}
+{{ 'ML' if 'money' in t else ('SPREAD' if 'spread' in t else 'BET') }}
+{%- endmacro %}
 
-<!-- Client-side sport filter — all sports' open bets are already loaded on
-     this one page, so switching sport here just toggles visibility instead
-     of navigating (unlike the schedule pages' _sport_chips.html). -->
-<div class="sport-chip-bar" id="bets-sport-filter">
-    <button type="button" class="sport-chip sport-chip-active" data-filter-sport="">All</button>
-    <button type="button" class="sport-chip" data-filter-sport="MLB">⚾ MLB</button>
-    <button type="button" class="sport-chip" data-filter-sport="NHL">🏒 NHL</button>
-    <button type="button" class="sport-chip" data-filter-sport="NFL">🏈 NFL</button>
-    <button type="button" class="sport-chip" data-filter-sport="CFB">🎓 CFB</button>
-    <button type="button" class="sport-chip" data-filter-sport="NBA">🏀 NBA</button>
-    <button type="button" class="sport-chip" data-filter-sport="WNBA">🏀 WNBA</button>
+{% block content %}
+<div class="schedule-body">
+
+{% if imported is not none %}
+<div class="import-result {{ 'import-ok' if imported > 0 else 'import-warn' }}">
+    {% if imported > 0 %}✓ Imported {{ imported }} bet{{ 's' if imported != 1 }}.{% endif %}
+    {% if skipped and skipped > 0 %} {{ skipped }} row{{ 's' if skipped != 1 }} skipped (missing or invalid fields).{% endif %}
+    {% if imported == 0 and not skipped %}Nothing imported — check your CSV.{% endif %}
+</div>
+{% endif %}
+
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">Bankroll <span class="mono" style="color:var(--orange);">${{ '%.2f' % bankroll }}</span> · <span style="color:var(--win);">{{ live_bets | length }} live</span> · {{ upcoming_bets | length }} upcoming · {{ stats.total_closed }} settled</span>
+        <h1 class="hub-title">The Graveyard</h1>
+    </div>
+    <div class="gy-actions">
+        <button type="button" class="secondary" onclick="var c=document.getElementById('import-card'); c.open=true; c.scrollIntoView({behavior:'smooth'});">Import CSV</button>
+        <button type="button" class="gy-primary" onclick="openAddClosedModal()">+ Add past bet</button>
+    </div>
 </div>
 
-{% include "_open_bets_section.html" with context %}
+<div class="gy-range-row">
+    <span class="small">Results and charts for <strong id="gy-range-name" style="color:var(--text);">all time</strong></span>
+    <div class="gy-seg" role="group" aria-label="Time range" id="gy-range">
+        <button type="button" data-range="7" aria-pressed="false">Last 7d</button>
+        <button type="button" data-range="30" aria-pressed="false">Last 30d</button>
+        <button type="button" data-range="90" aria-pressed="false">Last 90d</button>
+        <button type="button" data-range="0" aria-pressed="true" class="on">All time</button>
+    </div>
+</div>
 
+<section class="card gy-kpis" aria-label="Results summary">
+    <div><span class="gy-kpi-label">Units P&amp;L</span><span class="gy-kpi-val mono" id="k-pl">—</span><span class="gy-kpi-sub" id="k-pl-sub"></span></div>
+    <div><span class="gy-kpi-label">Win rate <span class="gy-tag" id="k-l10" hidden></span></span><span class="gy-kpi-val mono" id="k-win">—</span><span class="gy-kpi-sub" id="k-win-sub"></span></div>
+    <div><span class="gy-kpi-label">ROI</span><span class="gy-kpi-val mono" id="k-roi">—</span><span class="gy-kpi-sub" id="k-roi-sub"></span></div>
+    <div><span class="gy-kpi-label">Avg CLV</span><span class="gy-kpi-val mono" id="k-clv">—</span><span class="gy-kpi-sub" id="k-clv-sub"></span></div>
+</section>
+
+<div class="hub-cols">
+<div class="hub-main gy-main">
+
+    <div class="gy-view-row">
+        <div class="gy-seg gy-views" role="group" aria-label="Show bets" id="gy-views">
+            <button type="button" data-view="all" aria-pressed="true" class="on"><span class="dot" style="background:var(--text);"></span>All<span class="mono n">{{ open_bets | length + closed_bets | length }}</span></button>
+            <button type="button" data-view="live" aria-pressed="false"><span class="dot" style="background:var(--win);"></span>Still breathing<span class="mono n">{{ live_bets | length }}</span></button>
+            <button type="button" data-view="upcoming" aria-pressed="false"><span class="dot" style="background:var(--warn-text);"></span>Not yet risen<span class="mono n">{{ upcoming_bets | length }}</span></button>
+            <button type="button" data-view="settled" aria-pressed="false"><span class="dot" style="background:var(--text-muted);"></span>Headstones<span class="mono n">{{ closed_bets | length }}</span></button>
+        </div>
+        <span class="small">{% if odds_last_fetch %}Synced {{ odds_last_fetch | fmt('%-I:%M %p') }} · {% endif %}
+            <form method="post" action="{{ url_for('api_refresh_odds') }}" style="display:inline;">
+                <input type="hidden" name="next" value="{{ sync_next }}">
+                <button type="submit" class="gy-link-btn">Sync now</button>
+            </form>
+        </span>
+    </div>
+
+    {# ── Still breathing: games that have started ── #}
+    <section class="gy-section" data-view-section="live" aria-labelledby="live-h"{% if not live_bets %} hidden data-empty="1"{% endif %}>
+        <h2 id="live-h" class="gy-h2">Still breathing <span class="mono gy-h2-n">{{ live_bets | length }}</span></h2>
+        {% for b in live_bets %}
+        {% set pick_pct = (b.prob * 100) if b.prob is not none else none %}
+        {% set mkt_pct = b.book_implied %}
+        <article class="card bet-card gy-live" data-sport="{{ b.sport or '' }}" aria-label="Live bet: {{ b.name }}">
+            <div class="gy-live-head">
+                <span class="gy-live-state">
+                    <span class="gy-live-clock" data-live-status="{{ b.id }}"><span class="dot"></span>Started</span>
+                    <span class="gy-state-pill" data-live-pill="{{ b.id }}" hidden></span>
+                </span>
+                <span>{{ (b.sport or '') | upper }} · {{ bet_line(b) }} · DraftKings line</span>
+            </div>
+            <div class="bc-front-body">
+            <div class="gy-live-body">
+                <div class="gy-live-score" data-live-score="{{ b.id }}" data-bet-side="{{ b.bet_side or '' }}" data-type="{{ bet_line(b) }}" data-line="{{ (b.name | bet_line_value) if bet_line(b) == 'SPREAD' else '' }}">
+                    <div class="gy-team{{ ' mine' if b.bet_side == 'away' }}"><span class="abbr" data-abbr="away">{{ b.away_label[:3] | upper if b.away_label else '—' }}</span><span class="pts mono" data-pts="away">–</span></div>
+                    <span class="at">@</span>
+                    <div class="gy-team{{ ' mine' if b.bet_side == 'home' }}"><span class="abbr" data-abbr="home">{{ b.home_label[:3] | upper if b.home_label else '—' }}</span><span class="pts mono" data-pts="home">–</span></div>
+                </div>
+                <div class="gy-live-pick">
+                    <div class="gy-pick-line">
+                        <span class="gy-pick">{{ b.name | bet_pill_label }}</span>
+                        <span class="mono gy-odds">{{ amer(b.original_american) }}</span>
+                        {% if b.edge_pct is not none %}<span class="gy-tag {{ 'good' if b.edge_pct > 0 else 'bad' }}">{{ '+' if b.edge_pct > 0 }}{{ b.edge_pct }}% edge</span>{% endif %}
+                    </div>
+                    {% if pick_pct is not none %}
+                    <div>
+                        <div class="gy-wp-labels"><span>Win probability</span><span>market <span class="mono">{{ (mkt_pct | round(1)) if mkt_pct is not none else '—' }}%</span> → model <span class="mono" style="color:{{ 'var(--win)' if mkt_pct is none or pick_pct >= mkt_pct else 'var(--loss)' }};">{{ pick_pct | round(1) }}%</span></span></div>
+                        <div class="gy-wp-bar"><span style="width:{{ pick_pct | round(1) }}%;{% if mkt_pct is not none and pick_pct < mkt_pct %} background:var(--loss);{% endif %}"></span>{% if mkt_pct is not none %}<i style="left:{{ mkt_pct | round(1) }}%;" aria-hidden="true"></i>{% endif %}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="gy-live-foot">
+                <div><span class="gy-kpi-label">Stake</span><span class="mono">{{ '%.2f' % (b.stake / unit_size) }}u</span></div>
+                <div><span class="gy-kpi-label">Returns</span><span class="mono" style="color:var(--win);">{{ '%.2f' % (b.stake * b.odds / unit_size) }}u</span></div>
+                <div><span class="gy-kpi-label">{{ 'Close' if b.closing_american is not none else 'Now' }}</span><span class="mono">{{ amer(b.closing_american if b.closing_american is not none else b.current_american) }}{% if b.live_clv is not none %} <span style="color:{{ 'var(--win)' if b.live_clv > 0 else ('var(--loss)' if b.live_clv < 0 else 'var(--text-muted)') }};">· CLV {{ '+' if b.live_clv > 0 }}{{ b.live_clv }}%</span>{% endif %}</span></div>
+                <div class="gy-foot-actions">
+                    {% set gu = sched_url(b) %}{% if gu %}<a href="{{ gu }}" class="gy-btn">Game center</a>{% endif %}
+                    <button type="button" class="gy-btn" onclick="bcFlip(this)">Manage</button>
+                </div>
+            </div>
+            </div>
+            {% include "_bet_manage_panel.html" %}
+        </article>
+        {% endfor %}
+    </section>
+
+    {# ── Not yet risen: games still to start ── #}
+    <section class="gy-section" data-view-section="upcoming" aria-labelledby="up-h"{% if not upcoming_bets %} hidden data-empty="1"{% endif %}>
+        <div class="gy-h2-row">
+            <h2 id="up-h" class="gy-h2">Not yet risen <span class="mono gy-h2-n">{{ upcoming_bets | length }}</span></h2>
+            {% set ns = namespace(win=0) %}{% for b in upcoming_bets %}{% set ns.win = ns.win + b.stake * (b.odds - 1) %}{% endfor %}
+            <span class="small"><span class="mono" style="color:var(--text);">{{ '%.2f' % ((upcoming_bets | sum(attribute='stake')) / unit_size) }}u</span> at risk · <span class="mono" style="color:var(--win);">{{ '%.2f' % (ns.win / unit_size) }}u</span> to win</span>
+        </div>
+        <ol class="card gy-up-list">
+            {% for b in upcoming_bets %}
+            <li class="bet-card" data-sport="{{ b.sport or '' }}">
+                <div class="bc-front-body gy-up-row">
+                    <div class="gy-up-time">
+                        {% if b.eventstart %}<span class="mono gy-local-time" data-utc="{{ b.eventstart.isoformat() }}{{ '' if b.eventstart.tzinfo else 'Z' }}">{{ b.eventstart | fmt('%-I:%M %p') }}</span>{% else %}<span class="mono">TBD</span>{% endif %}
+                        {% if b.minutes_out is not none %}<span class="gy-countdown{{ ' soon' if b.minutes_out < 180 }}">IN {% if b.minutes_out >= 1440 %}{{ b.minutes_out // 1440 }}D {{ (b.minutes_out % 1440) // 60 }}H{% else %}{{ b.minutes_out // 60 }}H {{ b.minutes_out % 60 }}M{% endif %}</span>{% endif %}
+                    </div>
+                    <div class="gy-up-pick">
+                        <span class="gy-pick-sm">{{ b.name | bet_pill_label }} <span class="mono">{{ amer(b.original_american) }}</span></span>
+                        <span class="small"><span class="gy-league">{{ (b.sport or '') | upper }}</span>{% if b.away_label %} · {{ b.away_label }} @ {{ b.home_label }}{% endif %}</span>
+                    </div>
+                    {% if b.edge_pct is not none %}<span class="gy-tag {{ 'good' if b.edge_pct > 0 else 'bad' }}">{{ '+' if b.edge_pct > 0 }}{{ b.edge_pct }}%</span>{% endif %}
+                    <div class="gy-up-num">
+                        <span class="mono">{{ '%.2f' % (b.stake / unit_size) }}u <span style="color:var(--text-muted);">→</span> <span style="color:var(--win);">{{ '%.2f' % (b.stake * (b.odds - 1) / unit_size) }}u</span></span>
+                        <span class="small">stake → to win</span>
+                    </div>
+                    <div class="gy-up-num">
+                        {% if b.current_american is not none and b.original_american is not none %}
+                        <span class="mono" style="color:{{ 'var(--text-muted)' if not b.line_move else ('var(--win)' if b.line_move < 0 else 'var(--loss)') }};">{% if b.line_move %}{{ amer(b.original_american) }} → {{ amer(b.current_american) }}{% else %}no change{% endif %}</span>
+                        {% else %}<span class="mono" style="color:var(--text-muted);">—</span>{% endif %}
+                        <span class="small">line since bet</span>
+                    </div>
+                    <button type="button" class="gy-btn" onclick="bcFlip(this)">Manage</button>
+                </div>
+                {% include "_bet_manage_panel.html" %}
+            </li>
+            {% endfor %}
+        </ol>
+    </section>
+
+    {% if not open_bets %}
+    <div class="card gy-empty" data-view-section="open-empty">No open bets. <a href="{{ url_for('index') }}">Find a game to bet on →</a></div>
+    {% endif %}
+
+    {# ── Headstones: settled bets ── #}
+    <section class="card gy-headstones" id="settled" data-view-section="settled" aria-labelledby="hs-h">
+        <div class="gy-hs-head">
+            <h2 id="hs-h" class="gy-h2">Headstones</h2>
+            <div class="gy-filters">
+                <label class="gy-field"><span class="sr-only">Search bets</span>
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+                    <input type="search" id="bet-search" placeholder="Search bets">
+                </label>
+                <label class="gy-field"><span class="sr-only">Sport</span>
+                    <select id="filter-sport">
+                        <option value="">All sports</option>
+                        {% for s in sports_list %}<option value="{{ s | upper }}"{% if initial_sport and s.upper() == initial_sport %} selected{% endif %}>{{ s }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="gy-field"><span class="sr-only">Result</span>
+                    <select id="filter-outcome">
+                        <option value="">All results</option>
+                        <option value="win">Wins</option>
+                        <option value="loss">Losses</option>
+                        <option value="cashout">Cashed out</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        {% if closed_bets %}
+        <div class="gy-table-wrap">
+            <table class="gy-table" id="closed-bets-table">
+                <thead><tr>
+                    <th scope="col">Settled</th><th scope="col">Bet</th><th scope="col">Result</th>
+                    <th scope="col" class="r">Stake</th><th scope="col" class="r">P&amp;L</th><th scope="col" class="r">CLV</th>
+                </tr></thead>
+                <tbody>
+                {% for cb in closed_bets %}
+                <tr data-sport="{{ (cb.sport or '') | upper }}" data-outcome="{{ cb.outcome }}" data-t="{{ cb.closed_at.isoformat() }}">
+                    <td class="mono muted nowrap">{{ cb.closed_at.strftime('%m/%d %H:%M') }}</td>
+                    <th scope="row">{{ cb.name }}{% if cb.sport %}<span class="gy-league">{{ cb.sport }}</span>{% endif %}
+                        {% if cb.notes %}<div class="small" style="font-weight:400; margin-top:2px;">{{ cb.notes[:80] }}{% if cb.notes|length > 80 %}…{% endif %}</div>{% endif %}</th>
+                    <td><span class="gy-tag {{ 'good' if cb.outcome == 'win' else ('bad' if cb.outcome == 'loss' else '') }}">{{ 'CASHED OUT' if cb.outcome == 'cashout' else cb.outcome | upper }}</span></td>
+                    <td class="r mono muted">{{ '%.2f' % (cb.stake / unit_size) }}u</td>
+                    <td class="r mono" style="color:{{ 'var(--win)' if cb.profit > 0 else ('var(--loss)' if cb.profit < 0 else 'var(--silver)') }};">{{ '+' if cb.profit > 0 }}{{ '%.2f' % (cb.profit / unit_size) }}u</td>
+                    <td class="r mono" style="color:{{ 'var(--text-muted)' if cb.clv is none or cb.clv == 0 else ('var(--win)' if cb.clv > 0 else 'var(--loss)') }};">{% if cb.clv is not none %}{{ '+' if cb.clv > 0 }}{{ cb.clv }}%{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="gy-hs-foot">
+            <span id="cb-page-info"></span>
+            <div class="gy-foot-actions">
+                <button type="button" class="gy-btn" id="cb-prev">← Newer</button>
+                <button type="button" class="gy-btn" id="cb-next">Older →</button>
+            </div>
+        </div>
+        {% else %}
+        <p class="small" style="padding:16px 22px;">No settled bets yet.</p>
+        {% endif %}
+    </section>
+
+    {% include "_bet_import_forms.html" %}
+</div>
+
+<aside class="hub-rail gy-rail" aria-label="Analytics">
+    <section class="card gy-rail-card" aria-labelledby="pl-h">
+        <div class="gy-h2-row" style="margin-bottom:4px;">
+            <h2 id="pl-h" class="gy-h2 sm">The bleed</h2>
+            <span class="mono" id="chart-pl"></span>
+        </div>
+        <p class="small" id="chart-sub" style="margin:0 0 12px;"></p>
+        <div class="gy-chart" id="gy-chart"></div>
+        <div class="gy-seg gy-chart-tabs" role="group" aria-label="Chart view" id="gy-chart-tabs">
+            <button type="button" data-chart="pl" aria-pressed="true" class="on">P&amp;L</button>
+            <button type="button" data-chart="clv" aria-pressed="false">Edge &amp; CLV</button>
+            <button type="button" data-chart="sport" aria-pressed="false">By sport</button>
+        </div>
+    </section>
+    <section class="card gy-rail-card" aria-labelledby="act-h">
+        <div class="gy-h2-row" style="margin-bottom:12px;">
+            <h2 id="act-h" class="gy-h2 sm">Activity</h2>
+            <span class="small" id="act-sub"></span>
+        </div>
+        <div class="gy-activity" id="gy-activity" role="img"></div>
+    </section>
+</aside>
+</div>
+
+</div>
 {% endblock %}
 
 {% block scripts %}
 {% include "_open_bets_scripts.html" with context %}
+<script type="application/json" id="gy-closed">{{ closed_rows | tojson }}</script>
 <script>
-(function() {
-    var bar = document.getElementById('bets-sport-filter');
-    if (!bar) return;
-    var chips = bar.querySelectorAll('.sport-chip');
-    var cards = document.querySelectorAll('.bet-card[data-sport]');
+(function () {
+    var ROWS = JSON.parse(document.getElementById('gy-closed').textContent).map(function (r) { r.d = new Date(r.t); return r; });
+    var GREEN = 'var(--win)', RED = 'var(--loss)';
+    var range = 0, chartView = 'pl';
+    var $ = function (id) { return document.getElementById(id); };
+    var sign = function (x, dp, unit) { return (x > 0 ? '+' : '') + x.toFixed(dp) + (unit || ''); };
 
-    bar.addEventListener('click', function(e) {
-        var chip = e.target.closest('.sport-chip');
-        if (!chip) return;
-        chips.forEach(function(c) { c.classList.remove('sport-chip-active'); });
-        chip.classList.add('sport-chip-active');
-        var sport = chip.getAttribute('data-filter-sport');
-        cards.forEach(function(card) {
-            card.style.display = (!sport || card.getAttribute('data-sport') === sport) ? '' : 'none';
+    function inRange(r) {
+        if (!range) return true;
+        return r.d >= new Date(Date.now() - range * 864e5);
+    }
+    function rangeName() { return range ? 'the last ' + range + ' days' : 'all time'; }
+
+    function kpis(rows) {
+        var pl = 0, staked = 0, profit = 0, w = 0, l = 0, co = 0, clv = [];
+        rows.forEach(function (r) {
+            pl += r.u; staked += r.stake; profit += r.profit;
+            if (r.o === 'win') w++; else if (r.o === 'loss') l++; else co++;
+            if (r.clv !== null && r.clv !== undefined) clv.push(r.clv);
+        });
+        $('k-pl').textContent = sign(pl, 2, 'u');
+        $('k-pl').style.color = pl < 0 ? RED : GREEN;
+        $('k-pl-sub').textContent = rows.length + ' bet' + (rows.length === 1 ? '' : 's') + ' settled';
+        $('k-win').textContent = (w + l) ? (w / (w + l) * 100).toFixed(1) + '%' : '—';
+        $('k-win-sub').textContent = w + 'W ' + l + 'L' + (co ? ' ' + co + 'CO' : '');
+        var roi = staked ? profit / staked * 100 : 0;
+        $('k-roi').textContent = staked ? sign(roi, 1, '%') : '—';
+        $('k-roi').style.color = roi < 0 ? RED : GREEN;
+        $('k-roi-sub').textContent = '$' + staked.toFixed(2) + ' staked';
+        if (clv.length) {
+            var avg = clv.reduce(function (a, b) { return a + b; }, 0) / clv.length;
+            var pos = clv.filter(function (v) { return v > 0; }).length;
+            $('k-clv').textContent = sign(avg, 1, '%');
+            $('k-clv').style.color = avg < 0 ? RED : GREEN;
+            $('k-clv-sub').textContent = Math.round(pos / clv.length * 100) + '% positive · ' + clv.length + ' tracked';
+        } else { $('k-clv').textContent = '—'; $('k-clv').style.color = ''; $('k-clv-sub').textContent = 'no closing lines'; }
+        // L10 is always the latest ten, independent of range.
+        var last = ROWS.filter(function (r) { return r.o !== 'cashout'; }).slice(0, 10);
+        var lw = last.filter(function (r) { return r.o === 'win'; }).length;
+        var tag = $('k-l10');
+        if (last.length) { tag.hidden = false; tag.textContent = lw + '/' + last.length + ' L10'; tag.className = 'gy-tag ' + (lw / last.length >= 0.5 ? 'good' : 'bad'); }
+    }
+
+    function svgEl(w, h, inner, label) {
+        return '<svg role="img" aria-label="' + label + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" width="100%" height="' + h + '">' + inner + '</svg>';
+    }
+    function fmtDate(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
+
+    function chart(rows) {
+        var box = $('gy-chart'), asc = rows.slice().reverse();
+        var total = rows.reduce(function (a, r) { return a + r.u; }, 0);
+        $('chart-pl').textContent = sign(total, 2, 'u');
+        $('chart-pl').style.color = total < 0 ? RED : GREEN;
+        if (!asc.length) { box.innerHTML = '<p class="small">No settled bets in this range.</p>'; $('chart-sub').textContent = ''; return; }
+        if (chartView === 'pl') {
+            $('chart-sub').textContent = 'Cumulative units, ' + rangeName();
+            var run = 0, vals = [0].concat(asc.map(function (r) { run += r.u; return run; }));
+            var mx = Math.max.apply(null, vals.concat([0])), mn = Math.min.apply(null, vals.concat([0]));
+            var pad = (mx - mn || 1) * 0.08, hi = mx + pad, lo = mn - pad;
+            var Y = function (v) { return 10 + (hi - v) / (hi - lo) * 180; };
+            var X = function (i) { return i / (vals.length - 1) * 600; };
+            var pts = vals.map(function (v, i) { return X(i).toFixed(1) + ',' + Y(v).toFixed(1); }).join(' ');
+            var z = Y(0).toFixed(1);
+            box.innerHTML = '<div class="gy-axis"><span style="top:4px;">' + sign(Math.round(hi), 0, 'u') + '</span><span style="top:' + (Y(0) - 6).toFixed(0) + 'px;">0u</span><span style="top:182px;">' + sign(Math.round(lo), 0, 'u') + '</span></div>'
+                + svgEl(600, 200, '<line x1="0" y1="' + z + '" x2="600" y2="' + z + '" stroke="var(--border-strong)" stroke-dasharray="4 5" vector-effect="non-scaling-stroke"/>'
+                + '<polygon points="' + pts + ' 600,' + z + ' 0,' + z + '" fill="var(--orange)" fill-opacity="0.14"/>'
+                + '<polyline points="' + pts + '" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>',
+                'Cumulative units for ' + rangeName() + ', ending at ' + sign(total, 2, 'u'))
+                + '<div class="gy-xs mono"><span>' + fmtDate(asc[0].d) + '</span><span>' + fmtDate(asc[Math.floor(asc.length / 2)].d) + '</span><span>' + fmtDate(asc[asc.length - 1].d) + '</span></div>';
+        } else if (chartView === 'clv') {
+            var c = asc.filter(function (r) { return r.clv !== null && r.clv !== undefined; });
+            $('chart-sub').textContent = 'CLV per bet vs the closing line, ' + rangeName();
+            if (!c.length) { box.innerHTML = '<p class="small">No closing lines tracked in this range.</p>'; return; }
+            var m = Math.max.apply(null, c.map(function (r) { return Math.abs(r.clv); }).concat([2]));
+            var bw = 600 / c.length, mid = 100, bars = '';
+            c.forEach(function (r, i) {
+                var h = Math.abs(r.clv) / m * 90;
+                bars += '<rect x="' + (i * bw + bw * 0.15).toFixed(1) + '" y="' + (r.clv >= 0 ? mid - h : mid).toFixed(1) + '" width="' + Math.max(1, bw * 0.7).toFixed(1) + '" height="' + Math.max(1, h).toFixed(1) + '" fill="' + (r.clv >= 0 ? GREEN : RED) + '"/>';
+            });
+            box.innerHTML = svgEl(600, 200, '<line x1="0" y1="100" x2="600" y2="100" stroke="var(--border-strong)" vector-effect="non-scaling-stroke"/>' + bars, 'CLV per bet, ' + c.length + ' bets');
+        } else {
+            $('chart-sub').textContent = 'Units by sport, ' + rangeName();
+            var by = {};
+            rows.forEach(function (r) { by[r.sport] = (by[r.sport] || 0) + r.u; });
+            var ks = Object.keys(by).sort(function (a, b) { return by[a] - by[b]; });
+            var mm = Math.max.apply(null, ks.map(function (k) { return Math.abs(by[k]); }).concat([0.01]));
+            box.innerHTML = '<div class="gy-sport-bars">' + ks.map(function (k) {
+                var v = by[k], w = Math.abs(v) / mm * 50;
+                return '<div class="gy-sport-bar"><span class="lbl">' + k + '</span><span class="trk"><i style="' + (v < 0 ? 'right:50%;' : 'left:50%;') + 'width:' + w.toFixed(1) + '%;background:' + (v < 0 ? RED : GREEN) + ';"></i></span><span class="mono" style="color:' + (v < 0 ? RED : GREEN) + ';">' + sign(v, 2, 'u') + '</span></div>';
+            }).join('') + '</div>';
+        }
+    }
+
+    function activity(rows) {
+        var buckets = [], key, label, now = new Date();
+        if (range === 7) {
+            for (var i = 6; i >= 0; i--) { var d = new Date(now - i * 864e5); buckets.push({ k: d.toDateString(), l: fmtDate(d), n: 0 }); }
+            key = function (r) { return r.d.toDateString(); }; label = 'bets per night';
+        } else if (range === 30) {
+            for (var j = 4; j >= 0; j--) { var e = new Date(now - j * 7 * 864e5); buckets.push({ k: j, l: fmtDate(e), n: 0 }); }
+            key = function (r) { return Math.floor((now - r.d) / (7 * 864e5)); }; label = 'bets per week';
+        } else {
+            var start = rows.length ? rows[rows.length - 1].d : now, cur = new Date(start.getFullYear(), start.getMonth(), 1);
+            if (range === 90) cur = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+            while (cur <= now) { buckets.push({ k: cur.getFullYear() + '-' + cur.getMonth(), l: cur.toLocaleString([], { month: 'short' }), n: 0 }); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
+            buckets = buckets.slice(-8);
+            key = function (r) { return r.d.getFullYear() + '-' + r.d.getMonth(); }; label = 'bets per month';
+        }
+        rows.forEach(function (r) { var k = key(r); buckets.forEach(function (b) { if (b.k === k) b.n++; }); });
+        var mx = Math.max.apply(null, buckets.map(function (b) { return b.n; }).concat([1]));
+        $('act-sub').textContent = label;
+        var el = $('gy-activity');
+        el.setAttribute('aria-label', 'Bets ' + label + ': ' + buckets.map(function (b) { return b.l + ' ' + b.n; }).join(', '));
+        el.innerHTML = buckets.map(function (b, i) {
+            return '<div class="gy-act-col"><span class="mono n">' + b.n + '</span><span class="bar' + (i === buckets.length - 1 ? ' last' : '') + '" style="height:' + Math.max(2, Math.round(b.n / mx * 96)) + 'px;"></span><span class="mono d">' + b.l + '</span></div>';
+        }).join('');
+    }
+
+    // ── Headstones table: range + search/sport/result filters, 10 per page ──
+    var table = $('closed-bets-table'), allRows = table ? Array.from(table.querySelectorAll('tbody tr')) : [], page = 0, PAGE = 10;
+    function tableRender() {
+        if (!table) return;
+        var q = ($('bet-search').value || '').toLowerCase(), sp = $('filter-sport').value, oc = $('filter-outcome').value;
+        var cutoff = range ? new Date(Date.now() - range * 864e5) : null;
+        var match = allRows.filter(function (tr) {
+            return (!q || tr.textContent.toLowerCase().indexOf(q) >= 0)
+                && (!sp || tr.getAttribute('data-sport') === sp)
+                && (!oc || tr.getAttribute('data-outcome') === oc)
+                && (!cutoff || new Date(tr.getAttribute('data-t')) >= cutoff);
+        });
+        var pages = Math.max(1, Math.ceil(match.length / PAGE));
+        page = Math.min(page, pages - 1);
+        allRows.forEach(function (tr) { tr.hidden = true; });
+        match.slice(page * PAGE, page * PAGE + PAGE).forEach(function (tr) { tr.hidden = false; });
+        $('cb-page-info').textContent = match.length ? 'Showing ' + (page * PAGE + 1) + '–' + Math.min(match.length, page * PAGE + PAGE) + ' of ' + match.length : 'No bets match these filters.';
+        $('cb-prev').disabled = page === 0;
+        $('cb-next').disabled = page >= pages - 1;
+    }
+    if (table) {
+        ['bet-search', 'filter-sport', 'filter-outcome'].forEach(function (id) { $(id).addEventListener('input', function () { page = 0; tableRender(); }); });
+        $('cb-prev').onclick = function () { page--; tableRender(); };
+        $('cb-next').onclick = function () { page++; tableRender(); };
+    }
+
+    function render() {
+        var rows = ROWS.filter(inRange);
+        $('gy-range-name').textContent = rangeName();
+        kpis(rows); chart(rows); activity(rows); tableRender();
+    }
+    function seg(id, attr, cb) {
+        $(id).addEventListener('click', function (e) {
+            var b = e.target.closest('button'); if (!b) return;
+            $(id).querySelectorAll('button').forEach(function (x) { var on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+            cb(b.getAttribute(attr));
+        });
+    }
+    seg('gy-range', 'data-range', function (v) { range = parseInt(v, 10); page = 0; render(); });
+    seg('gy-chart-tabs', 'data-chart', function (v) { chartView = v; chart(ROWS.filter(inRange)); });
+    seg('gy-views', 'data-view', function (v) {
+        document.querySelectorAll('[data-view-section]').forEach(function (s) {
+            var k = s.getAttribute('data-view-section');
+            var show = v === 'all' ? !s.hasAttribute('data-empty') : (k === v || (k === 'open-empty' && (v === 'live' || v === 'upcoming')));
+            s.hidden = !show;
         });
     });
-})();
+
+    // Local game times for upcoming rows
+    document.querySelectorAll('.gy-local-time[data-utc]').forEach(function (el) {
+        var d = new Date(el.getAttribute('data-utc'));
+        if (!isNaN(d)) el.textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    });
+
+    // Live scores for started bets — same /api/live-scores feed the open-bet cards poll.
+    function liveScores() {
+        if (!document.querySelector('[data-live-score]')) return;
+        fetch('/api/live-scores').then(function (r) { return r.json(); }).then(function (data) {
+            Object.keys(data).forEach(function (id) {
+                var info = data[id], box = document.querySelector('[data-live-score="' + id + '"]');
+                if (!box) return;
+                box.querySelector('[data-abbr="away"]').textContent = info.away_abbr || '—';
+                box.querySelector('[data-abbr="home"]').textContent = info.home_abbr || '—';
+                var a = Number(info.away_score), h = Number(info.home_score);
+                var has = info.away_score !== null && info.away_score !== '' && !isNaN(a) && !isNaN(h);
+                box.querySelector('[data-pts="away"]').textContent = has ? a : '–';
+                box.querySelector('[data-pts="home"]').textContent = has ? h : '–';
+                var st = document.querySelector('[data-live-status="' + id + '"]');
+                if (st) st.innerHTML = '<span class="dot"></span>' + (info.status === 'Final' ? 'FINAL · settle it' : (info.status === 'Live' ? 'LIVE · ' + (info.period || '') : 'STARTING'));
+                var side = box.getAttribute('data-bet-side'), type = box.getAttribute('data-type'), line = parseFloat(box.getAttribute('data-line'));
+                var diff = null;
+                if (has && (side === 'home' || side === 'away')) {
+                    var mine = side === 'home' ? h : a, theirs = side === 'home' ? a : h;
+                    diff = type === 'SPREAD' && !isNaN(line) ? mine + line - theirs : (type === 'ML' ? mine - theirs : null);
+                }
+                var pill = document.querySelector('[data-live-pill="' + id + '"]');
+                if (pill && diff !== null && (info.status === 'Live' || info.status === 'Final')) {
+                    pill.hidden = false;
+                    var fin = info.status === 'Final';
+                    pill.textContent = diff > 0 ? (fin ? 'WON' : 'WINNING') : (diff < 0 ? (fin ? 'LOST' : 'TRAILING') : 'EVEN');
+                    pill.className = 'gy-tag ' + (diff > 0 ? 'good' : (diff < 0 ? 'bad' : ''));
+                    pill.closest('.gy-live').classList.toggle('winning', diff > 0);
+                    pill.closest('.gy-live').classList.toggle('trailing', diff < 0);
+                }
+            });
+        }).catch(function () {});
+    }
+    liveScores();
+    setInterval(liveScores, 60000);
+
+    render();
+    if (location.hash === '#settled' && $('settled')) $('settled').scrollIntoView();
+}());
 </script>
 {% endblock %}

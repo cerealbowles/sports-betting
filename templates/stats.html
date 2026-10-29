@@ -131,7 +131,7 @@
             <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.roi and ledger.roi > 0 else 'var(--loss)' }};">{% if ledger.roi is not none %}{{ '+' if ledger.roi > 0 }}{{ ledger.roi }}%{% else %}—{% endif %}</span></div>
             <div><span class="stat-label">CLV</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.avg_clv and ledger.avg_clv > 0 else 'var(--text-muted)' }};">{% if ledger.avg_clv is not none %}{{ '+' if ledger.avg_clv > 0 }}{{ ledger.avg_clv }}%{% else %}—{% endif %}</span></div>
         </div>
-        <a href="{{ url_for('history', sport=sport) }}" class="stats-ledger-link">Bet history →</a>
+        <a href="{{ url_for('bets_page', sport=sport) ~ '#settled' }}" class="stats-ledger-link">Bet history →</a>
     </section>
 </aside>
 </div>

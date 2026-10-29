@@ -597,6 +597,11 @@ def _sim_rows_by_player(season, week):
     return by_player
 
 
+# (boom at/above, bust below) fantasy points per position — the Lab page's
+# boom/bust columns and the stack card's "both boom" figure.
+BOOM_BUST_THRESHOLDS = {'QB': (20, 5), 'RB': (20, 5), 'WR': (20, 5), 'TE': (15, 5), 'DST': (10, 2)}
+
+
 def attach_sim_data(pool, season, week):
     """Mutates every entry of an already-built `pool` (see
     build_player_pool()) in place, adding 'sim_median', 'sim_mean',
@@ -630,9 +635,13 @@ def attach_sim_data(pool, season, week):
     for p in pool:
         row = by_player.get(p['id'])
         if row is None or not row.get('sim'):
-            p['sim_median'] = p['sim_mean'] = p['sim_ceiling'] = p['projection']
+            p['sim_median'] = p['sim_mean'] = p['sim_ceiling'] = p['sim_floor'] = p['projection']
             continue
         draws = sorted(row['sim'])
+        boom_at, bust_at = BOOM_BUST_THRESHOLDS.get(p['position'], (20, 5))
+        p['sim_floor'] = round(draws[int(round(0.10 * (len(draws) - 1)))], 2)
+        p['boom_pct'] = round(sum(1 for d in draws if d >= boom_at) / len(draws) * 100)
+        p['bust_pct'] = round(sum(1 for d in draws if d < bust_at) / len(draws) * 100)
         ceil_idx = min(len(draws) - 1, int(round(SIM_CEILING_PERCENTILE * (len(draws) - 1))))
         median_pct = SIM_MEDIAN_PERCENTILE_OVERRIDE.get(p['position'], 0.5)
         median_idx = min(len(draws) - 1, int(round(median_pct * (len(draws) - 1))))
@@ -695,6 +704,7 @@ def evaluate_lineup_distribution(lineup, season, week):
         return round(combined[idx], 2)
 
     return {
+        'draws': combined,
         'floor': _pct(0.10),
         'median': _pct(0.50),
         'mean': round(sum(combined) / len(combined), 2),
@@ -1127,7 +1137,7 @@ def _position_percentiles(pool):
 
 
 def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='projection', stack_min=0,
-                     max_low_tier=MAX_LOW_TIER_DEFAULT):
+                     max_low_tier=MAX_LOW_TIER_DEFAULT, locks=None):
     """pool: [{'id', 'name', 'team', 'position', 'salary', 'projection'}, ...]
     (one row per eligible player/DST, already projected+salaried). Returns
     {'lineup': [...], 'total_salary': int, 'total_projection': float} for
@@ -1191,6 +1201,11 @@ def optimize_lineup(pool, cap=SALARY_CAP, roster_requirements=None, objective='p
 
     prob += pulp.lpSum(p[objective] * x[p['id']] for p in pool)
     prob += pulp.lpSum(p['salary'] * x[p['id']] for p in pool) <= cap
+    # `locks`: player ids the user pinned on /nfl/lineup — forced in (ids
+    # not in this pool, e.g. from a deselected game, are ignored).
+    for pid in (locks or ()):
+        if pid in x:
+            prob += x[pid] == 1
 
     for position, count in roster_requirements.items():
         if position == 'FLEX':  # not a real pool position — handled below
