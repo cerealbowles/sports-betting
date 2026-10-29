@@ -27,29 +27,49 @@
     </div>
 
     <!-- Notifications ────────────────────────────────────── -->
+    {% set _in = "width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;" %}
+    {% set _btn = "font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;" %}
     <div style="margin-bottom:24px;">
-      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Notifications · Discord</div>
-      <label style="display:block;margin-bottom:10px;">
-        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:5px;">Webhook URL</div>
-        <input type="url" id="webhook-input" name="discord_webhook_url"
-               value="{{ settings.discord_webhook_url or '' }}"
-               placeholder="https://discord.com/api/webhooks/…"
-               style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:0.82rem;">
-      </label>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <button type="button" id="test-webhook"
-                style="font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;">
-          Send test
-        </button>
-        <button type="button" id="send-daily-picks"
-                style="font-size:0.72rem;padding:5px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;white-space:nowrap;">
-          Send today's picks now
-        </button>
+      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:6px;">Notifications · Discord channels</div>
+      <p style="font-size:0.70rem;color:var(--text-muted);margin:0 0 12px;line-height:1.5;">
+        One webhook per channel. A channel left blank falls back to Default, so alerts keep flowing while you set them up.<br>
+        To get a webhook URL: Discord channel → Edit → Integrations → Webhooks → New Webhook → Copy URL.
+      </p>
+      {% for key, ch in discord_channels.items() %}
+      <div style="margin-bottom:12px;">
+        <label style="display:block;margin-bottom:6px;">
+          <div style="font-size:0.75rem;font-weight:700;margin-bottom:2px;">{{ ch.label }}</div>
+          <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:5px;">{{ ch.hint }}</div>
+          <input type="url" class="webhook-input" data-channel="{{ key }}"
+                 name="{{ 'discord_webhook_url' if key == 'default' else 'discord_channel_' ~ key }}"
+                 {% if key == 'default' %}id="webhook-input"{% endif %}
+                 value="{{ channel_urls.get(key, '') }}"
+                 placeholder="{{ 'https://discord.com/api/webhooks/…' if key == 'default' else 'Blank = use Default' }}"
+                 style="{{ _in }}">
+        </label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="test-webhook" data-channel="{{ key }}" style="{{ _btn }}">Send test</button>
+          <span class="test-result" data-channel="{{ key }}" style="font-size:0.72rem;"></span>
+        </div>
+      </div>
+      {% endfor %}
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;">
+        <button type="button" id="send-daily-picks" style="{{ _btn }}">Send today's picks now</button>
         <span id="test-result" style="font-size:0.72rem;"></span>
       </div>
-      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:10px;line-height:1.5;">
-        Daily picks post automatically at noon ET. Omen Score alerts fire on ±10+ point moves (every 2 hours, 8 am – 8 pm ET).<br>
-        To get a webhook URL: Discord channel → Edit → Integrations → Webhooks → New Webhook → Copy URL.
+    </div>
+
+    <div style="margin-bottom:24px;">
+      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:6px;">Haunt my phone when…</div>
+      {% for key, a in discord_alerts.items() %}
+      <label style="display:flex;align-items:center;gap:12px;min-height:44px;font-size:0.82rem;border-top:{{ '0' if loop.first else '1px solid var(--border)' }};">
+        <input type="checkbox" name="alert_{{ key }}"{% if alert_prefs[key] %} checked{% endif %} style="width:18px;height:18px;accent-color:var(--orange);flex-shrink:0;">
+        <span style="flex:1;">{{ a.label }}</span>
+        <span style="font-size:0.66rem;color:var(--text-muted);white-space:nowrap;">{{ discord_channels[a.channel].label }}{% if not a.live %} · <span style="color:var(--warn-text);">coming soon</span>{% endif %}</span>
+      </label>
+      {% endfor %}
+      <p style="font-size:0.70rem;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+        Daily picks post at noon ET. Omen Score alerts run every 2 hours, 8 am – 8 pm ET. "Coming soon" alerts save your choice now and start firing once their triggers ship.
       </p>
     </div>
 
@@ -141,35 +161,37 @@
 </div>
 
 <script>
-document.getElementById('test-webhook').addEventListener('click', function () {
-  var btn    = this;
-  var result = document.getElementById('test-result');
-  var url    = document.getElementById('webhook-input').value.trim();
-  if (!url) {
-    result.textContent  = 'Enter a URL first.';
-    result.style.color  = 'var(--loss)';
-    return;
-  }
-  btn.textContent = 'Sending…';
-  btn.disabled    = true;
-  result.textContent = '';
-  fetch('/api/test-webhook', {
-    method:  'POST',
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body:    'webhook_url=' + encodeURIComponent(url),
-  })
-  .then(function (r) { return r.json(); })
-  .then(function (data) {
-    result.textContent = data.ok ? '✓ Message sent' : ('✗ ' + (data.error || 'Failed'));
-    result.style.color = data.ok ? 'var(--win)' : 'var(--loss)';
-  })
-  .catch(function () {
-    result.textContent = '✗ Network error';
-    result.style.color = 'var(--loss)';
-  })
-  .finally(function () {
-    btn.textContent = 'Send test';
-    btn.disabled    = false;
+document.querySelectorAll('.test-webhook').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var ch     = btn.dataset.channel;
+    var result = document.querySelector('.test-result[data-channel="' + ch + '"]');
+    var url    = document.querySelector('.webhook-input[data-channel="' + ch + '"]').value.trim();
+    if (!url) {
+      result.textContent = ch === 'default' ? 'Enter a URL first.' : 'Blank — this channel uses Default.';
+      result.style.color = ch === 'default' ? 'var(--loss)' : 'var(--text-muted)';
+      return;
+    }
+    btn.textContent = 'Sending…';
+    btn.disabled    = true;
+    result.textContent = '';
+    fetch('/api/test-webhook', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body:    'webhook_url=' + encodeURIComponent(url) + '&channel=' + encodeURIComponent(ch),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      result.textContent = data.ok ? '✓ Message sent' : ('✗ ' + (data.error || 'Failed'));
+      result.style.color = data.ok ? 'var(--win)' : 'var(--loss)';
+    })
+    .catch(function () {
+      result.textContent = '✗ Network error';
+      result.style.color = 'var(--loss)';
+    })
+    .finally(function () {
+      btn.textContent = 'Send test';
+      btn.disabled    = false;
+    });
   });
 });
 

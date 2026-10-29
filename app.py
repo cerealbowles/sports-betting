@@ -165,9 +165,24 @@ class Setting(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   bankroll = db.Column(db.Float, default=20)
   percent_bankroll = db.Column(db.Float, default=0.25)  # fraction of bankroll
-  discord_webhook_url = db.Column(db.Text, default='')
+  discord_webhook_url = db.Column(db.Text, default='')   # the "Default" Discord channel
+  # Per-channel webhooks + per-alert on/off — see discord_alerts.py.
+  discord_channels_json = db.Column(db.Text, default='{}')
+  alert_prefs_json      = db.Column(db.Text, default='{}')
   favorite_teams_json = db.Column(db.Text, default='{}')  # {"NFL": ["Chicago Bears", ...], ...}
   show_lines = db.Column(db.Boolean, default=True)  # odds chips on game-card summaries (header toggle)
+
+class AlertSent(db.Model):
+  """One row per Discord alert actually posted, keyed by a sender-chosen
+  dedupe_key (e.g. "bet_line_move:<game_key>:-4.5") so a restart, a
+  re-poll or two overlapping warmer runs never send the same alert twice.
+  See _send_alert()."""
+  __tablename__ = 'alert_sent'
+  id         = db.Column(db.Integer, primary_key=True)
+  alert_key  = db.Column(db.String(40), nullable=False, index=True)
+  dedupe_key = db.Column(db.String(300), nullable=False, unique=True)
+  sent_at    = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
@@ -1019,6 +1034,8 @@ def ensure_column_exists():
     _add('setting',          'discord_webhook_url', 'TEXT DEFAULT NULL')
     _add('setting',          'favorite_teams_json', 'TEXT DEFAULT NULL')
     _add('setting',          'show_lines',          'BOOLEAN DEFAULT 1')
+    _add('setting',          'discord_channels_json', 'TEXT DEFAULT NULL')
+    _add('setting',          'alert_prefs_json',    'TEXT DEFAULT NULL')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
@@ -4419,18 +4436,7 @@ def _schedule_matchups(schedule, sport=None):
           'live_clock':    g.get('inning_info') or g.get('live_clock') or '',
           'bases':         g.get('bases'),
           'href':          (f"/{sport.lower()}/game/{game_id}" if (sport and game_id) else ''),
-          # Tonight's Power Board (the /stats page) needs each side's record
-          # — NHL exposes wins/losses as rec_w/rec_l (+ rec_otl), everyone
-          # else as plain wins/losses. 'form' is only actually populated by
-          # MLB/NHL's own schedule builders today (see mlb_api.py:733,
-          # nhl_api.py:523) — NFL/NBA/WNBA/CFB leave it [] here, so it's
-          # shown when present and silently omitted otherwise.
-          'away_wins':     away.get('wins', away.get('rec_w')),
-          'away_losses':   away.get('losses', away.get('rec_l')),
-          'home_wins':     home.get('wins', home.get('rec_w')),
-          'home_losses':   home.get('losses', home.get('rec_l')),
-          'away_form':     (away.get('form') or [])[-5:],
-          'home_form':     (home.get('form') or [])[-5:],
+          'game_id':       game_id,
           # Featured-game card / Graveyard Shift board / Game Center rail
           # need the same odds, model and linescore every sport's own card
           # already renders — see _hub_linescore for the shape normalization.
@@ -4732,6 +4738,11 @@ def index():
   featured = (next((g for g in live_games_today if g['my_bets']), None)
               or next((g for g in live_games_today if g['edge_pick']), None)
               or (live_games_today[0] if live_games_today else None))
+  if featured and featured.get('game_id'):
+    import game_feed
+    live_wp = game_feed.get_live_winprob(featured['sport'], featured['game_id'])
+    if live_wp is not None:
+      featured = {**featured, 'live_home_prob': live_wp}
 
   # Open bets rail — every OpenBet, with live state when its game is on
   # tonight's slate (matched by game_key), else just PENDING.
@@ -4780,103 +4791,87 @@ def _ensure_hub_cache():
 
 @app.route('/stats')
 def stats_page():
-  """Tonight's cross-sport Power Board — every team playing today, grouped
-  by sport, with its W-L record and (where the schedule builder already
-  computes it — MLB/NHL, see mlb_api.py:733/nhl_api.py:523) recent form.
+  """The Almanac — full-league standings for one sport at a time
+  (?sport=NHL), from standings_api.get_standings: every team's W-L,
+  differential, home/away, Last 10 + streak and a newest-first Last 5 that
+  comes from one consistent source per sport (see that module's
+  docstring). Tonight's teams are highlighted using whatever the hub cache
+  already holds — never forces a 6-sport rebuild just to shade rows.
 
-  Deliberately scoped to TONIGHT's teams rather than full-league
-  standings: there is no full-league standings fetch anywhere in the
-  codebase for NFL/NBA/WNBA/CFB (each sport module only parses one team's
-  record at a time, per matchup, while building today's schedule — see
-  _parse_record/_record_to_wl in those modules), so a true 30/32/82-team
-  Power Board would need a brand-new per-sport standings endpoint call for
-  sports that don't play tonight too. Tonight's teams are already fully
-  built as part of the hub cache, so this reuses that for free and stays
-  honest about what data actually exists."""
-  _, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
+  Also: league-wide trend cards, a Face-off comparison (any two teams in
+  the sport, client-side from the same rows) and the user's settled-bet
+  ledger for that sport."""
+  import standings_api
+  cached = _hub_cache['data']
+  all_games_today = cached[3] if cached else []
+  today_display = cached[2] if cached else _fmt(datetime.now(_ET).date(), '%A, %B %-d')
 
-  teams_by_sport = {}
+  default_sport = next((g['sport'] for g in all_games_today), 'NFL')
+  sport = (request.args.get('sport') or default_sport).upper()
+  if sport not in standings_api.SPORTS:
+    sport = default_sport
+  data = standings_api.get_standings(sport) or {'season': None, 'rows': [], 'groups': []}
+  rows = data['rows']
+
+  tonight = {}
   for g in all_games_today:
-    for side in ('away', 'home'):
-      abbr = g[f'{side}_abbr']
-      if not abbr:
-        continue
-      bucket = teams_by_sport.setdefault(g['sport'], {})
-      if abbr in bucket:
-        continue
-      bucket[abbr] = {
-          'abbr': abbr, 'name': g[f'{side}_name'], 'logo': g[f'{side}_logo'],
-          'wins': g[f'{side}_wins'], 'losses': g[f'{side}_losses'],
-          'form': g[f'{side}_form'], 'matchup': g['matchup'], 'href': g['href'],
-      }
+    if g['sport'] == sport:
+      tonight[g['away_abbr']] = g
+      tonight[g['home_abbr']] = g
+  for r in rows:
+    g = tonight.get(r['abbr'])
+    r['tonight'] = {'matchup': g['matchup'], 'href': g['href']} if g else None
+    r['diff_pg'] = round(r['diff'] / r['gp'], 2) if (r['diff'] is not None and r['gp']) else None
 
-  def _pct(t):
-    w, l = t['wins'], t['losses']
-    if w is None or l is None or (w + l) == 0:
-      return -1.0
-    return w / (w + l)
-
-  def _streak(form):
-    # Current run from the newest result backwards — form lists are
-    # oldest→newest (see _schedule_matchups' [-5:] slice), so capped at 5.
-    if not form:
-      return None
-    n = 1
-    while n < len(form) and form[-1 - n] == form[-1]:
-      n += 1
-    return f"{form[-1]}{n}"
-
-  sport_boards = []
-  for sport, icon, _endpoint in _HUB_SPORTS:
-    teams = sorted(teams_by_sport.get(sport, {}).values(), key=_pct, reverse=True)
-    for i, t in enumerate(teams):
-      t['rank'] = i + 1
-      t['streak'] = _streak(t['form'])
-    if teams:
-      sport_boards.append({'sport': sport, 'icon': icon, 'teams': teams})
-
-  # Trend cards: the hottest and coldest current streaks among tonight's
-  # teams (only sports whose schedule builder carries form — MLB/NHL), plus
-  # the best record on the slate. Nothing shown for a sport without form.
-  all_teams = [dict(t, sport=b['sport']) for b in sport_boards for t in b['teams']]
-  with_form = [t for t in all_teams if t['streak'] and len(t['form']) >= 3]
+  # Trend cards: hottest/coldest current streak, best Last 10, best
+  # per-game differential — league-wide, from the same rows.
+  def _streak_n(r, kind):
+    s = r['streak'] or ''
+    return int(s[1:]) if s[:1] == kind and s[1:].isdigit() else 0
   trends = []
-  hot = sorted((t for t in with_form if t['streak'][0] == 'W'), key=lambda t: -int(t['streak'][1:]))
-  cold = sorted((t for t in with_form if t['streak'][0] == 'L'), key=lambda t: -int(t['streak'][1:]))
-  for t in hot[:2]:
-    if int(t['streak'][1:]) >= 2:
-      trends.append({'tag': 'Hot', 'cls': 'hot', 'team': t, 'big': t['streak'], 'unit': 'streak'})
-  for t in cold[:1]:
-    if int(t['streak'][1:]) >= 2:
-      trends.append({'tag': 'Cold', 'cls': 'cold', 'team': t, 'big': t['streak'], 'unit': 'streak'})
-  best = max((t for t in all_teams if _pct(t) >= 0), key=_pct, default=None)
-  if best and len(trends) < 4:
-    trends.append({'tag': 'Best record', 'cls': 'best', 'team': best,
-                   'big': f"{best['wins']}–{best['losses']}", 'unit': best['sport']})
+  played = [r for r in rows if r['gp']]
+  if played:
+    hot = max(played, key=lambda r: _streak_n(r, 'W'))
+    if _streak_n(hot, 'W') >= 2:
+      trends.append({'tag': 'Hot', 'cls': 'hot', 'team': hot, 'big': hot['streak'], 'unit': 'streak'})
+    cold = max(played, key=lambda r: _streak_n(r, 'L'))
+    if _streak_n(cold, 'L') >= 2:
+      trends.append({'tag': 'Cold', 'cls': 'cold', 'team': cold, 'big': cold['streak'], 'unit': 'streak'})
+    l10 = [r for r in played if r['form']]
+    if l10:
+      best = max(l10, key=lambda r: (sum(1 for x in r['form'] if x == 'W') / len(r['form']), len(r['form'])))
+      trends.append({'tag': 'Form', 'cls': 'best', 'team': best, 'big': best['l10'],
+                     'unit': f"last {len(best['form'])}"})
+    with_diff = [r for r in played if r['diff_pg'] is not None]
+    if with_diff:
+      top = max(with_diff, key=lambda r: r['diff_pg'])
+      trends.append({'tag': 'Margin', 'cls': 'margin', 'team': top,
+                     'big': f"{'+' if top['diff_pg'] > 0 else ''}{top['diff_pg']:g}", 'unit': 'diff / game'})
 
-  # "Your ledger" — real settled-bet record per sport (ClosedBet), the same
-  # profit/stake/CLV fields /history aggregates, split by sport.
-  ledgers = {}
-  for b in ClosedBet.query.all():
-    sp = (b.sport or '').strip().upper()
-    if not sp:
-      continue
-    for k in (sp, 'ALL'):
-      lg = ledgers.setdefault(k, {'w': 0, 'l': 0, 'staked': 0.0, 'profit': 0.0, 'clv': []})
-      if b.outcome == 'win':
-        lg['w'] += 1
-      elif b.outcome == 'loss':
-        lg['l'] += 1
-      lg['staked'] += b.stake or 0.0
-      lg['profit'] += b.profit or 0.0
-      if b.clv is not None:
-        lg['clv'].append(b.clv)
-  for lg in ledgers.values():
-    lg['roi'] = round(lg['profit'] / lg['staked'] * 100, 1) if lg['staked'] else None
-    lg['avg_clv'] = round(sum(lg['clv']) / len(lg['clv']), 1) if lg['clv'] else None
+  # Face-off defaults: tonight's first matchup in this sport, else #1 vs #2.
+  first = next((g for g in all_games_today if g['sport'] == sport), None)
+  faceoff = ((first['away_abbr'], first['home_abbr']) if first
+             else tuple(r['abbr'] for r in rows[:2]) if len(rows) >= 2 else (None, None))
 
-  return render_template('stats.html', today_display=today_display, sport_boards=sport_boards,
-                         top_picks=unified_picks, trends=trends, ledgers=ledgers)
+  # "Your ledger" — real settled-bet record for this sport (ClosedBet), the
+  # same profit/stake/CLV fields /history aggregates.
+  ledger = {'w': 0, 'l': 0, 'staked': 0.0, 'profit': 0.0, 'clv': []}
+  for b in ClosedBet.query.filter(db.func.upper(db.func.trim(ClosedBet.sport)) == sport).all():
+    if b.outcome == 'win':
+      ledger['w'] += 1
+    elif b.outcome == 'loss':
+      ledger['l'] += 1
+    ledger['staked'] += b.stake or 0.0
+    ledger['profit'] += b.profit or 0.0
+    if b.clv is not None:
+      ledger['clv'].append(b.clv)
+  ledger['roi'] = round(ledger['profit'] / ledger['staked'] * 100, 1) if ledger['staked'] else None
+  ledger['avg_clv'] = round(sum(ledger['clv']) / len(ledger['clv']), 1) if ledger['clv'] else None
+
+  return render_template('stats.html', today_display=today_display, sport=sport,
+                         sports=standings_api.SPORTS, season=data['season'], rows=rows,
+                         groups=data['groups'], trends=trends, faceoff=faceoff, ledger=ledger,
+                         subnav_sport=sport)
 
 
 def _attach_bets(games, bets_by_game):
@@ -5071,6 +5066,104 @@ def _build_whispers(games, unified_picks, limit=40):
     w['group'] = _whisper_group(ts_et, now_et)
     w['color'] = _WHISPER_COLORS[w['type']]
   return items[:limit]
+
+
+_search_cache = {'ts': 0.0, 'teams': [], 'players': []}
+_SEARCH_TTL = 30 * 60
+
+
+def _search_index():
+  """Teams (all 6 sports, from standings_api — fetched in parallel, each
+  cached 30 min there), NFL players (the only sport with a player page —
+  /nfl/players?player=<id> opens their card) and tonight's games (hub
+  cache, read fresh each call since it changes minute to minute)."""
+  import standings_api
+  now = time.time()
+  # A sport whose standings feed failed shortens the cache to a minute so
+  # one transient outage doesn't drop that league from search for 30.
+  ttl = _SEARCH_TTL if _search_cache.get('complete') else 60
+  if now - _search_cache['ts'] >= ttl or not _search_cache['teams']:
+    with ThreadPoolExecutor(max_workers=len(standings_api.SPORTS)) as pool:
+      boards = dict(zip(standings_api.SPORTS, pool.map(standings_api.get_standings, standings_api.SPORTS)))
+    teams = []
+    for sport, data in boards.items():
+      for r in (data or {}).get('rows', []):
+        teams.append({'kind': 'Team', 'sport': sport, 'label': r['name'] or r['abbr'], 'abbr': r['abbr'],
+                      'sub': f"{sport} · {r['w']}–{r['l']}{('–' + str(r['otl'])) if r['otl'] is not None else ''} · {r['group']}",
+                      'logo': r['logo'], 'href': url_for('stats_page', sport=sport) + f"#team-{r['abbr']}"})
+    players = []
+    try:
+      rows = (db.session.query(PlayerGameStat.player_id, PlayerGameStat.player_name,
+                               db.func.max(PlayerGameStat.position), db.func.max(PlayerGameStat.game_date))
+              .filter(PlayerGameStat.sport == 'NFL', PlayerGameStat.player_name != '')
+              .group_by(PlayerGameStat.player_id).all())
+      cutoff = (datetime.now(_ET) - timedelta(days=400)).strftime('%Y-%m-%d')
+      for pid, name, pos, last in rows:
+        # position is often blank in this table for NFL; the 'Team' rows
+        # are team-total placeholders, not players.
+        if last and last >= cutoff and name != 'Team':
+          players.append({'kind': 'Player', 'sport': 'NFL', 'label': name, 'abbr': '',
+                          'sub': f"NFL{' · ' + pos if pos else ''} player", 'logo': '',
+                          'href': url_for('nfl_players') + f"?player={pid}"})
+    except Exception:
+      pass
+    _search_cache.update(ts=now, teams=teams, players=players,
+                         complete=all(boards.get(sp) for sp in standings_api.SPORTS))
+  games = []
+  cached = _hub_cache['data']
+  for g in (cached[3] if cached else []):
+    if not g.get('href'):
+      continue
+    games.append({'kind': 'Game', 'sport': g['sport'], 'label': f"{g['away_name'] or g['away_abbr']} @ {g['home_name'] or g['home_abbr']}",
+                  'abbr': g['matchup'], 'sub': f"{g['sport']} · {g['status'] if g['status'] != 'Preview' else 'Tonight'}",
+                  'logo': g['home_logo'], 'href': g['href'],
+                  'extra': f"{g['away_abbr']} {g['home_abbr']}"})
+  return games + _search_cache['teams'] + _search_cache['players']
+
+
+def _search(q, limit=12):
+  """Ranked matches: exact abbr > label prefix > word prefix > substring;
+  games outrank teams outrank players at equal strength."""
+  q = (q or '').strip().lower()
+  if len(q) < 2:
+    return []
+  kind_rank = {'Game': 0, 'Team': 1, 'Player': 2}
+  scored = []
+  for e in _search_index():
+    label = e['label'].lower()
+    abbr = e['abbr'].lower()
+    hay = f"{label} {abbr} {e.get('extra', '').lower()} {e['sport'].lower()}"
+    if q == abbr:
+      s = 0
+    elif label.startswith(q):
+      s = 1
+    elif any(w.startswith(q) for w in hay.split()):
+      s = 2
+    elif q in hay:
+      s = 3
+    else:
+      continue
+    scored.append((s, kind_rank[e['kind']], e['label'], e))
+  scored.sort(key=lambda x: x[:3])
+  return [e for *_k, e in scored[:limit]]
+
+
+@app.route('/api/search')
+def api_search():
+  return jsonify([{k: e[k] for k in ('kind', 'sport', 'label', 'sub', 'logo', 'href')}
+                  for e in _search(request.args.get('q'), limit=10)])
+
+
+@app.route('/search')
+def search_page():
+  q = (request.args.get('q') or '').strip()
+  results = _search(q, limit=60)
+  groups = []
+  for kind in ('Game', 'Team', 'Player'):
+    items = [e for e in results if e['kind'] == kind]
+    if items:
+      groups.append({'kind': kind, 'items': items})
+  return render_template('search.html', q=q, groups=groups, total=len(results))
 
 
 @app.route('/whispers')
@@ -5297,8 +5390,11 @@ def settings_page():
   s = Setting.query.first() or Setting()
   import odds_history
   odds_stats = odds_history.get_storage_stats()
+  import discord_alerts
   return render_template('settings.html', settings=s, odds_stats=odds_stats,
-                         favorites=_load_favorites(), favorite_sports=FAVORITE_SPORTS)
+                         favorites=_load_favorites(), favorite_sports=FAVORITE_SPORTS,
+                         discord_channels=discord_alerts.CHANNELS, discord_alerts=discord_alerts.ALERTS,
+                         channel_urls=discord_alerts.channel_urls(s), alert_prefs=discord_alerts.prefs(s))
 
 
 @app.route('/api/team-names/<sport>')
@@ -5354,15 +5450,40 @@ def save_settings():
   except Exception:
     pass
   s.discord_webhook_url = request.form.get('discord_webhook_url', '').strip()
+  import discord_alerts
+  s.discord_channels_json = json.dumps({
+      k: request.form.get(f'discord_channel_{k}', '').strip()
+      for k in discord_alerts.CHANNELS if k != 'default'})
+  s.alert_prefs_json = json.dumps({k: request.form.get(f'alert_{k}') == 'on' for k in discord_alerts.ALERTS})
   db.session.commit()
   return redirect(url_for('settings_page'))
+
+
+def _send_alert(alert_key, payload, dedupe_key=None):
+  """The one path new Discord alerts should post through: respects the
+  user's per-alert toggle, routes to that alert's channel (falling back to
+  Default), and — given a dedupe_key — sends each distinct alert once ever
+  (AlertSent). Returns True if something was posted. Needs an app context."""
+  import discord_alerts
+  url = discord_alerts.should_send(Setting.query.first(), alert_key)
+  if not url:
+    return False
+  if dedupe_key and AlertSent.query.filter_by(dedupe_key=dedupe_key).first():
+    return False
+  status = discord_alerts.post(url, payload)
+  if status and status < 300 and dedupe_key:
+    db.session.add(AlertSent(alert_key=alert_key, dedupe_key=dedupe_key[:300]))
+    db.session.commit()
+  return bool(status and status < 300)
 
 @app.route('/api/send-daily-picks', methods=['POST'])
 def api_send_daily_picks():
     """Manually trigger the daily picks Discord digest (all sports, same
     content as the noon cron) using each sport's current schedule cache."""
-    s       = Setting.query.first()
-    webhook = (s.discord_webhook_url or '').strip() if s else ''
+    import discord_alerts
+    # Manual send ignores the on/off toggle (you pressed the button) but
+    # still posts to the Model channel when one is set.
+    webhook = discord_alerts.webhook_for(Setting.query.first(), 'daily_card')
     if not webhook:
         return jsonify({'ok': False, 'error': 'No webhook URL configured'})
     try:
@@ -5383,13 +5504,15 @@ def api_send_daily_picks():
 @app.route('/api/test-webhook', methods=['POST'])
 def api_test_webhook():
   import requests as _req
+  import discord_alerts
   webhook = request.form.get('webhook_url', '').strip()
+  channel = discord_alerts.CHANNELS.get(request.form.get('channel', ''), {}).get('label', 'Default')
   if not webhook:
     return jsonify({'ok': False, 'error': 'No URL provided'})
   try:
     r = _req.post(webhook, json={'embeds': [{
-        'title':       '✅ Spooky Sports · Connection test',
-        'description': 'Discord notifications are configured correctly.',
+        'title':       f'✅ Dead Money · {channel} channel test',
+        'description': f'Alerts routed to the {channel} channel will post here.',
         'color':       0x4ade80,
     }]}, timeout=5)
     return jsonify({'ok': r.status_code < 300})
@@ -6483,6 +6606,17 @@ def _similar_games_splits(detail):
     return None
   return out
 
+@app.route('/api/game/<sport>/<game_id>/feed')
+def api_game_feed(sport, game_id):
+  """Normalized plays / box score / win probability / MLB at-bat for one
+  game (game_feed.get_feed) — polled every 30s by Game Center while live."""
+  import game_feed
+  data = game_feed.get_feed(sport, game_id)
+  if data is None:
+    return jsonify({'error': 'unavailable'}), 502
+  return jsonify(data)
+
+
 @app.route('/mlb/game/<game_id>')
 def mlb_game_detail_page(game_id):
   detail = mlb_game_detail.build_game_detail(game_id)
@@ -6498,9 +6632,10 @@ def mlb_game_detail_page(game_id):
   panel = ml_factors_panel(game) if game else None
   # Linescore now renders in game_detail.html's hero for every sport (see
   # game_center_extras), so _mlb_linescore.html is no longer appended here.
+  # Box score now lives in game_detail.html's Box score tab for every sport
+  # (game_feed.py via /api/game/<sport>/<id>/feed), replacing
+  # _mlb_boxscore.html / _nba_live_boxscore.html.
   extra = ['_mlb_pitchers_panel.html']
-  if game and game.get('status') in ('Live', 'Final'):
-    extra.append('_mlb_boxscore.html')
 
   return render_template('game_detail.html', detail=detail, game=game,
                           subnav_sport='MLB', bankroll=bankroll,
@@ -8052,8 +8187,6 @@ def nba_game_detail_page(game_id):
   extra = []
   if game and game.get('lineups'):
     extra.append('_nba_lineups.html')
-  if game and game.get('status') == 'Live':
-    extra.append('_nba_live_boxscore.html')
 
   return render_template('game_detail.html', detail=detail, game=game,
                           subnav_sport='NBA', bankroll=bankroll,
@@ -10372,9 +10505,10 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
                 with app.app_context():
                     _upsert_predictions(schedule, name)
                     if name == 'MLB' and send_alerts:
-                        s       = Setting.query.first()
-                        webhook = (s.discord_webhook_url or '').strip() if s else ''
-                        _check_unified_score_alerts(schedule, webhook)
+                        import discord_alerts
+                        webhook = discord_alerts.should_send(Setting.query.first(), 'score_moves')
+                        if webhook:
+                            _check_unified_score_alerts(schedule, webhook)
         except Exception:
             pass
 
@@ -10385,13 +10519,15 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     # every sport's schedule at once, not one at a time.
     if schedules_by_sport and (send_alerts or send_daily):
         try:
+            import discord_alerts
             with app.app_context():
-                s       = Setting.query.first()
-                webhook = (s.discord_webhook_url or '').strip() if s else ''
-            if send_alerts:
-                _check_recommended_list_changes(schedules_by_sport, webhook)
-            if send_daily:
-                _send_daily_recommendations(schedules_by_sport, webhook)
+                s = Setting.query.first()
+                picks_webhook = discord_alerts.should_send(s, 'picks_changed')
+                card_webhook  = discord_alerts.should_send(s, 'daily_card')
+            if send_alerts and picks_webhook:
+                _check_recommended_list_changes(schedules_by_sport, picks_webhook)
+            if send_daily and card_webhook:
+                _send_daily_recommendations(schedules_by_sport, card_webhook)
         except Exception:
             pass
 

@@ -1,37 +1,37 @@
 {% extends "base.html" %}
+{% import "_season_badge.html" as sb %}
 {% block title %}Stats — Dead Money{% endblock %}
 
 {% block content %}
+{% set _is_nhl = sport == 'NHL' %}
+{% set _diff_label = {'MLB': 'Run diff', 'NHL': 'Goal diff'}.get(sport, 'Pt diff') %}
 <div class="schedule-body">
 
 <div class="hub-greeting">
     <div>
-        <span class="hub-kicker">{{ today_display }} · Tonight's slate</span>
+        <span class="hub-kicker">{{ sport }}{% if season %} · {{ season }}{% if sport in ('NBA', 'NHL') %}–{{ (season + 1) % 100 }}{% endif %} season{% endif %} {{ sb.season_badge(sport) }}</span>
         <h1 class="hub-title">The Almanac</h1>
     </div>
-    {% if sport_boards %}
-    <div class="sport-chip-bar" id="stats-sport-filter" role="group" aria-label="Sport" style="margin-bottom:0;">
-        <button type="button" class="sport-chip sport-chip-active" data-filter-sport="ALL" onclick="statsFilterBySport('ALL', this)" aria-pressed="true">All</button>
-        {% for b in sport_boards %}
-        <button type="button" class="sport-chip" data-filter-sport="{{ b.sport }}" onclick="statsFilterBySport('{{ b.sport }}', this)" aria-pressed="false">{{ b.sport }}</button>
+    <nav class="stats-sport-switch" aria-label="Sport">
+        {% for sp in sports %}
+        <a href="{{ url_for('stats_page', sport=sp) }}"{% if sp == sport %} class="active" aria-current="page"{% endif %}>{{ sp }}</a>
         {% endfor %}
-    </div>
-    {% endif %}
+    </nav>
 </div>
 
 {% if trends %}
 <section class="stats-trends" aria-label="Trends">
 {% for t in trends %}
-<article class="card stats-trend" data-sport-section="{{ t.team.sport }}">
+<article class="card stats-trend">
     <div class="stats-trend-head">
         <span class="stats-trend-tag {{ t.cls }}">{{ t.tag }}</span>
         <span class="stats-trend-team">{% if t.team.logo %}<img src="{{ t.team.logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ t.team.abbr }}</span>
     </div>
     <div class="stats-trend-big"><span class="mono">{{ t.big }}</span><span class="small">{{ t.unit }}</span></div>
     {% if t.team.form %}
-    <div class="stats-trend-form" aria-hidden="true">{% for r in t.team.form %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</div>
+    <div class="stats-trend-form" aria-hidden="true">{% for r in t.team.form | reverse %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</div>
     {% endif %}
-    <a class="small stats-trend-note" href="{{ t.team.href }}">{{ t.team.sport }} · tonight {{ t.team.matchup }} →</a>
+    <span class="small">{{ t.team.name }} · {{ t.team.w }}–{{ t.team.l }}{% if t.team.otl %}–{{ t.team.otl }}{% endif %}{% if t.team.tonight %} · <a href="{{ t.team.tonight.href }}" class="stats-trend-note">tonight {{ t.team.tonight.matchup }} →</a>{% endif %}</span>
 </article>
 {% endfor %}
 </section>
@@ -39,89 +39,169 @@
 
 <div class="hub-cols">
 <div class="hub-main">
-{% if sport_boards %}
-{% for b in sport_boards %}
-<section class="card power-board" data-sport-section="{{ b.sport }}">
+<section class="card power-board" aria-labelledby="pb-h">
     <div class="hub-board-head">
-        <h2>The Power Board · {{ b.sport }}</h2>
-        <span class="small">Tonight's teams by record</span>
+        <h2 id="pb-h">The Power Board</h2>
+        <span class="small">{{ rows | length }} teams{% if rows | selectattr('tonight') | list %} · <span style="color:var(--orange);">tonight's teams shaded</span>{% endif %}</span>
     </div>
+    {% if groups | length > 1 %}
+    <div class="sport-chip-bar stats-group-filter" id="stats-group-filter" role="group" aria-label="Filter by {{ 'division' if sport in ('NHL', 'MLB') else 'conference' }}">
+        <button type="button" class="sport-chip sport-chip-active" aria-pressed="true" onclick="statsFilterGroup('', this)">All</button>
+        {% for g in groups %}<button type="button" class="sport-chip" aria-pressed="false" onclick="statsFilterGroup({{ g | tojson | forceescape }}, this)">{{ g }}</button>{% endfor %}
+        {% if rows | selectattr('tonight') | list %}<button type="button" class="sport-chip" aria-pressed="false" onclick="statsFilterGroup('__tonight', this)">Tonight</button>{% endif %}
+    </div>
+    {% endif %}
+    {% if rows %}
     <div style="overflow-x:auto;">
-    <table class="power-board-table">
+    <table class="power-board-table" id="power-board">
         <thead>
             <tr>
-                <th scope="col" style="width:36px;">#</th>
+                <th scope="col"><button type="button" class="stats-sort active" data-key="rank" data-dir="asc">#</button></th>
                 <th scope="col">Team</th>
-                <th scope="col" style="text-align:right;">W–L</th>
-                <th scope="col" style="text-align:right;">Pct</th>
+                <th scope="col" class="r">W–L{% if _is_nhl %}–OTL{% elif sport == 'NFL' %}–T{% endif %}</th>
+                <th scope="col" class="r"><button type="button" class="stats-sort" data-key="pct" data-dir="desc">{{ 'Pts' if _is_nhl else 'Pct' }}</button></th>
+                <th scope="col" class="r"><button type="button" class="stats-sort" data-key="diff" data-dir="desc">{{ _diff_label }}</button></th>
                 <th scope="col">Last 5</th>
-                <th scope="col" style="text-align:right;">Strk</th>
-                <th scope="col" style="text-align:right;">Tonight</th>
+                <th scope="col" class="r hide-sm"><button type="button" class="stats-sort" data-key="l10" data-dir="desc">L10</button></th>
+                <th scope="col" class="r"><button type="button" class="stats-sort" data-key="strk" data-dir="desc">Strk</button></th>
+                <th scope="col" class="r hide-sm">Home</th>
+                <th scope="col" class="r hide-sm">Away</th>
+                <th scope="col" class="r hide-sm">Tonight</th>
             </tr>
         </thead>
         <tbody>
-        {% for t in b.teams %}
-        <tr>
+        {% for t in rows %}
+        {% set _l5 = t.form[:5] %}
+        {% set _sk = (t.streak or '') %}
+        <tr id="team-{{ t.abbr }}" class="{{ 'tonight' if t.tonight }}" data-group="{{ t.group }}" data-tonight="{{ '1' if t.tonight else '0' }}"
+            data-rank="{{ t.rank }}" data-pct="{{ t.pts if _is_nhl else (t.pct if t.pct is not none else -1) }}"
+            data-diff="{{ t.diff if t.diff is not none else -9999 }}"
+            data-l10="{{ (t.form | select('equalto', 'W') | list | length) / (t.form | length) if t.form else -1 }}"
+            data-strk="{{ (_sk[1:] | int) * (1 if _sk[:1] == 'W' else -1) if _sk[1:] else 0 }}">
             <td class="mono" style="color:var(--text-muted);">{{ t.rank }}</td>
-            <th scope="row" style="text-align:left;">
-                <span style="display:flex; align-items:center; gap:8px; font-weight:800;">
-                    {% if t.logo %}<img src="{{ t.logo }}" alt="" loading="lazy" onerror="this.style.display='none'" style="width:20px; height:20px; object-fit:contain;">{% endif %}
-                    {{ t.abbr }}<span style="font-weight:500; color:var(--text-muted); font-size:0.78rem;">{{ t.name }}</span>
+            <th scope="row">
+                <span class="stats-team">
+                    {% if t.logo %}<img src="{{ t.logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
+                    {{ t.abbr }}<span class="stats-team-name">{{ t.name }}</span>
                 </span>
             </th>
-            <td class="mono" style="text-align:right;">{% if t.wins is not none and t.losses is not none %}{{ t.wins }}–{{ t.losses }}{% else %}—{% endif %}</td>
-            <td class="mono" style="text-align:right; color:var(--text-muted);">{% if t.wins is not none and t.losses is not none and (t.wins + t.losses) > 0 %}{{ ('%.3f' % (t.wins / (t.wins + t.losses)))[1:] if t.wins < (t.wins + t.losses) else '1.000' }}{% else %}—{% endif %}</td>
+            <td class="mono r">{{ t.w }}–{{ t.l }}{% if t.otl is not none %}–{{ t.otl }}{% endif %}</td>
+            <td class="mono r" style="color:var(--silver);">{% if _is_nhl %}{{ t.pts }}{% elif t.pct is not none %}{{ ('%.3f' % t.pct)[1:] if t.pct < 1 else '1.000' }}{% else %}—{% endif %}</td>
+            <td class="mono r" style="font-weight:600; color:{{ 'var(--loss)' if t.diff is not none and t.diff < 0 else 'var(--text)' }};">{% if t.diff is not none %}{{ '+' if t.diff > 0 }}{{ t.diff | int }}{% else %}—{% endif %}</td>
             <td>
-                {% if t.form %}
-                <span class="stats-form" role="img" aria-label="Last {{ t.form | length }}: {{ t.form | select('equalto', 'W') | list | length }} wins">{% for r in t.form %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</span>
+                {% if _l5 %}
+                <span class="stats-form" role="img" aria-label="Last {{ _l5 | length }}, oldest to newest: {{ _l5 | reverse | join(', ') }}">{% for r in _l5 | reverse %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</span>
                 {% else %}<span class="small">—</span>{% endif %}
             </td>
-            <td class="mono" style="text-align:right; color:{{ 'var(--orange)' if t.streak and t.streak[0] == 'W' else 'var(--text-muted)' }};">{{ t.streak or '—' }}</td>
-            <td style="text-align:right;"><a href="{{ t.href }}" class="small" style="font-weight:700; text-decoration:none; white-space:nowrap;">{{ t.matchup }} →</a></td>
+            <td class="mono r hide-sm" style="color:var(--silver);">{{ t.l10 or '—' }}</td>
+            <td class="mono r" style="font-weight:600; color:{{ 'var(--orange)' if _sk[:1] == 'W' else 'var(--text-muted)' }};">{{ t.streak or '—' }}</td>
+            <td class="mono r hide-sm" style="color:var(--silver);">{{ t.home or '—' }}</td>
+            <td class="mono r hide-sm" style="color:var(--silver);">{{ t.away or '—' }}</td>
+            <td class="r hide-sm">{% if t.tonight %}<a href="{{ t.tonight.href }}" class="small" style="font-weight:700; text-decoration:none; white-space:nowrap;">{{ t.tonight.matchup }} →</a>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
     </div>
+    {% else %}
+    <p class="hub-sport-empty" style="padding:0 20px 18px;">Couldn't reach the {{ sport }} standings feed — try again in a minute.</p>
+    {% endif %}
 </section>
-{% endfor %}
-<p class="small" style="margin:0 0 14px;">Full league standings aren't wired up yet — the board is scoped to teams on tonight's slate. Form and streaks are MLB/NHL only (the other sports' schedule feeds don't carry recent results).</p>
-{% else %}
-<div class="card"><p class="small" style="margin:0;">No games on tonight's slate yet.</p></div>
-{% endif %}
 </div>
 
 <aside class="hub-rail">
-{% for sp, lg in ledgers.items() %}
-<section class="card stats-ledger" data-ledger="{{ sp }}"{% if sp != 'ALL' %} hidden{% endif %}>
-    <h2>{{ 'Your ledger' if sp == 'ALL' else 'Your ' ~ sp ~ ' ledger' }}</h2>
-    <p class="small" style="margin:0 0 14px;">Settled bets{{ ', all sports' if sp == 'ALL' }}</p>
-    <div class="hub-model-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
-        <div><span class="stat-label">Record</span><span class="mono" style="font-size:1.1rem;">{{ lg.w }}–{{ lg.l }}</span></div>
-        <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if lg.roi and lg.roi > 0 else 'var(--loss)' }};">{% if lg.roi is not none %}{{ '+' if lg.roi > 0 }}{{ lg.roi }}%{% else %}—{% endif %}</span></div>
-        <div><span class="stat-label">CLV</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if lg.avg_clv and lg.avg_clv > 0 else 'var(--text-muted)' }};">{% if lg.avg_clv is not none %}{{ '+' if lg.avg_clv > 0 }}{{ lg.avg_clv }}%{% else %}—{% endif %}</span></div>
-    </div>
-    <a href="{{ url_for('history', sport=sp) if sp != 'ALL' else url_for('history') }}" class="stats-ledger-link">Bet history →</a>
-</section>
-{% endfor %}
+    {% if rows | length >= 2 %}
+    <section class="card stats-faceoff" aria-labelledby="fo-h">
+        <h2 id="fo-h">Face-off</h2>
+        <div class="stats-faceoff-pick">
+            <label><span class="sr-only">Team A</span><select id="fo-a">{% for t in rows | sort(attribute='abbr') %}<option value="{{ t.abbr }}"{% if t.abbr == faceoff[0] %} selected{% endif %}>{{ t.abbr }}</option>{% endfor %}</select></label>
+            <span class="small" style="font-weight:700;">VS</span>
+            <label><span class="sr-only">Team B</span><select id="fo-b">{% for t in rows | sort(attribute='abbr') %}<option value="{{ t.abbr }}"{% if t.abbr == faceoff[1] %} selected{% endif %}>{{ t.abbr }}</option>{% endfor %}</select></label>
+        </div>
+        <div id="fo-rows" class="stats-faceoff-rows"></div>
+        <p class="small" style="margin:12px 0 0;">Highlighted side is better. Lower wins for points allowed.</p>
+    </section>
+    {% endif %}
+
+    <section class="card stats-ledger" aria-labelledby="ledger-h">
+        <h2 id="ledger-h">Your {{ sport }} ledger</h2>
+        <p class="small" style="margin:0 0 14px;">Settled bets, all time</p>
+        <div class="hub-model-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+            <div><span class="stat-label">Record</span><span class="mono" style="font-size:1.1rem;">{{ ledger.w }}–{{ ledger.l }}</span></div>
+            <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.roi and ledger.roi > 0 else 'var(--loss)' }};">{% if ledger.roi is not none %}{{ '+' if ledger.roi > 0 }}{{ ledger.roi }}%{% else %}—{% endif %}</span></div>
+            <div><span class="stat-label">CLV</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.avg_clv and ledger.avg_clv > 0 else 'var(--text-muted)' }};">{% if ledger.avg_clv is not none %}{{ '+' if ledger.avg_clv > 0 }}{{ ledger.avg_clv }}%{% else %}—{% endif %}</span></div>
+        </div>
+        <a href="{{ url_for('history', sport=sport) }}" class="stats-ledger-link">Bet history →</a>
+    </section>
 </aside>
 </div>
 
 </div>
 <script>
-function statsFilterBySport(sport, btn) {
-    document.querySelectorAll('#stats-sport-filter .sport-chip').forEach(function (c) {
-        c.classList.remove('sport-chip-active'); c.setAttribute('aria-pressed', 'false');
+(function () {
+    var group = '';
+    window.statsFilterGroup = function (g, btn) {
+        group = g;
+        document.querySelectorAll('#stats-group-filter .sport-chip').forEach(function (c) {
+            c.classList.remove('sport-chip-active'); c.setAttribute('aria-pressed', 'false');
+        });
+        btn.classList.add('sport-chip-active'); btn.setAttribute('aria-pressed', 'true');
+        document.querySelectorAll('#power-board tbody tr').forEach(function (tr) {
+            var on = !g || (g === '__tonight' ? tr.dataset.tonight === '1' : tr.dataset.group === g);
+            tr.style.display = on ? '' : 'none';
+        });
+    };
+    document.querySelectorAll('.stats-sort').forEach(function (b) {
+        b.addEventListener('click', function () {
+            var key = b.dataset.key, asc = b.dataset.dir === 'asc';
+            if (b.classList.contains('active')) { asc = !asc; b.dataset.dir = asc ? 'asc' : 'desc'; }
+            document.querySelectorAll('.stats-sort').forEach(function (x) { x.classList.remove('active'); });
+            b.classList.add('active');
+            var body = document.querySelector('#power-board tbody');
+            var trs = Array.prototype.slice.call(body.rows);
+            trs.sort(function (x, y) {
+                var d = parseFloat(x.dataset[key]) - parseFloat(y.dataset[key]);
+                return asc ? d : -d;
+            });
+            trs.forEach(function (tr) { body.appendChild(tr); });
+        });
     });
-    btn.classList.add('sport-chip-active'); btn.setAttribute('aria-pressed', 'true');
-    document.querySelectorAll('[data-sport-section]').forEach(function (sec) {
-        sec.style.display = (sport === 'ALL' || sec.getAttribute('data-sport-section') === sport) ? '' : 'none';
-    });
-    var ledgers = document.querySelectorAll('[data-ledger]');
-    var hasOwn = !!document.querySelector('[data-ledger="' + sport + '"]');
-    ledgers.forEach(function (l) {
-        l.hidden = l.getAttribute('data-ledger') !== (hasOwn ? sport : 'ALL');
-    });
-}
+
+    var data = {{ rows | tojson }};
+    var by = {}; data.forEach(function (t) { by[t.abbr] = t; });
+    function wl(s) { if (!s) return null; var p = s.split('-').map(Number); var n = p.reduce(function (a, b) { return a + b; }, 0); return n ? p[0] / n : null; }
+    function pct(v) { return v >= 1 ? '1.000' : v.toFixed(3).replace(/^0/, ''); }
+    function per(v, t) { return (v == null || !t.gp) ? null : v / t.gp; }
+    var metrics = [
+        ['Win %', function (t) { return t.pct; }, false, pct],
+        [{{ _diff_label | tojson }} + ' / gm', function (t) { return per(t.diff, t); }, false, function (v) { return (v > 0 ? '+' : '') + v.toFixed(1); }],
+        ['Scored / gm', function (t) { return per(t.pf, t); }, false, function (v) { return v.toFixed(1); }],
+        ['Allowed / gm', function (t) { return per(t.pa, t); }, true, function (v) { return v.toFixed(1); }],
+        ['Home win %', function (t) { return wl(t.home); }, false, pct],
+        ['Away win %', function (t) { return wl(t.away); }, false, pct],
+        ['Last 10 win %', function (t) { return t.form && t.form.length ? t.form.filter(function (r) { return r === 'W'; }).length / t.form.length : null; }, false, pct]
+    ];
+    function render() {
+        var a = by[document.getElementById('fo-a').value], b = by[document.getElementById('fo-b').value];
+        var html = '';
+        metrics.forEach(function (m) {
+            var av = m[1](a), bv = m[1](b);
+            if (av == null || bv == null) return;
+            var lowBetter = m[2], aBetter = lowBetter ? av < bv : av > bv, tie = av === bv;
+            var lo = Math.min(av, bv, 0), span = Math.max(Math.abs(av - lo), Math.abs(bv - lo)) || 1;
+            var aw = Math.round(Math.abs(av - lo) / span * 100), bw = Math.round(Math.abs(bv - lo) / span * 100);
+            html += '<div><div class="stats-fo-line"><span class="mono ' + (aBetter && !tie ? 'better' : '') + '">' + m[3](av) + '</span>' +
+                '<span class="stats-fo-label">' + m[0] + '</span><span class="mono ' + (!aBetter && !tie ? 'better b' : '') + '">' + m[3](bv) + '</span></div>' +
+                '<div class="stats-fo-bars"><span><span style="width:' + aw + '%" class="' + (aBetter && !tie ? 'on' : '') + '"></span></span>' +
+                '<span><span style="width:' + bw + '%" class="' + (!aBetter && !tie ? 'on b' : '') + '"></span></span></div></div>';
+        });
+        document.getElementById('fo-rows').innerHTML = html;
+    }
+    if (document.getElementById('fo-a')) {
+        document.getElementById('fo-a').addEventListener('change', render);
+        document.getElementById('fo-b').addEventListener('change', render);
+        render();
+    }
+})();
 </script>
 {% endblock %}

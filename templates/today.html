@@ -130,10 +130,11 @@
         </div>
     </div>
 
-    {% if f.home_prob is not none %}
-    {% set _ap = ((1 - f.home_prob) * 100) | round | int %}
+    {% set _hp = f.live_home_prob if f.live_home_prob is defined else f.home_prob %}
+    {% if _hp is not none %}
+    {% set _ap = ((1 - _hp) * 100) | round | int %}
     <div class="hub-wp">
-        <div class="hub-wp-labels"><span>{{ f.away_abbr }} {{ _ap }}%</span><span class="hub-wp-title" title="The model's pregame number — there's no live win-probability feed">Model win prob · pregame</span><span>{{ 100 - _ap }}% {{ f.home_abbr }}</span></div>
+        <div class="hub-wp-labels"><span>{{ f.away_abbr }} {{ _ap }}%</span>{% if f.live_home_prob is defined %}<span class="hub-wp-title" title="Live win probability from the league/ESPN feed — display only">Win probability · live</span>{% else %}<span class="hub-wp-title" title="The model's pregame number — no live feed for this game">Model win prob · pregame</span>{% endif %}<span>{{ 100 - _ap }}% {{ f.home_abbr }}</span></div>
         <div class="hub-wp-bar"><span style="width:{{ _ap }}%;"></span></div>
     </div>
     {% endif %}

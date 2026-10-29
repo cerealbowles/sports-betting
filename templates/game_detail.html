@@ -34,6 +34,50 @@
 .gdp .gdp-live-dot { width:7px; height:7px; border-radius:50%; background:var(--orange); animation: live-dot-pulse 1.6s ease-in-out infinite; }
 .gdp a { color: var(--gdp-muted); text-decoration:none; }
 .gdp .hub-rail-head a { color: var(--orange); }
+.gdp .gdp-tab-off { display:none !important; }
+.gdp .gdp-tabs { display:flex; gap:22px; overflow-x:auto; border-bottom:1px solid var(--gdp-border); margin:-4px 0 16px; scrollbar-width:none; }
+.gdp .gdp-tabs::-webkit-scrollbar { display:none; }
+.gdp .gdp-tabs button { flex:0 0 auto; padding:12px 2px 11px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--gdp-dim); font:inherit; font-weight:600; font-size:15px; cursor:pointer; }
+.gdp .gdp-tabs button:hover { color:var(--gdp-text); }
+.gdp .gdp-tabs button[aria-current="page"] { color:var(--gdp-text); font-weight:800; border-bottom-color:var(--orange); }
+.gdp .gdp-wp-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:12px; }
+.gdp .gdp-wp-chart { position:relative; height:200px; }
+.gdp .gdp-wp-chart svg { display:block; }
+.gdp .gdp-wp-axis { position:absolute; left:0; font-family:var(--font-mono); font-size:11px; color:var(--gdp-dim); }
+.gdp .gdp-wp-axis.top { top:0; } .gdp .gdp-wp-axis.bot { bottom:0; }
+.gdp .gdp-wp-marks { position:relative; height:16px; margin-top:6px; font-size:11px; color:var(--gdp-dim); }
+.gdp .gdp-wp-marks span { position:absolute; transform:translateX(-50%); }
+.gdp .gdp-plays { list-style:none; margin:0; padding:4px 0; }
+.gdp .gdp-plays li { display:flex; align-items:flex-start; gap:14px; padding:10px 20px; font-size:14px; line-height:1.45; }
+.gdp .gdp-plays li.scoring { background:rgba(255,122,26,0.06); }
+.gdp .gdp-play-when { flex:0 0 78px; font-size:12px; color:var(--gdp-dim); padding-top:2px; }
+.gdp .gdp-play-text { flex:1; min-width:0; color:var(--gdp-text); }
+.gdp .gdp-play-tag { font-size:10px; font-weight:800; letter-spacing:.12em; color:var(--orange); text-transform:uppercase; margin-right:8px; }
+.gdp .gdp-play-score { font-size:13px; color:var(--gdp-muted); white-space:nowrap; }
+.gdp .gdp-box-team + .gdp-box-team { margin-top:18px; }
+.gdp .gdp-box-abbr { font-family:var(--font-display); font-size:22px; margin-bottom:6px; }
+.gdp .gdp-box-wrap { overflow-x:auto; margin-bottom:10px; }
+.gdp .gdp-box { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:12.5px; }
+.gdp .gdp-box th, .gdp .gdp-box td { padding:6px 8px; text-align:center; white-space:nowrap; border-top:1px solid var(--gdp-border); color:var(--gdp-muted); font-weight:400; }
+.gdp .gdp-box thead th { color:var(--gdp-dim); border-top:0; font-size:11px; }
+.gdp .gdp-box .l { text-align:left; color:var(--gdp-text); font-family:var(--font-body); }
+.gdp .gdp-box thead .l { font-family:var(--font-cond); font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--gdp-muted); }
+.gdp .gdp-atbat { display:flex; flex-wrap:wrap; gap:22px; margin-top:14px; }
+.gdp .gdp-zone { position:relative; flex:0 0 180px; height:220px; background:var(--gdp-surface3); border-radius:12px; overflow:hidden; }
+.gdp .gdp-zone-box { position:absolute; border:1.5px solid var(--border-strong); }
+.gdp .gdp-pitch-dot { position:absolute; width:22px; height:22px; margin:-11px 0 0 -11px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; background:var(--gdp-surface2); border:2px solid var(--gdp-muted); color:var(--gdp-text); }
+.gdp .gdp-pitch-dot.strike { background:var(--orange); border-color:var(--orange); color:var(--bg); }
+.gdp .gdp-atbat-info { flex:1 1 300px; min-width:0; display:flex; flex-direction:column; gap:14px; }
+.gdp .gdp-atbat-who { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.gdp .gdp-atbat-who b { display:block; font-size:16px; margin:4px 0 2px; }
+.gdp .gdp-pitches { list-style:none; margin:0; padding:0; }
+.gdp .gdp-pitches li { display:flex; align-items:center; gap:12px; padding:8px 0; border-top:1px solid var(--gdp-border); font-size:14px; }
+.gdp .gdp-pitches li b { flex:1; }
+.gdp .gdp-pitch-count { border-top:0 !important; color:var(--gdp-muted); font-size:13px !important; }
+.gdp .gdp-pitch-n { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; background:var(--gdp-surface2); flex:0 0 auto; }
+.gdp .gdp-pitch-n.strike { background:var(--orange); color:var(--bg); }
+@media (max-width:480px) { .gdp .gdp-play-when { flex-basis:56px; } .gdp .gdp-plays li { padding:10px 14px; gap:10px; } }
+
 .gdp .gdp-clock { font-size:13px; font-weight:700; color:var(--orange); letter-spacing:0.04em; }
 .gdp .gdp-hero-linescore { flex:1 1 100%; padding:8px 0 0; }
 .gdp .gdp-yourbet { border-color:rgba(168,240,122,0.32); }
@@ -267,9 +311,23 @@
     {% endif %}
   </div>
 
+  {# ── Section tabs — Gamecast shows the whole page (plus the live
+       cards below once a game starts); the others filter to their own
+       cards via data-gtab. Box score / Play-by-play come from
+       /api/game/<sport>/<id>/feed (game_feed.py) and only exist once the
+       game is Live or Final. #}
+  {% set _has_feed = game and game.status in ('Live', 'Final') %}
+  <nav class="gdp-tabs" aria-label="Game sections" id="gdpTabs">
+    <button type="button" data-tab="gamecast" aria-current="page">Gamecast</button>
+    {% if _has_feed %}<button type="button" data-tab="box">Box score</button>
+    <button type="button" data-tab="pbp">Play-by-play</button>{% endif %}
+    <button type="button" data-tab="matchup">Matchup</button>
+    <button type="button" data-tab="odds">Odds &amp; model</button>
+  </nav>
+
   {# ── Verdict cards ─────────────────────────────────────────────────────── #}
   {% if detail.verdicts %}
-  <div class="gdp-verdicts">
+  <div class="gdp-verdicts" data-gtab="odds">
     {% for v in detail.verdicts %}
     <div class="gdp-vcard tag-{{ v.tag | lower }}">
       <div class="gdp-vhead"><span>{{ v.market }}</span><span class="gdp-tag {{ v.tag | lower }}">{{ v.tag }}</span></div>
@@ -292,7 +350,7 @@
 
   {# ── Blend strip ───────────────────────────────────────────────────────── #}
   {% if detail.model.p_team_home is not none and detail.model.p_player_home is not none %}
-  <div class="gdp-card gdp-blend">
+  <div class="gdp-card gdp-blend" data-gtab="odds">
     <span style="font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--gdp-dim)">{{ detail.teams.home.abbr }} WIN PROB</span>
     <span>Team <b>{{ (detail.model.p_team_home * 100) | round(1) }}%</b></span>
     <span>Player <b>{{ (detail.model.p_player_home * 100) | round(1) }}%</b></span>
@@ -305,9 +363,43 @@
   <div class="gdp-cols">
     <div class="gdp-main">
 
+      {% if _has_feed %}
+      {# ── Live cards, filled from the feed endpoint (see script below) #}
+      <div data-gtab="gamecast" class="gdp-card" id="gdpWp" hidden>
+        <div class="gdp-wp-head"><span class="gdp-team-name" style="font-size:24px;">Win probability</span><span id="gdpWpNow" class="small"></span></div>
+        <div class="gdp-wp-chart"><span class="gdp-wp-axis top">{{ detail.teams.home.abbr }}</span><span class="gdp-wp-axis bot">{{ detail.teams.away.abbr }}</span>
+          <svg id="gdpWpSvg" role="img" aria-label="{{ detail.teams.home.abbr }} win probability over the game" viewBox="0 0 800 200" preserveAspectRatio="none" width="100%" height="200"></svg></div>
+        <div id="gdpWpMarks" class="gdp-wp-marks mono"></div>
+      </div>
+      {% if subnav_sport == 'MLB' and game.status == 'Live' %}
+      <div data-gtab="gamecast" class="gdp-card" id="gdpAtBat" hidden>
+        <span class="gdp-team-name" style="font-size:24px;">At the plate</span>
+        <div class="gdp-atbat">
+          <div class="gdp-zone" id="gdpZone" role="img" aria-label="Pitch locations this at-bat"><span class="gdp-zone-box"></span></div>
+          <div class="gdp-atbat-info">
+            <div class="gdp-atbat-who">
+              <div class="gdp-sit-cell"><span id="gdpBatTeam">BATTING</span><b id="gdpBatter"></b><div class="mono small" id="gdpBatLine"></div></div>
+              <div class="gdp-sit-cell"><span id="gdpPitTeam">PITCHING</span><b id="gdpPitcher"></b><div class="mono small" id="gdpPitLine"></div></div>
+            </div>
+            <ol class="gdp-pitches" id="gdpPitches"></ol>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+      <div data-gtab="gamecast" class="gdp-card" id="gdpRecent" hidden style="padding:0; overflow:hidden;">
+        <div class="hub-rail-head"><span class="gdp-team-name" style="font-size:24px;">Recent plays</span><a href="#pbp" data-goto="pbp">Full play-by-play</a></div>
+        <ol class="gdp-plays" id="gdpRecentList"></ol>
+      </div>
+      <div data-gtab="box" class="gdp-card" id="gdpBox"><div class="gdp-section-head"><span>{{ 'LIVE BOX SCORE' if game.status == 'Live' else 'BOX SCORE' }}</span></div><div id="gdpBoxBody" class="small">Loading…</div></div>
+      <div data-gtab="pbp" class="gdp-card" id="gdpPbp" style="padding:0; overflow:hidden;">
+        <div class="hub-rail-head"><span class="gdp-team-name" style="font-size:24px;">Play-by-play</span><label class="small"><input type="checkbox" id="gdpScoringOnly"> Scoring plays only</label></div>
+        <ol class="gdp-plays" id="gdpPbpList"><li class="small" style="padding:12px 20px;">Loading…</li></ol>
+      </div>
+      {% endif %}
+
       {# ── Line movement ─────────────────────────────────────────────── #}
       {% if detail.fanduel.history.ml or detail.fanduel.history.spread %}
-      <div class="gdp-card">
+      <div data-gtab="odds" class="gdp-card">
         <div class="gdp-section-head"><span>LINE MOVEMENT</span></div>
         <div class="gdp-lm-tabs" role="tablist" aria-label="Line movement market">
           <button type="button" class="gdp-lm-tab" data-lm-key="ml" role="tab" aria-selected="false">Moneyline</button>
@@ -331,7 +423,7 @@
 
       {# ── Where the game is won ─────────────────────────────────────── #}
       {% if detail.matchups %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>WHERE THE GAME IS WON</span><span>League rank of {{ detail.stats[0].n_teams if detail.stats else '' }}</span></div>
         {% for u in detail.matchups %}
         <div class="gdp-unit-row">
@@ -345,7 +437,7 @@
 
       {# ── Team comparison ──────────────────────────────────────────── #}
       {% if detail.stats %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>TEAM COMPARISON</span><span>of {{ detail.stats[0].n_teams }}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:8px;"><span style="color:#6E9BFF">{{ detail.teams.away.abbr }}</span><span style="color:#FF8A3D">{{ detail.teams.home.abbr }}</span></div>
         {% for s in detail.stats %}
@@ -365,14 +457,14 @@
       {% if ml_panel %}
       {% set panel = ml_panel %}
       {% set title = 'Model Factors' %}
-      <div class="gdp-card">
+      <div data-gtab="odds" class="gdp-card">
         {% include "_factor_diverge_panel.html" %}
       </div>
       {% endif %}
 
       {# ── Last 5 games ──────────────────────────────────────────────── #}
       {% if detail.recent.away or detail.recent.home %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>LAST 5 GAMES</span></div>
         <div class="gdp-cols">
           {% for side, rows in [('away', detail.recent.away), ('home', detail.recent.home)] %}
@@ -399,7 +491,7 @@
 
       {# ── Your bet — the user's actual open position on this game ───────── #}
       {% for b in gx.my_bets %}
-      <div class="gdp-card gdp-yourbet">
+      <div data-gtab="gamecast" class="gdp-card gdp-yourbet">
         <div class="gdp-yourbet-head">
           <span class="gdp-team-name" style="font-size:24px;">Your bet</span>
           <span class="gdp-yourbet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}">{{ b.state }}</span>
@@ -417,7 +509,7 @@
 
       {# ── DraftKings market (read-only, informational) ───────────────────── #}
       {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none %}
-      <div class="gdp-card">
+      <div data-gtab="odds" class="gdp-card">
         <div class="gdp-section-head"><span>DRAFTKINGS MARKET</span><span>Model side outlined</span></div>
 
         {% if detail.fanduel.moneyline.home.price is not none %}
@@ -455,7 +547,7 @@
       {# ── Injuries — real player/position/status only; no fabricated
            snap-share note or point-impact (not computed anywhere for NFL) #}
       {% if detail.injuries.away or detail.injuries.home %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>INJURIES</span></div>
         {% for side in ['away', 'home'] %}
         {% if detail.injuries[side] %}
@@ -494,7 +586,7 @@
 
       {# ── Situation ─────────────────────────────────────────────────── #}
       {% if detail.situation %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>SITUATION</span></div>
         <div class="gdp-sit-grid">
           {% if detail.situation.rest %}<div class="gdp-sit-cell"><span>REST</span><b class="gdp-sit-rest">{% if detail.teams.away.logo_url %}<img src="{{ detail.teams.away.logo_url }}" alt="{{ detail.teams.away.abbr }}" class="gdp-sit-rest-logo" loading="lazy" onerror="this.style.visibility='hidden'">{% endif %}{{ detail.situation.rest.away }}d / {{ detail.situation.rest.home }}d{% if detail.teams.home.logo_url %}<img src="{{ detail.teams.home.logo_url }}" alt="{{ detail.teams.home.abbr }}" class="gdp-sit-rest-logo" loading="lazy" onerror="this.style.visibility='hidden'">{% endif %}</b></div>{% endif %}
@@ -511,7 +603,7 @@
          /model's Situational Splits, just sliced to this game's bucket(s).
          Exploratory context, not a recommendation; sample counts shown. #}
       {% if splits %}
-      <div class="gdp-card">
+      <div data-gtab="matchup" class="gdp-card">
         <div class="gdp-section-head"><span>GAMES LIKE THIS</span><span>{{ splits.baseline.win_rate }}% baseline (n={{ splits.baseline.count }})</span></div>
         <div class="gdp-sit-grid">
           {% if splits.dow %}
@@ -534,7 +626,7 @@
 
       {# ── Whispers — today's feed, filtered to this game ─────────────── #}
       {% if gx.whispers %}
-      <div class="gdp-card" style="padding:0; overflow:hidden;">
+      <div data-gtab="gamecast" class="gdp-card" style="padding:0; overflow:hidden;">
         <div class="hub-rail-head"><span class="gdp-team-name" style="font-size:24px;">Whispers</span><a href="{{ url_for('whispers_page') }}">All</a></div>
         <ol class="hub-wire">
         {% for w in gx.whispers %}
@@ -558,9 +650,11 @@
        per-player box score) — content that lived in the old inline-expand
        sheet and has no generic equivalent in the sections above #}
   {% if game %}
+  <div data-gtab="matchup">
   {% for tmpl in extra_panels or [] %}
   {% include tmpl %}
   {% endfor %}
+  </div>
   {% endif %}
 
   {# ── Bet panel — reuses the schedule card's exact bet-chip/bet-slip UI,
@@ -759,6 +853,131 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
         if (initialTab) initialTab.setAttribute('aria-selected', 'true');
         render(initial);
     }
+})();
+{% endif %}
+</script>
+<script>
+// ── Section tabs (see the gdpTabs nav in the content block) ──────────────
+(function () {
+    var nav = document.getElementById('gdpTabs');
+    if (!nav) return;
+    var root = document.querySelector('.gdp');
+    function show(tab) {
+        nav.querySelectorAll('button').forEach(function (b) {
+            if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+        });
+        root.querySelectorAll('[data-gtab]').forEach(function (el) {
+            var t = el.getAttribute('data-gtab');
+            var on = tab === 'gamecast' ? (t !== 'box' && t !== 'pbp') : t === tab;
+            el.classList.toggle('gdp-tab-off', !on);
+        });
+        if (history.replaceState) history.replaceState(null, '', tab === 'gamecast' ? location.pathname + location.search : '#' + tab);
+    }
+    nav.addEventListener('click', function (e) { var b = e.target.closest('button[data-tab]'); if (b) show(b.dataset.tab); });
+    document.querySelectorAll('[data-goto]').forEach(function (a) {
+        a.addEventListener('click', function (e) { e.preventDefault(); show(a.dataset.goto); window.scrollTo({ top: nav.offsetTop - 8, behavior: 'smooth' }); });
+    });
+    var start = (location.hash || '').slice(1);
+    show(nav.querySelector('button[data-tab="' + start + '"]') ? start : 'gamecast');
+})();
+
+{% if game and game.status in ('Live', 'Final') %}
+// ── Live feed: win probability, at the plate, plays, box score ───────────
+(function () {
+    var url = '/api/game/{{ subnav_sport | lower }}/{{ game.game_pk if subnav_sport == "MLB" else game.game_id }}/feed';
+    var HOME = {{ detail.teams.home.abbr | tojson }}, AWAY = {{ detail.teams.away.abbr | tojson }};
+    var LIVE = {{ 'true' if game.status == 'Live' else 'false' }};
+    var feed = null;
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+    function playLi(p) {
+        return '<li class="' + (p.scoring ? 'scoring' : '') + '"><span class="mono gdp-play-when">' + esc(p.period) + (p.clock ? ' ' + esc(p.clock) : '') + '</span>' +
+            '<span class="gdp-play-text">' + (p.scoring ? '<span class="gdp-play-tag">Scores</span>' : '') + esc(p.text) + '</span>' +
+            '<span class="mono gdp-play-score">' + esc(p.score || '') + '</span></li>';
+    }
+    function renderPlays() {
+        var plays = feed.plays || [];
+        var recent = document.getElementById('gdpRecent');
+        if (recent && plays.length) {
+            recent.hidden = false;
+            document.getElementById('gdpRecentList').innerHTML = plays.slice(0, 7).map(playLi).join('');
+        }
+        var only = document.getElementById('gdpScoringOnly').checked;
+        var list = only ? plays.filter(function (p) { return p.scoring; }) : plays;
+        document.getElementById('gdpPbpList').innerHTML = list.length ? list.map(playLi).join('')
+            : '<li class="small" style="padding:12px 20px;">No plays yet.</li>';
+    }
+    function renderBox() {
+        var teams = feed.boxscore || [];
+        var html = teams.map(function (t) {
+            return '<div class="gdp-box-team"><div class="gdp-box-abbr">' + esc(t.abbr) + '</div>' + t.groups.map(function (g) {
+                return '<div class="gdp-box-wrap"><table class="gdp-box"><thead><tr>' + g.cols.map(function (c, i) {
+                    return '<th scope="col"' + (i ? '' : ' class="l"') + '>' + (i ? esc(c) : esc(g.label)) + '</th>'; }).join('') +
+                    '</tr></thead><tbody>' + g.rows.map(function (r) {
+                        return '<tr>' + r.map(function (v, i) { return i ? '<td>' + esc(v) + '</td>' : '<th scope="row" class="l">' + esc(v) + '</th>'; }).join('') + '</tr>';
+                    }).join('') + '</tbody></table></div>';
+            }).join('') + '</div>';
+        }).join('');
+        document.getElementById('gdpBoxBody').innerHTML = html || 'No box score yet.';
+    }
+    function renderWp() {
+        var wp = feed.winprob, card = document.getElementById('gdpWp');
+        if (!wp || !wp.points || wp.points.length < 2) return;
+        card.hidden = false;
+        var n = wp.points.length;
+        var pts = wp.points.map(function (p, i) { return (i / (n - 1) * 800).toFixed(1) + ',' + ((1 - p) * 200).toFixed(1); }).join(' ');
+        var last = wp.points[n - 1];
+        document.getElementById('gdpWpSvg').innerHTML =
+            '<line x1="0" y1="100" x2="800" y2="100" stroke="var(--border-strong)" stroke-dasharray="4 6" vector-effect="non-scaling-stroke"></line>' +
+            '<polyline points="' + pts + '" fill="none" stroke="var(--orange)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline>';
+        var lead = last >= 0.5 ? HOME : AWAY, pct = Math.round((last >= 0.5 ? last : 1 - last) * 100);
+        document.getElementById('gdpWpNow').innerHTML = '<b>' + esc(lead) + ' <span class="mono" style="color:var(--orange);">' + pct + '%</span></b>' + (LIVE ? ' now' : ' at the final play');
+        document.getElementById('gdpWpMarks').innerHTML = (wp.marks || []).map(function (m) {
+            return '<span style="left:' + (m.i / (n - 1) * 100).toFixed(2) + '%">' + esc(m.label) + '</span>'; }).join('');
+    }
+    function renderAtBat() {
+        var ab = feed.at_bat, card = document.getElementById('gdpAtBat');
+        if (!card) return;
+        if (!ab) { card.hidden = true; return; }
+        card.hidden = false;
+        document.getElementById('gdpBatTeam').textContent = 'BATTING · ' + ab.batter_team;
+        document.getElementById('gdpPitTeam').textContent = 'PITCHING · ' + ab.pitcher_team;
+        document.getElementById('gdpBatter').textContent = ab.batter || '';
+        document.getElementById('gdpPitcher').textContent = ab.pitcher || '';
+        document.getElementById('gdpBatLine').textContent = ab.batter_line ? 'Tonight ' + ab.batter_line : '';
+        document.getElementById('gdpPitLine').textContent = ab.pitcher_line || '';
+        // Zone plot: catcher's view, x = plate side (pX, ft, ±1.5 shown),
+        // y = height (pZ, ft, 0.5–4.5 shown); the box is the plate width
+        // (17in ≈ ±0.71ft) between this batter's zone top/bottom.
+        var zone = document.getElementById('gdpZone');
+        var X = function (px) { return (px + 1.5) / 3 * 100; }, Y = function (pz) { return (4.5 - pz) / 4 * 100; };
+        var box = zone.querySelector('.gdp-zone-box');
+        box.style.left = X(-0.71) + '%'; box.style.width = (X(0.71) - X(-0.71)) + '%';
+        box.style.top = Y(ab.sz_top) + '%'; box.style.height = (Y(ab.sz_bot) - Y(ab.sz_top)) + '%';
+        zone.querySelectorAll('.gdp-pitch-dot').forEach(function (d) { d.remove(); });
+        ab.pitches.forEach(function (p) {
+            if (p.px == null || p.pz == null) return;
+            var d = document.createElement('span');
+            d.className = 'gdp-pitch-dot mono' + (p.is_strike || p.in_play ? ' strike' : '');
+            d.style.left = Math.max(0, Math.min(100, X(p.px))) + '%'; d.style.top = Math.max(0, Math.min(100, Y(p.pz))) + '%';
+            d.textContent = p.n;
+            zone.appendChild(d);
+        });
+        document.getElementById('gdpPitches').innerHTML = ab.pitches.map(function (p) {
+            return '<li><span class="gdp-pitch-n mono' + (p.is_strike || p.in_play ? ' strike' : '') + '">' + esc(p.n) + '</span><b>' + esc(p.call) + '</b>' +
+                '<span class="small">' + esc(p.type) + '</span><span class="mono small">' + (p.mph ? p.mph.toFixed(1) + ' mph' : '') + '</span></li>';
+        }).join('') || '<li class="small">First pitch coming.</li>';
+        var c = ab.count || {};
+        document.getElementById('gdpPitches').insertAdjacentHTML('afterbegin', '<li class="gdp-pitch-count mono">' + (c.balls || 0) + '-' + (c.strikes || 0) + ', ' + (c.outs || 0) + ' out' + (c.outs === 1 ? '' : 's') + '</li>');
+    }
+    function load() {
+        fetch(url).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+            if (!d) { document.getElementById('gdpBoxBody').textContent = 'Box score unavailable right now.'; return; }
+            feed = d; renderWp(); renderAtBat(); renderPlays(); renderBox();
+        }).catch(function () {});
+    }
+    document.getElementById('gdpScoringOnly').addEventListener('change', function () { if (feed) renderPlays(); });
+    load();
+    if (LIVE) setInterval(function () { if (!document.hidden) load(); }, 30000);
 })();
 {% endif %}
 </script>

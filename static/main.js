@@ -519,3 +519,54 @@ fetch('/bet_sheet/add', { method: 'POST', body: fd })
     }
     });
 }
+
+// ── Header search (base.html #siteSearch) ─────────────────────────────────
+// Typeahead over /api/search; Enter without picking a result submits to
+// the full /search page. On phones the field is collapsed behind the icon
+// button until toggled open.
+function toggleSiteSearch(btn) {
+    var form = document.getElementById('siteSearch');
+    var open = form.classList.toggle('open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) document.getElementById('siteSearchInput').focus();
+}
+(function () {
+    var input = document.getElementById('siteSearchInput');
+    var list = document.getElementById('siteSearchResults');
+    if (!input || !list) return;
+    var timer = null, seq = 0, active = -1;
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+    function close() { list.hidden = true; list.innerHTML = ''; active = -1; }
+    function setActive(i) {
+        var items = list.querySelectorAll('a');
+        items.forEach(function (a, j) { a.classList.toggle('active', j === i); a.setAttribute('aria-selected', j === i ? 'true' : 'false'); });
+        active = i;
+    }
+    input.addEventListener('input', function () {
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if (q.length < 2) { close(); return; }
+        timer = setTimeout(function () {
+            var mine = ++seq;
+            fetch('/api/search?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (rows) {
+                if (mine !== seq) return;
+                if (!rows.length) { list.innerHTML = '<li class="site-search-empty">Nothing turned up.</li>'; list.hidden = false; return; }
+                list.innerHTML = rows.map(function (e) {
+                    return '<li role="option"><a href="' + esc(e.href) + '">' +
+                        (e.logo ? '<img src="' + esc(e.logo) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '<span class="search-noimg"></span>') +
+                        '<span class="search-main"><strong>' + esc(e.label) + '</strong><span>' + esc(e.kind) + ' · ' + esc(e.sub) + '</span></span></a></li>';
+                }).join('') + '<li><a class="site-search-all" href="/search?q=' + encodeURIComponent(q) + '">All results for “' + esc(q) + '” →</a></li>';
+                list.hidden = false; active = -1;
+            }).catch(close);
+        }, 160);
+    });
+    input.addEventListener('keydown', function (e) {
+        var items = list.querySelectorAll('a');
+        if (list.hidden || !items.length) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); setActive(Math.min(active + 1, items.length - 1)); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(Math.max(active - 1, 0)); }
+        else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); window.location = items[active].href; }
+        else if (e.key === 'Escape') { close(); }
+    });
+    document.addEventListener('click', function (e) { if (!e.target.closest('#siteSearch')) close(); });
+})();

@@ -38,7 +38,7 @@
    a sport's page"). #}
 {% set _today_href = url_for('index') %}
 {% set _today_active = request.endpoint == 'index' %}
-{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings', 'whispers_page': 'Whispers', 'stats_page': 'Stats'} %}
+{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings', 'whispers_page': 'Whispers', 'stats_page': 'Stats', 'search_page': 'Search'} %}
 {% set _page_label = 'Today' if _today_active else (_sport_switch_active if request.endpoint in _nav_schedule_endpoints.values() else _page_labels.get(request.endpoint, 'Dead Money')) %}
 <div class="container">
 
@@ -70,6 +70,17 @@
         </nav>
 
         <div class="topbar-right">
+            <form class="site-search" action="{{ url_for('search_page') }}" method="get" role="search" id="siteSearch">
+                <button type="button" class="site-search-toggle" aria-label="Search" aria-expanded="false" onclick="toggleSiteSearch(this)">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+                </button>
+                <label class="site-search-field">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+                    <span class="sr-only">Search teams, players and games</span>
+                    <input type="search" name="q" id="siteSearchInput" placeholder="Teams, players, games" autocomplete="off" value="{{ request.args.get('q', '') if request.endpoint == 'search_page' else '' }}" aria-controls="siteSearchResults" aria-autocomplete="list">
+                </label>
+                <ul class="site-search-results" id="siteSearchResults" role="listbox" hidden></ul>
+            </form>
             <button type="button" id="linesToggle" class="lines-toggle{{ '' if show_lines else ' off' }}"
                     onclick="toggleLinesVisibility(this)"
                     aria-pressed="{{ 'true' if show_lines else 'false' }}"

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ ('Search: ' ~ q) if q else 'Search' }} — Dead Money{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">{% if q %}{{ total }} result{{ 's' if total != 1 }}{% else %}Search{% endif %}</span>
+        <h1 class="hub-title">{% if q %}“{{ q }}”{% else %}Search{% endif %}</h1>
+    </div>
+</div>
+{% if not q or q | length < 2 %}
+<div class="card"><p class="small" style="margin:0;">Type at least two letters — a team, an NFL player, or tonight's matchup.</p></div>
+{% elif not groups %}
+<div class="card whispers-empty"><div class="whispers-empty-title">Nothing turned up.</div><p class="small" style="margin:8px 0 0;">Search covers every team in all six leagues, tonight's games, and NFL players.</p></div>
+{% else %}
+{% for g in groups %}
+<section class="card hub-rail-card" style="margin-bottom:14px;">
+    <div class="hub-rail-head"><h2>{{ g.kind }}s</h2><span class="small">{{ g['items'] | length }}</span></div>
+    <ul class="search-list">
+    {% for e in g['items'] %}
+        <li><a href="{{ e.href }}">
+            {% if e.logo %}<img src="{{ e.logo }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{% else %}<span class="search-noimg"></span>{% endif %}
+            <span class="search-main"><strong>{{ e.label }}</strong><span class="small">{{ e.sub }}</span></span>
+            <span aria-hidden="true" style="color:var(--orange);">→</span>
+        </a></li>
+    {% endfor %}
+    </ul>
+</section>
+{% endfor %}
+{% endif %}
+</div>
+{% endblock %}

@@ -166,4 +166,10 @@ function openPlayerDetail(playerId, week) {
         .then(function(html) { body.innerHTML = html; })
         .catch(function() { body.innerHTML = '<p class="plyr-empty">Couldn\'t load player details.</p>'; });
 }
+// ?player=<id> deep link (header search results land here) opens that
+// player's card straight away.
+(function () {
+    var pid = new URLSearchParams(window.location.search).get('player');
+    if (pid) openPlayerDetail(pid, {{ week_ctx.week }});
+})();
 </script>
