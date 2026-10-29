@@ -31,7 +31,8 @@ _cache = {}
 
 _ESPN = 'https://site.api.espn.com/apis/v2/sports/{path}/standings'
 _ESPN_PATHS = {'NFL': 'football/nfl', 'NBA': 'basketball/nba',
-               'WNBA': 'basketball/wnba', 'CFB': 'football/college-football'}
+               'WNBA': 'basketball/wnba', 'CFB': 'football/college-football',
+               'NHL': 'hockey/nhl'}  # NHL here is only the fallback — see _nhl_rows
 SPORTS = ('NFL', 'NBA', 'NHL', 'MLB', 'CFB', 'WNBA')
 
 
@@ -124,6 +125,10 @@ def _espn_form(sport):
         elif sport == 'WNBA':
             import wnba_api as m
             season = m._get_wnba_season()
+        elif sport == 'NHL':
+            import nhl_api
+            form_map, _last = nhl_api._get_recent_form_map()  # chronological, by abbr
+            return None, {k: list(reversed(v))[:10] for k, v in form_map.items()}
         else:
             import cfb_api as m
             season = m._get_cfb_season()
@@ -170,9 +175,9 @@ def _espn_rows(sport):
             num = lambda k: (st.get(k) or {}).get('value')
             disp = lambda k: (st.get(k) or {}).get('displayValue')
             name = t.get('displayName', '')
-            ties = num('ties')
-            gp = None
-            if num('avgPointsFor') and num('pointsFor'):
+            ties = num('otLosses') if sport == 'NHL' else num('ties')
+            gp = int(num('gamesPlayed')) if num('gamesPlayed') else None
+            if not gp and num('avgPointsFor') and num('pointsFor'):
                 gp = round(num('pointsFor') / num('avgPointsFor'))
             # CFB's wins/losses stats are CONFERENCE-only; 'overall' is the
             # real record everywhere it's present.
@@ -186,18 +191,38 @@ def _espn_rows(sport):
                 'diff': num('pointDifferential') if num('pointDifferential') is not None else num('differential'),
                 'pf': num('pointsFor'), 'pa': num('pointsAgainst'),
                 'home': disp('Home'), 'away': disp('Road') or disp('Away'),
-                'l10': disp('Last Ten Games'), 'streak': disp('streak'),
-                'form': form.get(name, []),
+                # NHL's ESPN strings carry a points suffix ("8-1-1, 0 PTS").
+                'l10': (disp('Last Ten Games') or '').split(',')[0] or None, 'streak': disp('streak'),
+                'form': form.get(name) or form.get(t.get('abbreviation', ''), []),
             })
     return {'season': season, 'rows': _finish(rows)}
 
 
 # ── NHL ─────────────────────────────────────────────────────────────────────
 
+def _nhl_points_rank(rows):
+    # NHL ranks by points (2 per W, 1 per OTL), not win pct.
+    rows.sort(key=lambda r: (2 * r['w'] + (r['otl'] or 0), r['diff'] or 0), reverse=True)
+    for i, r in enumerate(rows):
+        r['rank'] = i + 1
+        r['pts'] = 2 * r['w'] + (r['otl'] or 0)
+    return rows
+
+
 def _nhl_rows():
     data = _get_json('https://api-web.nhle.com/v1/standings/now')
     if not data:
-        return None
+        # api-web rate-limits busy hosts (429s seen from production, which
+        # polls it for live scores) — ESPN carries the same table.
+        out = _espn_rows('NHL')
+        if out:
+            try:
+                import nhl_api
+                out['season'] = nhl_api._get_nhl_season_start_year()
+            except Exception:
+                pass
+            _nhl_points_rank(out['rows'])
+        return out
     try:
         import nhl_api
         form_map, _last = nhl_api._get_recent_form_map()  # chronological
@@ -221,13 +246,7 @@ def _nhl_rows():
             'streak': f"{s.get('streakCode', '')}{s.get('streakCount', '')}" or None,
             'form': form_map.get(abbr, []),
         })
-    rows = _finish(rows)
-    # NHL ranks by points (2 per W, 1 per OTL), not win pct.
-    rows.sort(key=lambda r: (2 * r['w'] + (r['otl'] or 0), r['diff'] or 0), reverse=True)
-    for i, r in enumerate(rows):
-        r['rank'] = i + 1
-        r['pts'] = 2 * r['w'] + (r['otl'] or 0)
-    return {'season': season, 'rows': rows}
+    return {'season': season, 'rows': _nhl_points_rank(_finish(rows))}
 
 
 # ── MLB ─────────────────────────────────────────────────────────────────────
