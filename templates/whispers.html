@@ -4,46 +4,137 @@
 {% block content %}
 <div class="schedule-body">
 
-<div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
-    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}</span>
-    <h1 style="margin:0;">Whispers</h1>
-    <p class="small" style="margin:2px 0 0;">Everything that moved today: scores, lines, injuries, news, model flags.</p>
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">{{ today_display }} · <span style="color:var(--orange);">Updated {{ updated }}</span></span>
+        <h1 class="hub-title">Whispers</h1>
+        <p class="small" style="margin:2px 0 0;">Everything that moved today: scores, lines, injuries, news, model flags.</p>
+    </div>
+    {% if items %}
+    <button type="button" class="whispers-mine" id="whispers-mine" aria-pressed="false" onclick="whispersToggleMine(this)"><span class="dot"></span>Only my bets</button>
+    {% endif %}
 </div>
 
 {% if items %}
-<div class="sport-chip-bar" id="whispers-type-filter">
-    <button type="button" class="sport-chip sport-chip-active" data-filter-type="ALL" onclick="whispersFilterByType('ALL', this)">All <span class="sport-chip-count">{{ items | length }}</span></button>
-    {% for t in items | map(attribute='type') | unique | list %}
-    <button type="button" class="sport-chip" data-filter-type="{{ t }}" onclick="whispersFilterByType('{{ t }}', this)">{{ t | title }} <span class="sport-chip-count">{{ items | selectattr('type', 'equalto', t) | list | length }}</span></button>
-    {% endfor %}
-</div>
+<div class="whispers-cols">
+    <nav class="whispers-filter" id="whispers-type-filter" aria-label="Filter whispers">
+        <span class="whispers-filter-label">Type</span>
+        <button type="button" class="whispers-filter-btn active" data-filter-type="ALL" aria-pressed="true" onclick="whispersFilterByType('ALL', this)">
+            <span><span class="sq" style="background:var(--text);"></span>Everything</span><span class="mono count" data-count-for="ALL">{{ items | length }}</span>
+        </button>
+        {% for t in types %}
+        <button type="button" class="whispers-filter-btn" data-filter-type="{{ t }}" aria-pressed="false" onclick="whispersFilterByType('{{ t }}', this)">
+            <span><span class="sq whisper-bg-{{ t | lower }}"></span>{{ type_labels[t] }}</span><span class="mono count" data-count-for="{{ t }}">{{ items | selectattr('type', 'equalto', t) | list | length }}</span>
+        </button>
+        {% endfor %}
+    </nav>
 
-<ol class="card whisper-list" id="whisper-list" style="list-style:none; margin:0; padding:4px 0;">
-{% for w in items %}
-<li class="whisper-row" data-whisper-type="{{ w.type }}">
-    <span class="whisper-type whisper-type-{{ w.type | lower }}">{{ w.type }}</span>
-    <span class="whisper-body">
-        <span class="whisper-meta">
-            {% if w.sport %}<span class="whisper-sport">{{ w.sport }}</span>{% endif %}
-            {% if w.game %}{% if w.href %}<a href="{{ w.href }}" class="whisper-game">{{ w.game }}</a>{% else %}<span class="whisper-game">{{ w.game }}</span>{% endif %}{% endif %}
-        </span>
-        <span class="whisper-text">{{ w.text }}</span>
-    </span>
-</li>
-{% endfor %}
-</ol>
+    <section class="whispers-feed" aria-label="Feed">
+        <div class="card whispers-empty" id="whispers-empty" hidden>
+            <div class="whispers-empty-title">Dead quiet.</div>
+            <p class="small" style="margin:8px 0 0;">Nothing here yet for this filter today.</p>
+        </div>
+        {% for g in groups %}
+        <div class="whispers-group">
+            <h2 class="whispers-group-label">{{ g.label }}</h2>
+            <ol class="card whisper-list">
+            {% for w in g['items'] %}
+                <li class="whisper-row" data-whisper-type="{{ w.type }}" data-mine="{{ '1' if w.bet else '0' }}">
+                    <span class="whisper-time mono">{{ w.time }}</span>
+                    <div class="whisper-body">
+                        <div class="whisper-meta">
+                            <span class="whisper-type-{{ w.color }}">{{ w.type }}</span>
+                            {% if w.sport %}<span>{{ w.sport }}</span>{% endif %}
+                            {% if w.game %}{% if w.href %}<a href="{{ w.href }}" class="whisper-game">{{ w.game }}</a>{% else %}<span class="whisper-game">{{ w.game }}</span>{% endif %}{% endif %}
+                        </div>
+                        <p class="whisper-text">{% if w.url %}<a href="{{ w.url }}" target="_blank" rel="noopener">{{ w.text }}</a>{% else %}{{ w.text }}{% endif %}{% if w.source %} <span class="small">— {{ w.source }}</span>{% endif %}</p>
+                        {% if w.line %}
+                        <div class="whisper-detail">
+                            <span class="small" style="font-weight:700;">{{ w.line.market }}</span>
+                            <span class="mono was">{{ w.line['from'] }}</span>
+                            <span aria-hidden="true" style="color:var(--warn-text);">→</span>
+                            <span class="mono">{{ w.line.to }}</span>
+                        </div>
+                        {% elif w.injury %}
+                        <div class="whisper-detail">
+                            <span style="font-weight:800;">{{ w.injury.player }}</span>
+                            {% if w.injury['from'] %}<span class="whisper-pill">{{ w.injury['from'] }}</span><span aria-hidden="true" style="color:var(--loss);">→</span>{% endif %}
+                            <span class="whisper-pill bad">{{ w.injury.to }}</span>
+                        </div>
+                        {% elif w.final %}
+                        <div class="whisper-detail mono">
+                            <span style="color:var(--text-muted);">{{ w.final.loser }}</span>
+                            <span>{{ w.final.winner }}</span>
+                        </div>
+                        {% endif %}
+                        {% if w.bet %}<span class="whisper-bet"><span class="dot"></span>{{ w.bet }}</span>{% endif %}
+                    </div>
+                </li>
+            {% endfor %}
+            </ol>
+        </div>
+        {% endfor %}
+    </section>
+
+    <aside class="whispers-rail">
+        <section class="card stats-ledger" aria-labelledby="tb-h">
+            <h2 id="tb-h">Touching your bets</h2>
+            {% if touching %}
+            <p class="small" style="margin:0 0 14px;">{{ touching | length }} open bet{{ 's' if touching | length != 1 }} with news today</p>
+            <ul class="whispers-touching">
+            {% for t in touching %}
+                <li><strong>{{ t.bet.label }}</strong><span class="whisper-type-{{ t.color }}">{{ type_labels[t.type] }} · {{ t.bet.state | lower }}</span></li>
+            {% endfor %}
+            </ul>
+            {% else %}
+            <p class="small" style="margin:0;">None of today's whispers hit an open bet.</p>
+            {% endif %}
+        </section>
+    </aside>
+</div>
 {% else %}
-<div class="card"><p class="small" style="margin:0;">Dead quiet. Nothing's moved yet today.</p></div>
+<div class="card whispers-empty">
+    <div class="whispers-empty-title">Dead quiet.</div>
+    <p class="small" style="margin:8px 0 0;">Nothing's moved yet today.</p>
+</div>
 {% endif %}
 
 </div>
 <script>
-function whispersFilterByType(type, btn) {
-    document.querySelectorAll('#whispers-type-filter .sport-chip').forEach(function (c) { c.classList.remove('sport-chip-active'); });
-    btn.classList.add('sport-chip-active');
-    document.querySelectorAll('#whisper-list .whisper-row').forEach(function (row) {
-        row.style.display = (type === 'ALL' || row.getAttribute('data-whisper-type') === type) ? '' : 'none';
-    });
-}
+(function () {
+    var state = { type: 'ALL', mine: false };
+    function apply() {
+        var counts = {}, shown = 0;
+        document.querySelectorAll('.whisper-row').forEach(function (row) {
+            var t = row.getAttribute('data-whisper-type');
+            var mineOk = !state.mine || row.getAttribute('data-mine') === '1';
+            if (mineOk) { counts[t] = (counts[t] || 0) + 1; counts.ALL = (counts.ALL || 0) + 1; }
+            var on = mineOk && (state.type === 'ALL' || t === state.type);
+            row.style.display = on ? '' : 'none';
+            if (on) shown++;
+        });
+        document.querySelectorAll('.whispers-group').forEach(function (g) {
+            var any = Array.prototype.some.call(g.querySelectorAll('.whisper-row'), function (r) { return r.style.display !== 'none'; });
+            g.style.display = any ? '' : 'none';
+        });
+        document.querySelectorAll('[data-count-for]').forEach(function (c) {
+            c.textContent = counts[c.getAttribute('data-count-for')] || 0;
+        });
+        document.getElementById('whispers-empty').hidden = shown > 0;
+    }
+    window.whispersFilterByType = function (type, btn) {
+        state.type = type;
+        document.querySelectorAll('.whispers-filter-btn').forEach(function (c) {
+            c.classList.remove('active'); c.setAttribute('aria-pressed', 'false');
+        });
+        btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true');
+        apply();
+    };
+    window.whispersToggleMine = function (btn) {
+        state.mine = !state.mine;
+        btn.setAttribute('aria-pressed', state.mine ? 'true' : 'false');
+        apply();
+    };
+})();
 </script>
 {% endblock %}

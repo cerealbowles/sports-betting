@@ -4399,6 +4399,10 @@ def _schedule_matchups(schedule, sport=None):
     for g in day.get('games', []):
       away = g.get('away') or {}
       home = g.get('home') or {}
+      odds = g.get('odds') or {}
+      venue = g.get('venue') or ''
+      if isinstance(venue, dict):
+        venue = venue.get('name', '')
       game_id = g.get('game_pk') if sport == 'MLB' else g.get('game_id')
       out.append({
           'matchup':       f"{away.get('abbrev') or away.get('abbr') or ''} @ {home.get('abbrev') or home.get('abbr') or ''}",
@@ -4427,8 +4431,88 @@ def _schedule_matchups(schedule, sport=None):
           'home_losses':   home.get('losses', home.get('rec_l')),
           'away_form':     (away.get('form') or [])[-5:],
           'home_form':     (home.get('form') or [])[-5:],
+          # Featured-game card / Graveyard Shift board / Game Center rail
+          # need the same odds, model and linescore every sport's own card
+          # already renders — see _hub_linescore for the shape normalization.
+          'venue':         venue,
+          'game_key':      g.get('game_key', ''),
+          'home_prob':     (g.get('model') or {}).get('home_prob'),
+          'ml_away':       odds.get('away_best'),
+          'ml_home':       odds.get('home_best'),
+          'home_spread':   odds.get('home_spread'),
+          'linescore':     _hub_linescore(g.get('linescore')),
       })
   return out
+
+
+def _hub_linescore(ls):
+  """One linescore shape for every sport: {'periods': [{'label', 'away',
+  'home'}], 'rhe': {'away': {r,h,e}, 'home': {...}} | None}. MLB's builder
+  emits {'innings': [{num, away_runs, home_runs}], 'totals': ...} (padded
+  here to 9 so the table doesn't grow mid-game); every other sport already
+  emits the flat period list (_parse_linescores / _get_period_linescore)."""
+  if not ls:
+    return None
+  if isinstance(ls, dict) and 'innings' in ls:
+    periods = [{'label': str(i.get('num', '')),
+                'away': i.get('away_runs') if i.get('away_runs') != '' else None,
+                'home': i.get('home_runs') if i.get('home_runs') != '' else None}
+               for i in ls['innings']]
+    while len(periods) < 9:
+      periods.append({'label': str(len(periods) + 1), 'away': None, 'home': None})
+    return {'periods': periods, 'rhe': ls.get('totals')}
+  if isinstance(ls, list):
+    return {'periods': ls, 'rhe': None}
+  return None
+
+
+def _american(dec):
+  """Decimal odds → American int (OpenBet/ClosedBet store decimal)."""
+  if not dec or dec <= 1:
+    return None
+  return round((dec - 1) * 100) if dec >= 2 else round(-100 / (dec - 1))
+
+
+def _open_bets_by_game():
+  """OpenBet rows indexed by normalized game_key without its hour bucket
+  (schedule builders emit "home_away", OpenBet stores "home_away_YYYY-MM-
+  DDTHH") so hub games can show the user's actual position — distinct from
+  the model's pick, which is what the old "Your bet" badge was (wrongly)
+  showing. Each value is a list of display dicts."""
+  out = {}
+  try:
+    for b in OpenBet.query.all():
+      key = _ODDS_GAME_KEY_HOUR_RE.sub('', b.game_key or '')
+      if not key:
+        continue
+      out.setdefault(key, []).append({
+          'label':  b.name, 'odds': _american(b.odds), 'stake': b.stake,
+          'sport':  b.sport, 'side': b.bet_side, 'bet_type': b.bet_type,
+          'edge':   round((b.prob * b.odds - 1) * 100, 1) if (b.prob and b.odds) else None,
+      })
+  except Exception:
+    pass
+  return out
+
+
+def _bet_state(bet, g):
+  """WINNING / LOSING / TIED / PENDING for an open ML or spread bet against
+  a hub game's live score. Spread bets read the line out of the bet name
+  ("BOS -3.5") since OpenBet has no line column."""
+  if g['status'] != 'Live' or g['away_score'] is None or g['home_score'] is None:
+    return 'PENDING'
+  side = bet['side']
+  if side not in ('home', 'away'):
+    return 'PENDING'
+  mine, theirs = ((g['home_score'], g['away_score']) if side == 'home'
+                  else (g['away_score'], g['home_score']))
+  margin = mine - theirs
+  if (bet['bet_type'] or '').lower().startswith('spread'):
+    m = re.search(r'([+-]\d+(?:\.\d+)?)', bet['label'] or '')
+    if m:
+      margin += float(m.group(1))
+      return 'COVERING' if margin > 0 else ('PUSH' if margin == 0 else 'NOT COVERING')
+  return 'WINNING' if margin > 0 else ('TIED' if margin == 0 else 'LOSING')
 
 
 def _hub_sport_data(sport, icon, href, today_str):
@@ -4590,7 +4674,7 @@ def _rebuild_hub_cache():
       pick = _edge_by_matchup.get(g['matchup'])
       all_games_today.append({**g, 'sport': summary['sport'], 'icon': summary['icon'],
                               'edge_pick': pick})
-  _status_rank = {'Live': 0, 'Scheduled': 1, 'Final': 2}
+  _status_rank = {'Live': 0, 'Preview': 1, 'Final': 2}
   all_games_today.sort(key=lambda g: (
       _status_rank.get(g['status'], 1),
       0 if g['edge_pick'] else 1,
@@ -4639,9 +4723,45 @@ def index():
       threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
 
   sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _hub_cache['data']
+  games = _attach_bets(all_games_today, _open_bets_by_game())
+  live_games_today = [g for g in games if g['status'] == 'Live']
+
+  # Featured game: a live game you have money on, else a live game the
+  # model likes, else any live game — falls back to the Lock of the Night
+  # card in the template when nothing's in progress.
+  featured = (next((g for g in live_games_today if g['my_bets']), None)
+              or next((g for g in live_games_today if g['edge_pick']), None)
+              or (live_games_today[0] if live_games_today else None))
+
+  # Open bets rail — every OpenBet, with live state when its game is on
+  # tonight's slate (matched by game_key), else just PENDING.
+  game_by_key = {g['game_key']: g for g in games if g.get('game_key')}
+  open_bets = []
+  for b in OpenBet.query.order_by(OpenBet.eventstart.asc()).all():
+    g = game_by_key.get(_ODDS_GAME_KEY_HOUR_RE.sub('', b.game_key or ''))
+    bet = {'label': b.name, 'odds': _american(b.odds), 'side': b.bet_side, 'bet_type': b.bet_type,
+           'sport': b.sport}
+    if g:
+      where = g['live_clock'] if g['status'] == 'Live' else ('Final' if g['status'] == 'Final' else '')
+      score = (f", {g['away_score']}–{g['home_score']}" if g['status'] in ('Live', 'Final')
+               and g['away_score'] is not None else '')
+      bet.update(game=f"{g['matchup']}{' · ' + where if where else ''}{score}",
+                 game_time_utc='' if where else g['game_time_utc'], href=g['href'],
+                 state=_bet_state(bet, g))
+    else:
+      bet.update(game=b.sport, game_time_utc=b.eventstart.replace(tzinfo=timezone.utc).isoformat()
+                 if b.eventstart else '', href='', state='PENDING')
+    open_bets.append(bet)
+
+  sport_counts = {}
+  for g in games:
+    sport_counts[g['sport']] = sport_counts.get(g['sport'], 0) + 1
+
   return render_template('today.html', today_display=today_display,
                          sport_summaries=sport_summaries, top_picks=unified_picks,
-                         all_games_today=all_games_today, live_games_today=live_games_today)
+                         all_games_today=games, live_games_today=live_games_today,
+                         featured=featured, open_bets=open_bets, sport_counts=sport_counts,
+                         whispers=_build_whispers(games, unified_picks, limit=6))
 
 
 def _ensure_hub_cache():
@@ -4696,18 +4816,123 @@ def stats_page():
       return -1.0
     return w / (w + l)
 
+  def _streak(form):
+    # Current run from the newest result backwards — form lists are
+    # oldest→newest (see _schedule_matchups' [-5:] slice), so capped at 5.
+    if not form:
+      return None
+    n = 1
+    while n < len(form) and form[-1 - n] == form[-1]:
+      n += 1
+    return f"{form[-1]}{n}"
+
   sport_boards = []
   for sport, icon, _endpoint in _HUB_SPORTS:
     teams = sorted(teams_by_sport.get(sport, {}).values(), key=_pct, reverse=True)
+    for i, t in enumerate(teams):
+      t['rank'] = i + 1
+      t['streak'] = _streak(t['form'])
     if teams:
       sport_boards.append({'sport': sport, 'icon': icon, 'teams': teams})
 
+  # Trend cards: the hottest and coldest current streaks among tonight's
+  # teams (only sports whose schedule builder carries form — MLB/NHL), plus
+  # the best record on the slate. Nothing shown for a sport without form.
+  all_teams = [dict(t, sport=b['sport']) for b in sport_boards for t in b['teams']]
+  with_form = [t for t in all_teams if t['streak'] and len(t['form']) >= 3]
+  trends = []
+  hot = sorted((t for t in with_form if t['streak'][0] == 'W'), key=lambda t: -int(t['streak'][1:]))
+  cold = sorted((t for t in with_form if t['streak'][0] == 'L'), key=lambda t: -int(t['streak'][1:]))
+  for t in hot[:2]:
+    if int(t['streak'][1:]) >= 2:
+      trends.append({'tag': 'Hot', 'cls': 'hot', 'team': t, 'big': t['streak'], 'unit': 'streak'})
+  for t in cold[:1]:
+    if int(t['streak'][1:]) >= 2:
+      trends.append({'tag': 'Cold', 'cls': 'cold', 'team': t, 'big': t['streak'], 'unit': 'streak'})
+  best = max((t for t in all_teams if _pct(t) >= 0), key=_pct, default=None)
+  if best and len(trends) < 4:
+    trends.append({'tag': 'Best record', 'cls': 'best', 'team': best,
+                   'big': f"{best['wins']}–{best['losses']}", 'unit': best['sport']})
+
+  # "Your ledger" — real settled-bet record per sport (ClosedBet), the same
+  # profit/stake/CLV fields /history aggregates, split by sport.
+  ledgers = {}
+  for b in ClosedBet.query.all():
+    sp = (b.sport or '').strip().upper()
+    if not sp:
+      continue
+    for k in (sp, 'ALL'):
+      lg = ledgers.setdefault(k, {'w': 0, 'l': 0, 'staked': 0.0, 'profit': 0.0, 'clv': []})
+      if b.outcome == 'win':
+        lg['w'] += 1
+      elif b.outcome == 'loss':
+        lg['l'] += 1
+      lg['staked'] += b.stake or 0.0
+      lg['profit'] += b.profit or 0.0
+      if b.clv is not None:
+        lg['clv'].append(b.clv)
+  for lg in ledgers.values():
+    lg['roi'] = round(lg['profit'] / lg['staked'] * 100, 1) if lg['staked'] else None
+    lg['avg_clv'] = round(sum(lg['clv']) / len(lg['clv']), 1) if lg['clv'] else None
+
   return render_template('stats.html', today_display=today_display, sport_boards=sport_boards,
-                         top_picks=unified_picks)
+                         top_picks=unified_picks, trends=trends, ledgers=ledgers)
 
 
-@app.route('/whispers')
-def whispers_page():
+def _attach_bets(games, bets_by_game):
+  """Per-request copy of the cached hub games with the user's actual open
+  bets (and their live state) attached — kept out of _hub_cache on
+  purpose, same reasoning as its TTL comment: a bet placed a second ago
+  has to show on the next render, not up to a minute later."""
+  out = []
+  for g in games:
+    bets = [{**b, 'state': _bet_state(b, g)} for b in bets_by_game.get(g.get('game_key'), [])]
+    out.append({**g, 'my_bets': bets})
+  return out
+
+
+@app.template_global()
+def game_center_extras(game):
+  """Hero linescore + "Your bet" + per-game Whispers for game_detail.html,
+  which six different routes render — a template global keeps this in one
+  place instead of threading three new kwargs through every one of them.
+  Whispers come from whatever the hub cache already holds (never triggers
+  a 6-sport rebuild just to draw a rail card); empty when it's cold."""
+  if not game:
+    return {'linescore': None, 'my_bets': [], 'whispers': []}
+  key = game.get('game_key', '')
+  g_lite = {'status': game.get('status'), 'away_score': (game.get('away') or {}).get('score'),
+            'home_score': (game.get('home') or {}).get('score')}
+  bets_by_game = _open_bets_by_game()
+  my_bets = [{**b, 'state': _bet_state(b, g_lite)} for b in bets_by_game.get(key, [])]
+  whispers = []
+  cached = _hub_cache['data']
+  if cached and key:
+    _s, unified_picks, _d, all_games_today, _l = cached
+    games = _attach_bets(all_games_today, bets_by_game)
+    whispers = [w for w in _build_whispers(games, unified_picks, limit=200)
+                if w.get('game_key') == key][:6]
+  return {'linescore': _hub_linescore(game.get('linescore')), 'my_bets': my_bets,
+          'whispers': whispers}
+
+
+_WHISPER_COLORS = {'LIVE': 'live', 'LINE': 'line', 'INJURY': 'injury', 'FINAL': 'final',
+                   'MODEL': 'model', 'NEWS': 'news'}
+_WHISPER_LABELS = {'LIVE': 'Live action', 'LINE': 'Line moves', 'INJURY': 'Injuries',
+                   'FINAL': 'Finals', 'MODEL': 'Model', 'NEWS': 'News'}
+
+
+def _whisper_group(ts_et, now_et):
+  if (now_et - ts_et).total_seconds() <= 30 * 60:
+    return 'Right now'
+  if ts_et.hour >= 17:
+    return 'Earlier tonight'
+  if ts_et.hour >= 12:
+    return 'This afternoon'
+  return 'This morning'
+
+
+def _build_whispers(games, unified_picks, limit=40):
   """Cross-sport feed of what moved today — the real, already-ingested
   signals this codebase has, merged and sorted newest first. Nothing here
   is fabricated: a quiet day for a given signal just contributes nothing.
@@ -4716,56 +4941,96 @@ def whispers_page():
   cache), odds moves (odds_history.recent_moves — a real changes-only log),
   news (NewsSentiment) and injury-status changes (InjuryStatus.updated_at,
   the closest thing to a change timestamp that table has — see its
-  docstring above)."""
-  _summaries, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
+  docstring above; "from" status is the player's most recent prior-day
+  row, when one exists).
+
+  `games` must already carry my_bets (_attach_bets) so each item can say
+  whether it touches an open position. Items share one dict shape; the
+  optional `line`/`final`/`injury` sub-dicts drive the detail boxes."""
   today_str = datetime.now(_ET).strftime('%Y-%m-%d')
   now_utc = datetime.now(timezone.utc)
+  games_by_key = {g['game_key']: g for g in games if g.get('game_key')}
+  games_by_matchup = {g['matchup']: g for g in games}
   items = []
 
-  for g in all_games_today:
+  def _bet_note(g):
+    if not g or not g.get('my_bets'):
+      return ''
+    b = g['my_bets'][0]
+    return f"Your bet {b['label']} — {b['state'].lower()}."
+
+  def _item(ts, type_, sport, g=None, text='', **extra):
+    # game/href kwargs are only the fallback for items with no hub game.
+    game, href = extra.pop('game', ''), extra.pop('href', '')
+    items.append({'ts': ts, 'type': type_, 'sport': sport,
+                  'game': g['matchup'] if g else game,
+                  'href': (g['href'] or href) if g else href,
+                  'game_key': g['game_key'] if g else '',
+                  'bet': _bet_note(g), 'text': text, **extra})
+
+  for g in games:
+    if g['away_score'] is None or g['home_score'] is None:
+      continue
     if g['status'] == 'Live':
-      score = (f"{g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']} — "
-               f"{g['live_clock']}" if g['live_clock'] else f"{g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']}.")
-      items.append({'ts': now_utc, 'type': 'LIVE', 'sport': g['sport'],
-                    'game': g['matchup'], 'href': g['href'], 'text': score})
-    elif g['status'] == 'Final' and g['away_score'] is not None and g['home_score'] is not None:
+      text = f"{g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']}"
+      _item(now_utc, 'LIVE', g['sport'], g, text + (f" — {g['live_clock']}." if g['live_clock'] else '.'))
+    elif g['status'] == 'Final':
       try:
         ts = datetime.fromisoformat(g['game_time_utc'].replace('Z', '+00:00')) if g['game_time_utc'] else now_utc
       except ValueError:
         ts = now_utc
-      items.append({'ts': ts, 'type': 'FINAL', 'sport': g['sport'], 'game': g['matchup'],
-                    'href': g['href'],
-                    'text': f"Final: {g['away_abbr']} {g['away_score']}, {g['home_abbr']} {g['home_score']}."})
+      a_won = g['away_score'] > g['home_score']
+      w_abbr, w_sc, l_abbr, l_sc = ((g['away_abbr'], g['away_score'], g['home_abbr'], g['home_score']) if a_won
+                                    else (g['home_abbr'], g['home_score'], g['away_abbr'], g['away_score']))
+      _item(ts, 'FINAL', g['sport'], g, f"{w_abbr} beat {l_abbr}.",
+            final={'winner': f"{w_abbr} {w_sc}", 'loser': f"{l_abbr} {l_sc}"})
 
   for p in unified_picks[:8]:
     # MLB's pick_label is a bare team abbr ("MIL") so the market needs
     # spelling out; everyone else's already says it ("TOR ML", "SEA +1.5"),
     # so appending "(ml)" again would just be noise.
     mkt_suffix = '' if p['market'].lower() in p['pick_label'].lower() else f" ({p['market']})"
-    items.append({'ts': now_utc, 'type': 'MODEL', 'sport': p['sport'], 'game': p['matchup'],
-                  'href': p['href'],
-                  'text': f"Model flags {p['pick_label']}{mkt_suffix} at "
-                          f"{'+' if p['edge'] > 0 else ''}{p['edge']}% edge — {p['k_label']}."})
+    _item(now_utc, 'MODEL', p['sport'], games_by_matchup.get(p['matchup']),
+          f"Model flags {p['pick_label']}{mkt_suffix} at "
+          f"{'+' if p['edge'] > 0 else ''}{p['edge']}% edge — {p['k_label']}.",
+          game=p['matchup'], href=p['href'])
 
   import odds_history as _oh
   _odds_key_to_sport = {v: k for k, v in _SPORT_ODDS_KEY.items()}
+  _fmt_ml = lambda v: '—' if v is None else (f"+{v}" if v > 0 else str(v))
   for m in _oh.recent_moves(limit=20):
     try:
       ts = datetime.fromisoformat(m['recorded_at'])
     except ValueError:
       continue
     sport = _odds_key_to_sport.get(m['sport'], m['sport'])
-    # game_key is "away team_home team_YYYY-MM-DDTHH" (odds_api._normalize
-    # output) — strip the trailing hour bucket and title-case the rest for
-    # a readable-enough matchup label without a second lookup.
-    label = _ODDS_GAME_KEY_HOUR_RE.sub('', m['game_key']).replace('_', ' @ ').title()
-    if m['home_spread'] != m['prev_home_spread'] and m['home_spread'] is not None:
-      text = f"{label}: spread moved {m['prev_home_spread']} → {m['home_spread']}."
-    elif m['total_line'] != m['prev_total_line'] and m['total_line'] is not None:
-      text = f"{label}: total moved {m['prev_total_line']} → {m['total_line']}."
+    # game_key is "home team_away team_YYYY-MM-DDTHH" (odds_api.py's
+    # hist_key) — the same normalized home_away prefix the schedule
+    # builders stamp on each game, so it resolves straight to the hub game.
+    key = _ODDS_GAME_KEY_HOUR_RE.sub('', m['game_key'])
+    g = games_by_key.get(key)
+    if g:
+      h_abbr, a_abbr = g['home_abbr'], g['away_abbr']
     else:
-      text = f"{label}: moneyline moved {m['prev_away_odds']}/{m['prev_home_odds']} → {m['away_odds']}/{m['home_odds']}."
-    items.append({'ts': ts, 'type': 'LINE', 'sport': sport, 'game': label, 'href': '', 'text': text})
+      _home, _, _away = key.partition('_')
+      h_abbr, a_abbr = _home.title(), _away.title()
+    label = f"{a_abbr} @ {h_abbr}"
+    if m['home_spread'] != m['prev_home_spread'] and m['home_spread'] is not None:
+      line = {'market': f"{h_abbr} spread", 'from': m['prev_home_spread'], 'to': m['home_spread']}
+      text = f"DraftKings moved the {h_abbr} spread."
+    elif m['total_line'] != m['prev_total_line'] and m['total_line'] is not None:
+      line = {'market': 'Total', 'from': m['prev_total_line'], 'to': m['total_line']}
+      text = "DraftKings moved the total."
+    elif m['home_odds'] == m['prev_home_odds'] and m['away_odds'] == m['prev_away_odds']:
+      continue  # only a spread/total price changed — nothing shown would differ
+    else:
+      moved_home = m['home_odds'] != m['prev_home_odds']
+      abbr = h_abbr if moved_home else a_abbr
+      line = {'market': f"{abbr} ML",
+              'from': _fmt_ml(m['prev_home_odds'] if moved_home else m['prev_away_odds']),
+              'to': _fmt_ml(m['home_odds'] if moved_home else m['away_odds'])}
+      text = f"DraftKings moved the {abbr} moneyline."
+    _item(ts, 'LINE', sport, g, text, line=line, game=label)
 
   news = (NewsSentiment.query.filter(NewsSentiment.date == today_str)
           .order_by(NewsSentiment.published_at.desc(), NewsSentiment.created_at.desc()).limit(15).all())
@@ -4773,20 +5038,63 @@ def whispers_page():
     ts = n.published_at or n.created_at
     if ts and ts.tzinfo is None:
       ts = ts.replace(tzinfo=timezone.utc)
-    items.append({'ts': ts or now_utc, 'type': 'NEWS', 'sport': n.sport, 'game': '', 'href': '',
-                  'text': f"{n.player_name + ': ' if n.player_name else ''}{n.headline}"})
+    _item(ts or now_utc, 'NEWS', n.sport, None,
+          f"{n.player_name + ': ' if n.player_name else ''}{n.headline}", source=n.source, url=n.url)
 
   injuries = (InjuryStatus.query.filter(InjuryStatus.date == today_str)
               .order_by(InjuryStatus.updated_at.desc()).limit(15).all())
+  prior = {}
+  if injuries:
+    for row in (InjuryStatus.query
+                .filter(InjuryStatus.date < today_str,
+                        InjuryStatus.player_id.in_([i.player_id for i in injuries]))
+                .order_by(InjuryStatus.date.asc()).all()):
+      prior[(row.sport, row.player_id)] = row.status  # asc order → last write is most recent
   for inj in injuries:
     ts = inj.updated_at
     if ts and ts.tzinfo is None:
       ts = ts.replace(tzinfo=timezone.utc)
-    items.append({'ts': ts or now_utc, 'type': 'INJURY', 'sport': inj.sport, 'game': '', 'href': '',
-                  'text': f"{inj.player_name} ({inj.position or inj.sport}) — {inj.status}."})
+    was = prior.get((inj.sport, inj.player_id))
+    changed = was and was != inj.status
+    # Name and status live in the detail box (whispers.html); the sentence
+    # just says what kind of update it was, so neither repeats.
+    _item(ts or now_utc, 'INJURY', inj.sport, None,
+          f"{inj.position + ' ' if inj.position else ''}"
+          + ("status changed on today's report." if changed else "on today's injury report."),
+          injury={'player': inj.player_name, 'from': was if changed else None, 'to': inj.status})
 
   items.sort(key=lambda x: x['ts'], reverse=True)
-  return render_template('whispers.html', today_display=today_display, items=items[:40])
+  now_et = now_utc.astimezone(_ET)
+  for w in items:
+    ts_et = w['ts'].astimezone(_ET)
+    w['time'] = ts_et.strftime('%-I:%M')
+    w['group'] = _whisper_group(ts_et, now_et)
+    w['color'] = _WHISPER_COLORS[w['type']]
+  return items[:limit]
+
+
+@app.route('/whispers')
+def whispers_page():
+  _summaries, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
+  games = _attach_bets(all_games_today, _open_bets_by_game())
+  items = _build_whispers(games, unified_picks)
+
+  groups = []
+  for w in items:
+    if not groups or groups[-1]['label'] != w['group']:
+      groups.append({'label': w['group'], 'items': []})
+    groups[-1]['items'].append(w)
+  types = [t for t in _WHISPER_LABELS if any(w['type'] == t for w in items)]
+  # "Touching your bets" rail — one line per open bet that has at least one
+  # whisper today, with the newest whisper's type as its note.
+  touching = {}
+  for w in items:
+    g = next((x for x in games if x.get('game_key') and x['game_key'] == w.get('game_key')), None)
+    if g and g['my_bets'] and g['game_key'] not in touching:
+      touching[g['game_key']] = {'bet': g['my_bets'][0], 'type': w['type'], 'color': w['color']}
+  return render_template('whispers.html', today_display=today_display, items=items, groups=groups,
+                         types=types, type_labels=_WHISPER_LABELS, touching=list(touching.values()),
+                         updated=datetime.now(_ET).strftime('%-I:%M %p'))
 
 
 @app.route('/history')
@@ -6188,9 +6496,9 @@ def mlb_game_detail_page(game_id):
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
+  # Linescore now renders in game_detail.html's hero for every sport (see
+  # game_center_extras), so _mlb_linescore.html is no longer appended here.
   extra = ['_mlb_pitchers_panel.html']
-  if game and game.get('linescore'):
-    extra.append('_mlb_linescore.html')
   if game and game.get('status') in ('Live', 'Final'):
     extra.append('_mlb_boxscore.html')
 

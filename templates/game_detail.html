@@ -17,11 +17,11 @@
        margin:0; padding:16px; box-sizing:border-box; }
 .gdp .gdp-team-name, .gdp .gdp-section-head span:first-child { font-family:var(--font-display); font-weight:400; letter-spacing:0.3px; }
 .gdp .gdp-team-name { font-size:19px; }
-.gdp .gdp-kickoff, .gdp .gdp-pick-val, .gdp .gdp-score { font-family:var(--font-cond); }
-.gdp .gdp-pick-price b, .gdp .price, .gdp .gdp-vgrid b, .gdp .gdp-pill { font-family:var(--font-mono); }
+.gdp .gdp-kickoff, .gdp .gdp-pick-val { font-family:var(--font-cond); }
+.gdp .gdp-pick-price b, .gdp .price, .gdp .gdp-vgrid b, .gdp .gdp-pill, .gdp .gdp-score { font-family:var(--font-mono); }
 .gdp .gdp-score {
-    display:flex; align-items:baseline; justify-content:center; gap:10px;
-    font-size:44px; font-weight:600; line-height:1; margin:2px 0;
+    display:flex; align-items:baseline; justify-content:center; gap:14px;
+    font-size:clamp(44px, 7vw, 72px); font-weight:500; line-height:1; margin:2px 0;
 }
 .gdp .gdp-score .lead { color:var(--text); }
 .gdp .gdp-score .trail { color:var(--text-muted); }
@@ -33,6 +33,17 @@
 }
 .gdp .gdp-live-dot { width:7px; height:7px; border-radius:50%; background:var(--orange); animation: live-dot-pulse 1.6s ease-in-out infinite; }
 .gdp a { color: var(--gdp-muted); text-decoration:none; }
+.gdp .hub-rail-head a { color: var(--orange); }
+.gdp .gdp-clock { font-size:13px; font-weight:700; color:var(--orange); letter-spacing:0.04em; }
+.gdp .gdp-hero-linescore { flex:1 1 100%; padding:8px 0 0; }
+.gdp .gdp-yourbet { border-color:rgba(168,240,122,0.32); }
+.gdp .gdp-yourbet-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.gdp .gdp-yourbet-state { font-size:11px; font-weight:800; letter-spacing:0.08em; padding:5px 10px; border-radius:999px; background:var(--gdp-surface2); color:var(--gdp-muted); }
+.gdp .gdp-yourbet-state.good { background:var(--win); color:var(--bg); }
+.gdp .gdp-yourbet-state.bad { background:rgba(255,178,122,0.16); color:var(--loss); }
+.gdp .gdp-yourbet-pick { display:flex; align-items:baseline; gap:12px; margin-top:12px; font-size:22px; }
+.gdp .gdp-yourbet-pick .mono { font-size:19px; color:var(--gdp-muted); }
+.gdp .gdp-yourbet-sub { font-size:13px; color:var(--gdp-dim); margin-top:4px; }
 .gdp .gdp-topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .gdp .gdp-back { display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:14px; }
 .gdp .gdp-week { color:var(--gdp-dim); font-size:14px; margin-left:12px; }
@@ -211,6 +222,15 @@
         <span class="gdp-score-sep">–</span>
         <span class="{{ 'lead' if game.home.score > game.away.score else 'trail' }}">{{ game.home.score }}</span>
       </div>
+      {% if game.status == 'Live' and (game.inning_info or game.live_clock) %}<div class="gdp-clock">{{ game.inning_info or game.live_clock }}</div>{% endif %}
+      {% if game.status == 'Live' and game.bases %}
+      <div class="hub-diamond" role="img" aria-label="Runners on base">
+        <span class="hub-diamond-base b2{{ ' on' if game.bases.second }}"></span>
+        <span class="hub-diamond-base b3{{ ' on' if game.bases.third }}"></span>
+        <span class="hub-diamond-base b1{{ ' on' if game.bases.first }}"></span>
+      </div>
+      <div class="hub-count mono">{% if game.bases.balls is not none %}<span>B {{ game.bases.balls }}</span><span>S {{ game.bases.strikes }}</span>{% endif %}<span>O {{ game.bases.outs }}</span></div>
+      {% endif %}
       {% else %}
       <div class="gdp-kickoff game-time" data-utc="{{ detail.game.kickoff_utc }}">—</div>
       {% endif %}
@@ -229,6 +249,22 @@
       </div>
       <div class="gdp-badge home">{% if detail.teams.home.logo_url %}<img src="{{ detail.teams.home.logo_url }}" alt="{{ detail.teams.home.abbr }}" loading="lazy" onerror="this.classList.add('gdp-badge-hidden')">{% endif %}<span>{{ detail.teams.home.abbr }}</span></div>
     </div>
+
+    {% set gx = game_center_extras(game) %}
+    {% if gx.linescore %}
+    <div class="hub-linescore-wrap gdp-hero-linescore">
+    <table class="hub-linescore">
+      <thead><tr><th scope="col">Team</th>{% for p in gx.linescore.periods %}<th scope="col">{{ p.label }}</th>{% endfor %}{% if gx.linescore.rhe %}<th scope="col" class="tot">R</th><th scope="col">H</th><th scope="col">E</th>{% else %}<th scope="col" class="tot">T</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for side in ('away', 'home') %}
+      <tr><th scope="row">{{ detail.teams[side].abbr }}</th>{% for p in gx.linescore.periods %}<td>{{ p[side] if p[side] is not none else '' }}</td>{% endfor %}
+      {% if gx.linescore.rhe %}<td class="tot">{{ gx.linescore.rhe[side].r }}</td><td>{{ gx.linescore.rhe[side].h }}</td><td>{{ gx.linescore.rhe[side].e }}</td>
+      {% else %}<td class="tot">{{ game[side].score if game[side].score is not none else '' }}</td>{% endif %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
   </div>
 
   {# ── Verdict cards ─────────────────────────────────────────────────────── #}
@@ -361,6 +397,24 @@
 
     <div class="gdp-rail">
 
+      {# ── Your bet — the user's actual open position on this game ───────── #}
+      {% for b in gx.my_bets %}
+      <div class="gdp-card gdp-yourbet">
+        <div class="gdp-yourbet-head">
+          <span class="gdp-team-name" style="font-size:24px;">Your bet</span>
+          <span class="gdp-yourbet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}">{{ b.state }}</span>
+        </div>
+        <div class="gdp-yourbet-pick"><b>{{ b.label }}</b>{% if b.odds is not none %}<span class="mono">{{ '+' if b.odds > 0 }}{{ b.odds }}</span>{% endif %}</div>
+        <div class="gdp-yourbet-sub">{{ b.bet_type }}{% if b.stake %} · stake ${{ '%.2f' % b.stake }}{% endif %}</div>
+        {% if b.edge is not none %}
+        <div class="gdp-vgrid" style="grid-template-columns:repeat(2,1fr); margin-top:12px;">
+          <div><span>EDGE AT PLACEMENT</span><b style="color:{{ 'var(--gdp-good)' if b.edge > 0 else 'var(--gdp-bad)' }}">{{ '+' if b.edge > 0 }}{{ b.edge }}%</b></div>
+          <div><span>SIDE</span><b>{{ detail.teams[b.side].abbr if b.side in ('home', 'away') else '—' }}</b></div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+
       {# ── DraftKings market (read-only, informational) ───────────────────── #}
       {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none %}
       <div class="gdp-card">
@@ -475,6 +529,21 @@
           </div>
           {% endif %}
         </div>
+      </div>
+      {% endif %}
+
+      {# ── Whispers — today's feed, filtered to this game ─────────────── #}
+      {% if gx.whispers %}
+      <div class="gdp-card" style="padding:0; overflow:hidden;">
+        <div class="hub-rail-head"><span class="gdp-team-name" style="font-size:24px;">Whispers</span><a href="{{ url_for('whispers_page') }}">All</a></div>
+        <ol class="hub-wire">
+        {% for w in gx.whispers %}
+          <li>
+            <span class="hub-wire-time mono">{{ w.time }}</span>
+            <span class="hub-wire-body"><span class="whisper-type whisper-type-{{ w.color }}">{{ w.type }}</span><span>{{ w.text }}{% if w.line %} <span class="mono">{{ w.line.from }} → {{ w.line.to }}</span>{% endif %}</span></span>
+          </li>
+        {% endfor %}
+        </ol>
       </div>
       {% endif %}
 

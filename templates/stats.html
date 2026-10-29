@@ -4,70 +4,123 @@
 {% block content %}
 <div class="schedule-body">
 
-<div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
-    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}</span>
-    <h1 style="margin:0;">The Power Board</h1>
-    <p class="small" style="margin:2px 0 0;">Every team playing tonight, by record. Full league standings aren't wired up yet — this is scoped to tonight's slate.</p>
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">{{ today_display }} · Tonight's slate</span>
+        <h1 class="hub-title">The Almanac</h1>
+    </div>
+    {% if sport_boards %}
+    <div class="sport-chip-bar" id="stats-sport-filter" role="group" aria-label="Sport" style="margin-bottom:0;">
+        <button type="button" class="sport-chip sport-chip-active" data-filter-sport="ALL" onclick="statsFilterBySport('ALL', this)" aria-pressed="true">All</button>
+        {% for b in sport_boards %}
+        <button type="button" class="sport-chip" data-filter-sport="{{ b.sport }}" onclick="statsFilterBySport('{{ b.sport }}', this)" aria-pressed="false">{{ b.sport }}</button>
+        {% endfor %}
+    </div>
+    {% endif %}
 </div>
 
+{% if trends %}
+<section class="stats-trends" aria-label="Trends">
+{% for t in trends %}
+<article class="card stats-trend" data-sport-section="{{ t.team.sport }}">
+    <div class="stats-trend-head">
+        <span class="stats-trend-tag {{ t.cls }}">{{ t.tag }}</span>
+        <span class="stats-trend-team">{% if t.team.logo %}<img src="{{ t.team.logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ t.team.abbr }}</span>
+    </div>
+    <div class="stats-trend-big"><span class="mono">{{ t.big }}</span><span class="small">{{ t.unit }}</span></div>
+    {% if t.team.form %}
+    <div class="stats-trend-form" aria-hidden="true">{% for r in t.team.form %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</div>
+    {% endif %}
+    <a class="small stats-trend-note" href="{{ t.team.href }}">{{ t.team.sport }} · tonight {{ t.team.matchup }} →</a>
+</article>
+{% endfor %}
+</section>
+{% endif %}
+
+<div class="hub-cols">
+<div class="hub-main">
 {% if sport_boards %}
-<div class="sport-chip-bar" id="stats-sport-filter">
-    <button type="button" class="sport-chip sport-chip-active" data-filter-sport="ALL" onclick="statsFilterBySport('ALL', this)">All</button>
-    {% for b in sport_boards %}
-    <button type="button" class="sport-chip" data-filter-sport="{{ b.sport }}" onclick="statsFilterBySport('{{ b.sport }}', this)">{{ b.icon }} {{ b.sport }}</button>
-    {% endfor %}
-</div>
-
 {% for b in sport_boards %}
 <section class="card power-board" data-sport-section="{{ b.sport }}">
-    <h2 style="display:flex; align-items:center; gap:8px;">{{ b.icon }} {{ b.sport }}</h2>
+    <div class="hub-board-head">
+        <h2>The Power Board · {{ b.sport }}</h2>
+        <span class="small">Tonight's teams by record</span>
+    </div>
+    <div style="overflow-x:auto;">
     <table class="power-board-table">
         <thead>
             <tr>
-                <th style="text-align:left;">Team</th>
-                <th style="text-align:right;">W–L</th>
-                <th style="text-align:right;">Pct</th>
-                <th style="text-align:left;">Form</th>
-                <th style="text-align:right;">Tonight</th>
+                <th scope="col" style="width:36px;">#</th>
+                <th scope="col">Team</th>
+                <th scope="col" style="text-align:right;">W–L</th>
+                <th scope="col" style="text-align:right;">Pct</th>
+                <th scope="col">Last 5</th>
+                <th scope="col" style="text-align:right;">Strk</th>
+                <th scope="col" style="text-align:right;">Tonight</th>
             </tr>
         </thead>
         <tbody>
         {% for t in b.teams %}
         <tr>
-            <td style="text-align:left;">
+            <td class="mono" style="color:var(--text-muted);">{{ t.rank }}</td>
+            <th scope="row" style="text-align:left;">
                 <span style="display:flex; align-items:center; gap:8px; font-weight:800;">
                     {% if t.logo %}<img src="{{ t.logo }}" alt="" loading="lazy" onerror="this.style.display='none'" style="width:20px; height:20px; object-fit:contain;">{% endif %}
                     {{ t.abbr }}<span style="font-weight:500; color:var(--text-muted); font-size:0.78rem;">{{ t.name }}</span>
                 </span>
-            </td>
+            </th>
             <td class="mono" style="text-align:right;">{% if t.wins is not none and t.losses is not none %}{{ t.wins }}–{{ t.losses }}{% else %}—{% endif %}</td>
-            <td class="mono" style="text-align:right; color:var(--text-muted);">{% if t.wins is not none and t.losses is not none and (t.wins + t.losses) > 0 %}{{ ('%.3f' % (t.wins / (t.wins + t.losses)))[1:] }}{% else %}—{% endif %}</td>
+            <td class="mono" style="text-align:right; color:var(--text-muted);">{% if t.wins is not none and t.losses is not none and (t.wins + t.losses) > 0 %}{{ ('%.3f' % (t.wins / (t.wins + t.losses)))[1:] if t.wins < (t.wins + t.losses) else '1.000' }}{% else %}—{% endif %}</td>
             <td>
                 {% if t.form %}
-                <span style="display:flex; gap:3px;" aria-label="Recent form">
-                {% for r in t.form %}<span class="form-pip {{ 'form-pip-w' if r == 'W' else 'form-pip-l' }}">{{ r }}</span>{% endfor %}
-                </span>
+                <span class="stats-form" role="img" aria-label="Last {{ t.form | length }}: {{ t.form | select('equalto', 'W') | list | length }} wins">{% for r in t.form %}<span class="{{ 'w' if r == 'W' else 'l' }}"></span>{% endfor %}</span>
                 {% else %}<span class="small">—</span>{% endif %}
             </td>
-            <td style="text-align:right;"><a href="{{ t.href }}" class="small" style="font-weight:700; text-decoration:none;">{{ t.matchup }} →</a></td>
+            <td class="mono" style="text-align:right; color:{{ 'var(--orange)' if t.streak and t.streak[0] == 'W' else 'var(--text-muted)' }};">{{ t.streak or '—' }}</td>
+            <td style="text-align:right;"><a href="{{ t.href }}" class="small" style="font-weight:700; text-decoration:none; white-space:nowrap;">{{ t.matchup }} →</a></td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </section>
 {% endfor %}
-
+<p class="small" style="margin:0 0 14px;">Full league standings aren't wired up yet — the board is scoped to teams on tonight's slate. Form and streaks are MLB/NHL only (the other sports' schedule feeds don't carry recent results).</p>
 {% else %}
 <div class="card"><p class="small" style="margin:0;">No games on tonight's slate yet.</p></div>
 {% endif %}
+</div>
+
+<aside class="hub-rail">
+{% for sp, lg in ledgers.items() %}
+<section class="card stats-ledger" data-ledger="{{ sp }}"{% if sp != 'ALL' %} hidden{% endif %}>
+    <h2>{{ 'Your ledger' if sp == 'ALL' else 'Your ' ~ sp ~ ' ledger' }}</h2>
+    <p class="small" style="margin:0 0 14px;">Settled bets{{ ', all sports' if sp == 'ALL' }}</p>
+    <div class="hub-model-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+        <div><span class="stat-label">Record</span><span class="mono" style="font-size:1.1rem;">{{ lg.w }}–{{ lg.l }}</span></div>
+        <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if lg.roi and lg.roi > 0 else 'var(--loss)' }};">{% if lg.roi is not none %}{{ '+' if lg.roi > 0 }}{{ lg.roi }}%{% else %}—{% endif %}</span></div>
+        <div><span class="stat-label">CLV</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if lg.avg_clv and lg.avg_clv > 0 else 'var(--text-muted)' }};">{% if lg.avg_clv is not none %}{{ '+' if lg.avg_clv > 0 }}{{ lg.avg_clv }}%{% else %}—{% endif %}</span></div>
+    </div>
+    <a href="{{ url_for('history', sport=sp) if sp != 'ALL' else url_for('history') }}" class="stats-ledger-link">Bet history →</a>
+</section>
+{% endfor %}
+</aside>
+</div>
 
 </div>
 <script>
 function statsFilterBySport(sport, btn) {
-    document.querySelectorAll('#stats-sport-filter .sport-chip').forEach(function (c) { c.classList.remove('sport-chip-active'); });
-    btn.classList.add('sport-chip-active');
+    document.querySelectorAll('#stats-sport-filter .sport-chip').forEach(function (c) {
+        c.classList.remove('sport-chip-active'); c.setAttribute('aria-pressed', 'false');
+    });
+    btn.classList.add('sport-chip-active'); btn.setAttribute('aria-pressed', 'true');
     document.querySelectorAll('[data-sport-section]').forEach(function (sec) {
         sec.style.display = (sport === 'ALL' || sec.getAttribute('data-sport-section') === sport) ? '' : 'none';
+    });
+    var ledgers = document.querySelectorAll('[data-ledger]');
+    var hasOwn = !!document.querySelector('[data-ledger="' + sport + '"]');
+    ledgers.forEach(function (l) {
+        l.hidden = l.getAttribute('data-ledger') !== (hasOwn ? sport : 'ALL');
     });
 }
 </script>

@@ -930,6 +930,7 @@ def build_schedule_context(target_date=None):
 
             # Live game inning context
             inning_info = None
+            live_bases  = None
             if status == 'Live':
                 ls = game.get('linescore', {})
                 _half_raw = ls.get('inningHalf', '')
@@ -940,6 +941,18 @@ def build_schedule_context(target_date=None):
                     inning_info = f"{half} {inning}"
                     if outs is not None and outs != 3:
                         inning_info += f" · {outs} out{'s' if outs != 1 else ''}"
+                # Same shape the live-scores poller builds (see above), plus the
+                # count — the hydrate=linescore schedule response already
+                # carries balls/strikes, it just was never read.
+                offense = ls.get('offense') or {}
+                live_bases = {
+                    'first':   bool(offense.get('first')),
+                    'second':  bool(offense.get('second')),
+                    'third':   bool(offense.get('third')),
+                    'outs':    outs if outs is not None else 0,
+                    'balls':   ls.get('balls'),
+                    'strikes': ls.get('strikes'),
+                }
 
             # gameType is already in every raw response (_get_schedule_raw
             # requests 'R,F,D,L,W' — regular season + wild card/division/
@@ -1022,6 +1035,7 @@ def build_schedule_context(target_date=None):
                 'away':          away,
                 'home':          home,
                 'inning_info':   inning_info,
+                'bases':         live_bases,
                 'series_info':   series_info,
                 'is_playoffs':   is_playoffs,
                 'game_type_label': game_type_label,

@@ -2,7 +2,6 @@
 {% block title %}Today — Dead Money{% endblock %}
 
 {% block content %}
-{% import "_season_badge.html" as sb %}
 {% set _flavor_lines = [
     'The board is restless tonight.',
     'Something wicked this way covers.',
@@ -13,37 +12,67 @@
 ] %}
 {% set _flavor = _flavor_lines[(sport_summaries | map(attribute='games_today') | sum) % (_flavor_lines | length)] %}
 {% set _games_tonight = sport_summaries | map(attribute='games_today') | sum %}
+{% set _to_go = all_games_today | rejectattr('status', 'in', ['Live', 'Final']) | list | length %}
 {% set _strong_count = top_picks | selectattr('k_label', 'in', ['A', 'Strong']) | list | length %}
 {% set _avg_edge = ((top_picks | sum(attribute='edge')) / (top_picks | length)) if top_picks else 0 %}
+
+{% macro ml(v) %}{% if v is not none %}{{ '+' if v > 0 }}{{ v }}{% endif %}{% endmacro %}
+{% macro status_cell(g) -%}
+  {%- if g.status == 'Live' %}<span class="hub-status live"><span class="live-dot"></span>{{ g.live_clock or 'Live' }}</span>
+  {%- elif g.status == 'Final' %}<span class="hub-status final">Final</span>
+  {%- elif g.game_time_utc %}<span class="hub-status later game-time" data-utc="{{ g.game_time_utc }}">—</span>
+  {%- else %}<span class="hub-status later">TBD</span>{% endif -%}
+{%- endmacro %}
+{# Board "line" column: the favorite's spread when there is one, else the
+   moneyline favorite — mirrors what the design's FANDUEL column showed,
+   from the DraftKings odds the schedule builders already attach. #}
+{% macro board_line(g) -%}
+  {%- if g.home_spread is not none -%}
+    {%- if g.home_spread <= 0 %}{{ g.home_abbr }} {{ g.home_spread }}{% else %}{{ g.away_abbr }} -{{ g.home_spread }}{% endif -%}
+  {%- elif g.ml_home is not none and g.ml_away is not none -%}
+    {%- if g.ml_home <= g.ml_away %}{{ g.home_abbr }} {{ ml(g.ml_home) }}{% else %}{{ g.away_abbr }} {{ ml(g.ml_away) }}{% endif -%}
+  {%- else %}—{% endif -%}
+{%- endmacro %}
+
 <div class="schedule-body">
 
-<div class="day-header" style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:none; padding:0;">
-    <span style="font-family:var(--font-cond); font-size:0.8rem; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted);">{{ today_display }}{% if live_games_today %} · <span style="color:var(--orange);">{{ live_games_today | length }} live</span>{% endif %}</span>
-    <h1 style="margin:0;">{{ _flavor }}</h1>
+<div class="hub-greeting">
+    <div>
+        <span class="hub-kicker">{{ today_display }}{% if live_games_today %} · <span style="color:var(--orange);">{{ live_games_today | length }} live</span>{% endif %}{% if _to_go %} · {{ _to_go }} to go{% endif %}</span>
+        <h1 class="hub-title">{{ _flavor }}</h1>
+    </div>
+    {% if sport_counts %}
+    <div class="sport-chip-bar" id="hub-sport-filter" role="group" aria-label="Filter by sport" style="margin-bottom:0;">
+        <button type="button" class="sport-chip sport-chip-active" data-filter-sport="ALL" onclick="hubFilterBySport('ALL', this)" aria-pressed="true">All</button>
+        {% for s in sport_summaries %}
+        <button type="button" class="sport-chip" data-filter-sport="{{ s.sport }}" onclick="hubFilterBySport('{{ s.sport }}', this)" aria-pressed="false">{{ s.sport }}{% if sport_counts.get(s.sport) %} <span class="sport-chip-count">{{ sport_counts[s.sport] }}</span>{% endif %}</button>
+        {% endfor %}
+    </div>
+    {% endif %}
 </div>
 
-{% if live_games_today %}
-<div class="live-strip" aria-label="Live scores">
-{% for g in live_games_today %}
-<a class="live-strip-card{% if g.edge_pick %} has-edge{% endif %}" href="{{ g.href or '#' }}">
+{% if all_games_today %}
+<section class="live-strip" aria-label="Scoreboard">
+    <div class="live-strip-lead">
+        <span class="hub-kicker">All sports</span>
+        <span class="live-strip-lead-count">{% if live_games_today %}<span style="color:var(--orange);">{{ live_games_today | length }} live</span> · {% endif %}{{ _games_tonight }} today</span>
+    </div>
+{% for g in all_games_today %}
+<a class="live-strip-card{% if g.my_bets %} has-bet{% elif g.edge_pick %} has-edge{% endif %}" href="{{ g.href or '#' }}" data-sport="{{ g.sport }}">
     <div class="live-strip-head">
-        <span class="live-strip-league">{{ g.icon }} {{ g.sport }}</span>
-        <span class="live-strip-clock"><span class="live-dot"></span>{{ g.live_clock or 'Live' }}</span>
+        <span class="live-strip-league">{{ g.sport }}</span>
+        {{ status_cell(g) }}
     </div>
+    {% for side in ('away', 'home') %}
+    {% set _mine = g[side ~ '_score'] %}{% set _theirs = g[('home' if side == 'away' else 'away') ~ '_score'] %}
     <div class="live-strip-row">
         <span class="live-strip-team">
-            {% if g.away_logo %}<img src="{{ g.away_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
-            <span class="live-strip-abbr">{{ g.away_abbr }}</span>
+            {% if g[side ~ '_logo'] %}<img src="{{ g[side ~ '_logo'] }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
+            <span class="live-strip-abbr">{{ g[side ~ '_abbr'] }}</span>
         </span>
-        <span class="live-strip-score{% if g.away_score is not none and g.home_score is not none and g.away_score > g.home_score %} lead{% endif %}">{{ g.away_score if g.away_score is not none else '–' }}</span>
+        {% if g.status in ('Live', 'Final') %}<span class="live-strip-score{% if _mine is not none and _theirs is not none and _mine > _theirs %} lead{% endif %}">{{ _mine if _mine is not none else '–' }}</span>{% endif %}
     </div>
-    <div class="live-strip-row">
-        <span class="live-strip-team">
-            {% if g.home_logo %}<img src="{{ g.home_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}
-            <span class="live-strip-abbr">{{ g.home_abbr }}</span>
-        </span>
-        <span class="live-strip-score{% if g.away_score is not none and g.home_score is not none and g.home_score > g.away_score %} lead{% endif %}">{{ g.home_score if g.home_score is not none else '–' }}</span>
-    </div>
+    {% endfor %}
     {% if g.bases %}
     <div class="live-strip-bases" role="img" aria-label="Runners on base">
         <span class="live-strip-base b2{{ ' on' if g.bases.second }}"></span>
@@ -51,17 +80,100 @@
         <span class="live-strip-base b1{{ ' on' if g.bases.first }}"></span>
     </div>
     {% endif %}
-    {% if g.edge_pick %}
-    <span class="live-strip-edge">● Your bet: {{ g.edge_pick.pick_label }}</span>
+    {% if g.my_bets %}
+    <span class="live-strip-edge">● Your bet: {{ g.my_bets[0].label }}</span>
+    {% elif g.edge_pick %}
+    <span class="live-strip-model">◆ Model: {{ g.edge_pick.pick_label }}</span>
     {% endif %}
 </a>
 {% endfor %}
-</div>
+</section>
 {% endif %}
 
-{% if top_picks %}
+<div class="hub-cols">
+<div class="hub-main">
+
+{% if featured %}
+{% set f = featured %}
+{% set _away_lead = f.away_score is not none and f.home_score is not none and f.away_score > f.home_score %}
+{% set _home_lead = f.away_score is not none and f.home_score is not none and f.home_score > f.away_score %}
+<article class="card hub-featured" aria-label="Featured game: {{ f.away_name }} at {{ f.home_name }}">
+    <svg class="hub-moon" aria-hidden="true" viewBox="0 0 100 100"><path d="M62 8a42 42 0 1 0 30 58A34 34 0 0 1 62 8z" fill="currentColor"></path></svg>
+    <div class="hub-featured-head">
+        <span>{{ f.sport }}{% if f.venue %} · {{ f.venue }}{% endif %}</span>
+        <span class="hub-status live"><span class="live-dot"></span>{{ f.live_clock or 'Live' }}</span>
+    </div>
+    <div class="hub-featured-score">
+        <div class="hub-featured-side">
+            <span class="hub-featured-name">{{ f.away_name }}</span>
+            <div class="hub-featured-line">
+                <span class="hub-featured-abbr{{ ' lead' if _away_lead }}">{{ f.away_abbr }}</span>
+                <span class="hub-featured-runs{{ ' trail' if _home_lead }}">{{ f.away_score if f.away_score is not none else '–' }}</span>
+            </div>
+        </div>
+        <div class="hub-featured-mid">
+            {% if f.bases %}
+            <div class="hub-diamond" role="img" aria-label="Runners on base">
+                <span class="hub-diamond-base b2{{ ' on' if f.bases.second }}"></span>
+                <span class="hub-diamond-base b3{{ ' on' if f.bases.third }}"></span>
+                <span class="hub-diamond-base b1{{ ' on' if f.bases.first }}"></span>
+            </div>
+            <div class="hub-count mono">{% if f.bases.balls is not none %}<span>B {{ f.bases.balls }}</span><span>S {{ f.bases.strikes }}</span>{% endif %}<span>O {{ f.bases.outs }}</span></div>
+            {% endif %}
+        </div>
+        <div class="hub-featured-side right">
+            <span class="hub-featured-name">{{ f.home_name }}</span>
+            <div class="hub-featured-line">
+                <span class="hub-featured-runs{{ ' trail' if _away_lead }}">{{ f.home_score if f.home_score is not none else '–' }}</span>
+                <span class="hub-featured-abbr{{ ' lead' if _home_lead }}">{{ f.home_abbr }}</span>
+            </div>
+        </div>
+    </div>
+
+    {% if f.home_prob is not none %}
+    {% set _ap = ((1 - f.home_prob) * 100) | round | int %}
+    <div class="hub-wp">
+        <div class="hub-wp-labels"><span>{{ f.away_abbr }} {{ _ap }}%</span><span class="hub-wp-title" title="The model's pregame number — there's no live win-probability feed">Model win prob · pregame</span><span>{{ 100 - _ap }}% {{ f.home_abbr }}</span></div>
+        <div class="hub-wp-bar"><span style="width:{{ _ap }}%;"></span></div>
+    </div>
+    {% endif %}
+
+    {% if f.linescore %}
+    <div class="hub-linescore-wrap">
+    <table class="hub-linescore">
+        <thead><tr><th scope="col">Team</th>{% for p in f.linescore.periods %}<th scope="col">{{ p.label }}</th>{% endfor %}{% if f.linescore.rhe %}<th scope="col" class="tot">R</th><th scope="col">H</th><th scope="col">E</th>{% else %}<th scope="col" class="tot">T</th>{% endif %}</tr></thead>
+        <tbody>
+        {% for side in ('away', 'home') %}
+        <tr><th scope="row">{{ f[side ~ '_abbr'] }}</th>{% for p in f.linescore.periods %}<td>{{ p[side] if p[side] is not none else '' }}</td>{% endfor %}
+        {% if f.linescore.rhe %}<td class="tot">{{ f.linescore.rhe[side].r }}</td><td>{{ f.linescore.rhe[side].h }}</td><td>{{ f.linescore.rhe[side].e }}</td>
+        {% else %}<td class="tot">{{ f[side ~ '_score'] }}</td>{% endif %}</tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    <div class="hub-featured-foot">
+        {% if f.my_bets %}{% set b = f.my_bets[0] %}
+        <span class="hub-bet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}"><span class="dot"></span>Your bet · {{ b.state }}</span>
+        <span><span class="muted">Pick</span> <strong>{{ b.label }}</strong></span>
+        {% if b.odds is not none %}<span><span class="muted">Placed at</span> <span class="mono">{{ ml(b.odds) }}</span></span>{% endif %}
+        {% if b.edge is not none %}<span><span class="muted">Edge</span> <span class="mono" style="color:{{ 'var(--win)' if b.edge > 0 else 'var(--loss)' }};">{{ '+' if b.edge > 0 }}{{ b.edge }}%</span></span>{% endif %}
+        {% elif f.edge_pick %}{% set p = f.edge_pick %}
+        <span class="hub-bet-state model"><span class="dot"></span>Model pick</span>
+        <span><span class="muted">Pick</span> <strong>{{ p.pick_label }}</strong></span>
+        <span><span class="muted">DraftKings</span> <span class="mono">{{ ml(p.amer_odds) }}</span></span>
+        <span><span class="muted">Edge</span> <span class="mono" style="color:var(--win);">+{{ p.edge }}%</span></span>
+        <span><span class="muted">EV</span> <span class="mono" style="color:var(--win);">{{ '+' if p.ev_pct > 0 }}{{ p.ev_pct }}%</span></span>
+        {% if p.omen_score is not none %}<span><span class="muted">Score</span> <span class="mono">{{ p.omen_score | round | int }}</span></span>{% endif %}
+        {% endif %}
+        {% if f.href %}<a href="{{ f.href }}" class="hub-featured-link">Game center →</a>{% endif %}
+    </div>
+</article>
+
+{% elif top_picks %}
 {% set _lock = top_picks[0] %}
-<div class="card" style="position:relative; overflow:hidden; background:var(--card-2nd); border-color:var(--border-warn); display:flex; flex-direction:column; gap:16px; padding:24px 28px;">
+<div class="card hub-featured" style="display:flex; flex-direction:column; gap:16px; padding:24px 28px;">
     {% if _lock.logo_url %}
     <img src="{{ _lock.logo_url }}" alt="" loading="lazy" onerror="this.style.display='none'" style="position:absolute; z-index:0; top:50%; right:-30px; transform:translateY(-50%); height:230px; width:230px; object-fit:contain; opacity:0.14; filter:grayscale(15%); pointer-events:none; user-select:none;">
     {% endif %}
@@ -70,96 +182,114 @@
         <span class="kelly-verdict {{ _lock.k_cls }}">{{ _lock.k_label }}</span>
     </div>
     <div style="position:relative; z-index:1; display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 24px;">
-        <span style="font-family:var(--font-cond); font-size:2.6rem; font-weight:700; line-height:0.95; color:var(--orange);">{{ _lock.pick_label }}</span>
+        <span style="font-family:var(--font-display); font-size:3.2rem; line-height:0.9; color:var(--orange);">{{ _lock.pick_label }}</span>
         <span style="font-size:0.95rem; color:var(--silver);">{{ _lock.sport }} {{ _lock.market }} · {{ _lock.matchup }}{% if _lock.game_time_utc %} · <span class="game-time" data-utc="{{ _lock.game_time_utc }}">—</span>{% endif %}</span>
     </div>
     <div style="position:relative; z-index:1; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; max-width:420px;">
-        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
-            <span class="stat-label" style="font-size:0.64rem;">Odds</span>
-            <span class="mono" style="font-weight:700;">{{ '+' if _lock.amer_odds > 0 }}{{ _lock.amer_odds }}</span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
-            <span class="stat-label" style="font-size:0.64rem;">Edge</span>
-            <span class="mono" style="font-weight:700; color:var(--win);">{{ '+' if _lock.edge > 0 }}{{ _lock.edge }}%</span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:2px; padding:10px 12px; background:var(--bg-input); border-radius:var(--radius-sm);">
-            <span class="stat-label" style="font-size:0.64rem;">EV</span>
-            <span class="mono" style="font-weight:700; color:var(--win);">{{ '+' if _lock.ev_pct > 0 }}{{ _lock.ev_pct }}%</span>
-        </div>
+        <div class="hub-mini-stat"><span class="stat-label">Odds</span><span class="mono">{{ ml(_lock.amer_odds) }}</span></div>
+        <div class="hub-mini-stat"><span class="stat-label">Edge</span><span class="mono" style="color:var(--win);">{{ '+' if _lock.edge > 0 }}{{ _lock.edge }}%</span></div>
+        <div class="hub-mini-stat"><span class="stat-label">EV</span><span class="mono" style="color:var(--win);">{{ '+' if _lock.ev_pct > 0 }}{{ _lock.ev_pct }}%</span></div>
     </div>
     <div style="position:relative; z-index:1;">
         <a href="{{ _lock.href }}" class="btn-place-bet" style="display:inline-block; width:auto; text-decoration:none; padding:10px 20px;">View full breakdown →</a>
     </div>
 </div>
-
-<div class="dashboard">
-    <div class="stat-card">
-        <span class="stat-label">Games tonight</span>
-        <span class="stat-value">{{ _games_tonight }}</span>
-    </div>
-    <div class="stat-card">
-        <span class="stat-label">Picks</span>
-        <span class="stat-value">{{ top_picks | length }}</span>
-    </div>
-    <div class="stat-card">
-        <span class="stat-label">Strong plays</span>
-        <span class="stat-value" style="color:var(--win);">{{ _strong_count }}</span>
-    </div>
-    <div class="stat-card">
-        <span class="stat-label">Avg edge</span>
-        <span class="stat-value" style="color:var(--win);">{{ '+' if _avg_edge > 0 }}{{ '%.1f' % _avg_edge }}%</span>
-    </div>
-</div>
 {% endif %}
+
+<section class="card hub-board" aria-labelledby="board-h">
+    <div class="hub-board-head">
+        <h2 id="board-h">The Graveyard Shift</h2>
+        <span class="small">Lines: DraftKings · Model edge in green</span>
+    </div>
+    {% if all_games_today %}
+    <div class="hub-board-cols" aria-hidden="true">
+        <span>Status</span><span>Matchup</span><span class="r">Score</span><span class="r">DraftKings</span><span class="r">Model</span>
+    </div>
+    <ul class="hub-board-list">
+    {% for g in all_games_today %}
+    <li data-sport="{{ g.sport }}">
+        <a class="hub-board-row" href="{{ g.href or '#' }}">
+            <span class="hub-board-status"><span class="hub-board-league">{{ g.sport }}</span>{{ status_cell(g) }}</span>
+            <span class="hub-board-matchup">
+                <span class="wide" title="{{ g.away_name }} @ {{ g.home_name }}">{% if g.away_logo %}<img src="{{ g.away_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ g.away_abbr }} <span class="at">@</span> {% if g.home_logo %}<img src="{{ g.home_logo }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ g.home_abbr }}</span>
+                {% for side in ('away', 'home') %}
+                <span class="narrow"><span class="t">{% if g[side ~ '_logo'] %}<img src="{{ g[side ~ '_logo'] }}" alt="" loading="lazy" onerror="this.style.display='none'">{% endif %}{{ g[side ~ '_abbr'] }}</span><span class="mono">{{ g[side ~ '_score'] if g.status in ('Live', 'Final') and g[side ~ '_score'] is not none }}</span></span>
+                {% endfor %}
+            </span>
+            <span class="hub-board-score mono r">{% if g.status in ('Live', 'Final') and g.away_score is not none %}{{ g.away_score }}–{{ g.home_score }}{% else %}—{% endif %}</span>
+            <span class="hub-board-line mono r">{{ board_line(g) }}</span>
+            <span class="hub-board-edge mono r{{ ' pos' if g.edge_pick }}">{% if g.edge_pick %}+{{ g.edge_pick.edge }}%{% else %}—{% endif %}</span>
+        </a>
+    </li>
+    {% endfor %}
+    </ul>
+    {% else %}
+    <p class="hub-sport-empty" style="padding:0 20px 18px;">Dead quiet. No games on any board tonight.</p>
+    {% endif %}
+</section>
 
 {% include "_today_best_bets.html" %}
 
-<h2>The Slate</h2>
-<div class="hub-sport-grid">
-{% for s in sport_summaries %}
-<a class="card hub-sport-card" href="{{ s.href }}">
-    <div class="hub-sport-card-head">
-        <span class="hub-sport-icon">{{ s.icon }}</span>
-        <span class="hub-sport-name">{{ s.sport }}</span>
-        {{ sb.season_badge(s.sport) }}
-        <span class="game-count">{{ s.games_today }} game{{ 's' if s.games_today != 1 }}</span>
-    </div>
-    {% if not s.top_picks %}
-      {% if s.games_today == 0 %}
-      <p class="hub-sport-empty">Dead quiet. No games tonight.</p>
-      {% else %}
-      <p class="hub-sport-empty" style="margin-bottom:6px;">No positive-edge picks right now</p>
-      <ul class="hub-sport-picks">
-      {% for g in s.all_games[:8] %}
-        <li>
-            <span class="hub-pick-matchup">{{ g.matchup }}</span>
-            {% if g.status in ('Final', 'Live') and g.away_score is not none and g.home_score is not none %}
-            <span class="mono" style="font-size:0.72rem; color:var(--silver); margin-right:4px;">{{ g.away_score }}–{{ g.home_score }}</span>
-            {% endif %}
-            {% if g.status == 'Final' %}<span class="hub-pick-label" style="color:var(--text-muted);">Final</span>
-            {% elif g.status == 'Live' %}<span class="hub-pick-label" style="color:var(--win);">{{ g.live_clock or 'Live' }}</span>
-            {% elif g.game_time_utc %}<span class="hub-pick-label game-time" data-utc="{{ g.game_time_utc }}" style="color:var(--text-muted);">—</span>{% endif %}
-        </li>
-      {% endfor %}
-      {% if s.all_games | length > 8 %}
-        <li><span class="hub-pick-matchup" style="color:var(--text-muted);">+{{ s.all_games | length - 8 }} more</span></li>
-      {% endif %}
-      </ul>
-      {% endif %}
-    {% else %}
-    <ul class="hub-sport-picks">
-    {% for p in s.top_picks %}
-        <li>
-            <span class="hub-pick-label">{{ p.pick_label }}</span>
-            <span class="hub-pick-matchup">{{ p.matchup }}</span>
-            <span class="kelly-verdict {{ p.k_cls }}">{{ '+' if p.edge > 0 }}{{ p.edge }}%</span>
-        </li>
-    {% endfor %}
-    </ul>
-    {% endif %}
-    <span class="hub-sport-view">View {{ s.sport }} →</span>
-</a>
-{% endfor %}
+</div>
+
+<aside class="hub-rail">
+    <section class="card hub-rail-card" aria-labelledby="wire-h">
+        <div class="hub-rail-head">
+            <h2 id="wire-h">Whispers</h2>
+            <a href="{{ url_for('whispers_page') }}">All updates</a>
+        </div>
+        {% if whispers %}
+        <ol class="hub-wire">
+        {% for w in whispers %}
+            <li>
+                <span class="hub-wire-time mono">{{ w.time }}</span>
+                <span class="hub-wire-body">
+                    <span class="whisper-type whisper-type-{{ w.color }}">{{ w.type }}</span>
+                    <span>{% if w.game %}{{ w.game }}: {% endif %}{{ w.text }}</span>
+                </span>
+            </li>
+        {% endfor %}
+        </ol>
+        {% else %}
+        <p class="hub-sport-empty" style="padding:0 20px 16px;">Dead quiet so far.</p>
+        {% endif %}
+    </section>
+
+    <section class="card hub-rail-card" aria-labelledby="bets-h">
+        <div class="hub-rail-head">
+            <h2 id="bets-h">Open bets <span style="color:var(--text-muted);">{{ open_bets | length }}</span></h2>
+            <a href="{{ url_for('bets_page') }}">Bet log</a>
+        </div>
+        {% if open_bets %}
+        <ul class="hub-bets">
+        {% for b in open_bets %}
+            <li>
+                <span class="hub-bets-l">
+                    <strong>{{ b.label }}</strong>
+                    <span class="small">{% if b.href %}<a href="{{ b.href }}">{{ b.game }}</a>{% else %}{{ b.game }}{% endif %}{% if b.game_time_utc %} · <span class="game-time" data-utc="{{ b.game_time_utc }}">—</span>{% endif %}</span>
+                </span>
+                <span class="hub-bets-r">
+                    <span class="mono">{{ ml(b.odds) }}</span>
+                    <span class="hub-bet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}">{{ b.state }}</span>
+                </span>
+            </li>
+        {% endfor %}
+        </ul>
+        {% else %}
+        <p class="hub-sport-empty" style="padding:0 20px 16px;">Nothing riding right now.</p>
+        {% endif %}
+    </section>
+
+    <section class="card hub-rail-card hub-model" aria-labelledby="num-h">
+        <h2 id="num-h">The model tonight</h2>
+        <div class="hub-model-grid">
+            <div><span class="stat-label">Picks</span><span class="mono">{{ top_picks | length }}</span></div>
+            <div><span class="stat-label">Strong</span><span class="mono">{{ _strong_count }}</span></div>
+            <div><span class="stat-label">Avg edge</span><span class="mono" style="color:var(--win);">{{ '+' if _avg_edge > 0 }}{{ '%.1f' % _avg_edge }}%</span></div>
+            <div><span class="stat-label">Games</span><span class="mono">{{ _games_tonight }}</span></div>
+        </div>
+    </section>
+</aside>
 </div>
 
 </div>
@@ -171,8 +301,17 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
     try {
         var d = new Date(utc);
         if (isNaN(d)) return;
-        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
     } catch(e) {}
 });
+function hubFilterBySport(sport, btn) {
+    document.querySelectorAll('#hub-sport-filter .sport-chip').forEach(function (c) {
+        c.classList.remove('sport-chip-active'); c.setAttribute('aria-pressed', 'false');
+    });
+    btn.classList.add('sport-chip-active'); btn.setAttribute('aria-pressed', 'true');
+    document.querySelectorAll('.live-strip-card[data-sport], .hub-board-list li[data-sport]').forEach(function (el) {
+        el.style.display = (sport === 'ALL' || el.getAttribute('data-sport') === sport) ? '' : 'none';
+    });
+}
 </script>
 {% endblock %}
