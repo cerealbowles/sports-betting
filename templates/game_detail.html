@@ -262,9 +262,9 @@
       {% if game and game.status in ('Live', 'Final') and game.away.score is not none and game.home.score is not none %}
       <span class="gdp-live-badge">{% if game.status == 'Live' %}<span class="gdp-live-dot"></span>Live{% else %}Final{% endif %}</span>
       <div class="gdp-score">
-        <span class="{{ 'lead' if game.away.score > game.home.score else 'trail' }}">{{ game.away.score }}</span>
+        <span class="{{ 'lead' if game.away.score | int > game.home.score | int else 'trail' }}">{{ game.away.score }}</span>
         <span class="gdp-score-sep">–</span>
-        <span class="{{ 'lead' if game.home.score > game.away.score else 'trail' }}">{{ game.home.score }}</span>
+        <span class="{{ 'lead' if game.home.score | int > game.away.score | int else 'trail' }}">{{ game.home.score }}</span>
       </div>
       {% if game.status == 'Live' and (game.inning_info or game.live_clock) %}<div class="gdp-clock">{{ game.inning_info or game.live_clock }}</div>{% endif %}
       {% if game.status == 'Live' and game.bases %}

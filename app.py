@@ -4431,8 +4431,8 @@ def _schedule_matchups(schedule, sport=None):
           'home_logo':     home.get('logo_url', ''),
           'game_time_utc': g.get('game_time_utc', ''),
           'status':        g.get('status', ''),
-          'away_score':    away.get('score'),
-          'home_score':    home.get('score'),
+          'away_score':    _int_score(away.get('score')),
+          'home_score':    _int_score(home.get('score')),
           'live_clock':    g.get('inning_info') or g.get('live_clock') or '',
           'bases':         g.get('bases'),
           'href':          (f"/{sport.lower()}/game/{game_id}" if (sport and game_id) else ''),
@@ -4449,6 +4449,17 @@ def _schedule_matchups(schedule, sport=None):
           'linescore':     _hub_linescore(g.get('linescore')),
       })
   return out
+
+
+def _int_score(v):
+  """Scores arrive as ints from some sport modules and strings ("78") from
+  the ESPN-backed ones — normalize so comparisons/subtraction work."""
+  if v is None or v == '':
+    return None
+  try:
+    return int(float(v))
+  except (TypeError, ValueError):
+    return None
 
 
 def _hub_linescore(ls):
@@ -4505,13 +4516,13 @@ def _bet_state(bet, g):
   """WINNING / LOSING / TIED / PENDING for an open ML or spread bet against
   a hub game's live score. Spread bets read the line out of the bet name
   ("BOS -3.5") since OpenBet has no line column."""
-  if g['status'] != 'Live' or g['away_score'] is None or g['home_score'] is None:
+  away_sc, home_sc = _int_score(g.get('away_score')), _int_score(g.get('home_score'))
+  if g.get('status') != 'Live' or away_sc is None or home_sc is None:
     return 'PENDING'
   side = bet['side']
   if side not in ('home', 'away'):
     return 'PENDING'
-  mine, theirs = ((g['home_score'], g['away_score']) if side == 'home'
-                  else (g['away_score'], g['home_score']))
+  mine, theirs = (home_sc, away_sc) if side == 'home' else (away_sc, home_sc)
   margin = mine - theirs
   if (bet['bet_type'] or '').lower().startswith('spread'):
     m = re.search(r'([+-]\d+(?:\.\d+)?)', bet['label'] or '')
