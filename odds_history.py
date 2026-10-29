@@ -376,6 +376,26 @@ def get_closing_line(sport, game_key, before_dt, market='moneyline'):
         return None
 
 
+def get_closing_snapshot(sport, game_key, before_dt):
+    """Closing moneyline AND spread line for one hour-bucketed game_key —
+    the last snapshot recorded at or before before_dt (tip-off). Used by
+    the Tonight hub once a game is Live/Final, when ESPN has dropped the
+    game's odds from its feed. None if nothing was ever recorded."""
+    try:
+        cutoff = before_dt.isoformat() if hasattr(before_dt, 'isoformat') else str(before_dt)
+        with _conn() as c:
+            row = c.execute(
+                'SELECT home_odds, away_odds, home_spread FROM odds_snapshot '
+                'WHERE sport=? AND game_key=? AND recorded_at <= ? ORDER BY id DESC LIMIT 1',
+                (sport, game_key, cutoff),
+            ).fetchone()
+        if not row:
+            return None
+        return {'home_odds': row[0], 'away_odds': row[1], 'home_spread': row[2]}
+    except Exception:
+        return None
+
+
 def get_snapshot_series(sport, game_key):
     """Full ordered history of odds_snapshot rows for one game — every field
     record() ever wrote, oldest first. Powers the game-detail page's line-

@@ -4446,9 +4446,32 @@ def _schedule_matchups(schedule, sport=None):
           'ml_away':       odds.get('away_best'),
           'ml_home':       odds.get('home_best'),
           'home_spread':   odds.get('home_spread'),
+          'line_is_close': False,
           'linescore':     _hub_linescore(g.get('linescore')),
       })
+      _fill_closing_line(out[-1], sport)
   return out
+
+
+def _fill_closing_line(row, sport):
+  """Live/Final games lose their odds from ESPN's feed at tip-off — fall
+  back to the last pregame DraftKings snapshot odds_history recorded (key =
+  game_key + the start hour, same hist_key odds_api.py writes) so the board
+  shows the closing line instead of a blank."""
+  if row['status'] not in ('Live', 'Final') or not row['game_key'] or not row['game_time_utc']:
+    return
+  if row['ml_home'] is not None or row['home_spread'] is not None:
+    return
+  import odds_history
+  try:
+    start = datetime.fromisoformat(row['game_time_utc'].replace('Z', '+00:00'))
+  except ValueError:
+    return
+  close = odds_history.get_closing_snapshot(_SPORT_ODDS_KEY.get(sport, sport),
+                                            f"{row['game_key']}_{start.strftime('%Y-%m-%dT%H')}", start)
+  if close:
+    row.update(ml_home=close['home_odds'], ml_away=close['away_odds'],
+               home_spread=close['home_spread'], line_is_close=True)
 
 
 def _int_score(v):

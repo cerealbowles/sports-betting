@@ -218,7 +218,7 @@
                 {% endfor %}
             </span>
             <span class="hub-board-score mono r">{% if g.status in ('Live', 'Final') and g.away_score is not none %}{{ g.away_score }}–{{ g.home_score }}{% else %}—{% endif %}</span>
-            <span class="hub-board-line mono r">{{ board_line(g) }}</span>
+            <span class="hub-board-line mono r">{{ board_line(g) }}{% if g.line_is_close %}<span class="hub-board-close" title="Closing DraftKings line — the last pregame price before tip-off">close</span>{% endif %}</span>
             <span class="hub-board-edge mono r{{ ' pos' if g.edge_pick }}">{% if g.edge_pick %}+{{ g.edge_pick.edge }}%{% else %}—{% endif %}</span>
         </a>
     </li>
