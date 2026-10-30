@@ -296,15 +296,71 @@
 </div>
 
 <script>
-document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
-    var utc = el.getAttribute('data-utc');
-    if (!utc) return;
-    try {
-        var d = new Date(utc);
-        if (isNaN(d)) return;
-        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
-    } catch(e) {}
-});
+function hubFormatGameTimes() {
+    document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+        var utc = el.getAttribute('data-utc');
+        if (!utc) return;
+        try {
+            var d = new Date(utc);
+            if (isNaN(d)) return;
+            el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+        } catch(e) {}
+    });
+}
+hubFormatGameTimes();
+
+// Auto-update for leaving the page open on a phone/iPad: every 30s re-fetch
+// this page and swap .schedule-body in place — scores, live/final status,
+// featured game, board, open-bet states and whispers all move together, with
+// no per-section patching to keep in sync with the markup above. Paused while
+// the tab is hidden (the browser throttles it anyway); on return it refreshes
+// at once, then again shortly after, since the first hit may only kick off
+// the server's background hub rebuild (stale-while-revalidate, see index()).
+(function () {
+    var POLL_MS = 30000;
+    var timer = null, inFlight = false;
+
+    function activeSport() {
+        var btn = document.querySelector('#hub-sport-filter .sport-chip-active');
+        return btn ? btn.getAttribute('data-filter-sport') : 'ALL';
+    }
+
+    function refresh() {
+        if (inFlight || document.hidden) return;
+        inFlight = true;
+        fetch(window.location.pathname, {cache: 'no-store', credentials: 'same-origin'})
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                if (!html) return;
+                var fresh = new DOMParser().parseFromString(html, 'text/html').querySelector('.schedule-body');
+                var cur = document.querySelector('.schedule-body');
+                if (!fresh || !cur) return;
+                var sport = activeSport();
+                var strip = cur.querySelector('.live-strip');
+                var stripScroll = strip ? strip.scrollLeft : 0;
+                cur.innerHTML = fresh.innerHTML;
+                hubFormatGameTimes();
+                var btn = document.querySelector('#hub-sport-filter .sport-chip[data-filter-sport="' + sport + '"]');
+                if (btn && sport !== 'ALL') hubFilterBySport(sport, btn);
+                var newStrip = cur.querySelector('.live-strip');
+                if (newStrip) newStrip.scrollLeft = stripScroll;
+            })
+            .catch(function () {})
+            .then(function () { inFlight = false; });
+    }
+
+    function start() { if (!timer) timer = setInterval(refresh, POLL_MS); }
+    function stop() { clearInterval(timer); timer = null; }
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) { stop(); return; }
+        refresh();
+        setTimeout(refresh, 8000);
+        start();
+    });
+    start();
+}());
+
 function hubFilterBySport(sport, btn) {
     document.querySelectorAll('#hub-sport-filter .sport-chip').forEach(function (c) {
         c.classList.remove('sport-chip-active'); c.setAttribute('aria-pressed', 'false');

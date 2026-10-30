@@ -4363,7 +4363,7 @@ def _cache_only(*modules):
             m._CACHE_ONLY = False
 
 
-def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None):
+def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None, live=False):
     """Cache-only fetch for the Today hub, with one live-fetch retry when
     the cache-only pass comes back completely empty. A cache-only read can
     turn up empty not just on a real no-games day but also on a cold cache
@@ -4386,7 +4386,16 @@ def _hub_fetch_with_fallback(modules, fetch_fn, is_empty=None):
     when every day's own 'games' list is — a stale cache entry for a date
     that had no games yet when it was written reads as a real no-games day
     otherwise, so a game added since never gets picked up until the cache
-    naturally expires."""
+    naturally expires.
+
+    `live=True` skips the cache-only pass entirely and just fetches normally
+    (each module's own TTLs apply). The background stale-while-revalidate
+    rebuild uses it: cache-only reads ignore TTL, and only the scheduler-
+    leader worker's warmer ever refreshes those caches — so on the other
+    gunicorn workers the hub kept serving whatever scoreboard it first
+    cached (7:30 games still 'Preview' at 9:30)."""
+    if live:
+        return fetch_fn()
     is_empty = is_empty or (lambda r: not r or not any(day.get('games') for day in r))
     with _cache_only(*modules):
         result = fetch_fn()
@@ -4555,7 +4564,7 @@ def _bet_state(bet, g):
   return 'WINNING' if margin > 0 else ('TIED' if margin == 0 else 'LOSING')
 
 
-def _hub_sport_data(sport, icon, href, today_str):
+def _hub_sport_data(sport, icon, href, today_str, live=False):
   """One sport's slice of the Today hub: fetch its schedule, run the same
   prep each sport's own page runs, and rank its recommendations. Runs
   inside a worker thread (see index() below), so DB access is wrapped in
@@ -4573,7 +4582,7 @@ def _hub_sport_data(sport, icon, href, today_str):
 
       if sport == 'MLB':
         schedule = _hub_fetch_with_fallback(
-            [mlb_api], lambda: mlb_api.build_schedule_context(target_date=today_str))
+            [mlb_api], lambda: mlb_api.build_schedule_context(target_date=today_str), live=live)
         # No _upsert_predictions here — this is a read-only display, and
         # writing from 6 threads at once against one SQLite file serializes
         # (and can stall) on the DB's write lock. /mlb's own page, and the
@@ -4610,22 +4619,22 @@ def _hub_sport_data(sport, icon, href, today_str):
         if sport == 'NHL':
           day_nav = _build_day_nav(0)
           schedule = _hub_fetch_with_fallback(
-              [nhl_api, injuries_api], lambda: nhl_api.build_schedule_context(target_date=day_nav['date']))
+              [nhl_api, injuries_api], lambda: nhl_api.build_schedule_context(target_date=day_nav['date']), live=live)
         elif sport == 'NBA':
           day_nav = _build_day_nav(0)
           schedule = _hub_fetch_with_fallback(
-              [nba_api], lambda: nba_api.build_schedule_context(target_date=day_nav['date']))
+              [nba_api], lambda: nba_api.build_schedule_context(target_date=day_nav['date']), live=live)
         elif sport == 'WNBA':
           day_nav = _build_day_nav(0)
           schedule = _hub_fetch_with_fallback(
-              [wnba_api], lambda: wnba_api.build_schedule_context(target_date=day_nav['date']))
+              [wnba_api], lambda: wnba_api.build_schedule_context(target_date=day_nav['date']), live=live)
         elif sport == 'NFL':
           week_ctx = _hub_fetch_with_fallback([nfl_api], nfl_api.build_week_schedule_context,
-                                               is_empty=lambda r: not r.get('days'))
+                                               is_empty=lambda r: not r.get('days'), live=live)
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
         else:  # CFB
           week_ctx = _hub_fetch_with_fallback([cfb_api], cfb_api.build_week_schedule_context,
-                                               is_empty=lambda r: not r.get('days'))
+                                               is_empty=lambda r: not r.get('days'), live=live)
           schedule = [d for d in week_ctx['days'] if d.get('date') == today_str]
 
         # See the MLB branch above re: no _upsert_predictions here.
@@ -4677,12 +4686,22 @@ _hub_refreshing = False  # guarded by _hub_refresh_lock — collapses concurrent
                          # instead of one per request.
 
 
-def _rebuild_hub_cache():
+def _rebuild_hub_cache(live=False):
   """Does the actual 6-sport fan-out and stores the result in _hub_cache.
   Runs either inline (nothing cached yet — a request has to wait on
   *something*) or on a background thread (stale-while-revalidate path in
-  index() below)."""
+  _ensure_hub_cache() below, with live=True — see _hub_fetch_with_fallback).
+  Always clears _hub_refreshing, even on failure — otherwise one exception
+  would freeze this worker's hub until the next restart."""
   global _hub_refreshing
+  try:
+    _do_rebuild_hub_cache(live)
+  finally:
+    with _hub_refresh_lock:
+      _hub_refreshing = False
+
+
+def _do_rebuild_hub_cache(live):
   today = datetime.now(_ET).date()
   today_str = today.strftime('%Y-%m-%d')
 
@@ -4694,7 +4713,7 @@ def _rebuild_hub_cache():
     hrefs = {sport: url_for(endpoint) for sport, icon, endpoint in _HUB_SPORTS}
 
   with ThreadPoolExecutor(max_workers=len(_HUB_SPORTS)) as pool:
-    futures = [pool.submit(_hub_sport_data, sport, icon, hrefs[sport], today_str)
+    futures = [pool.submit(_hub_sport_data, sport, icon, hrefs[sport], today_str, live)
                for sport, icon, endpoint in _HUB_SPORTS]
     results = [f.result() for f in futures]
 
@@ -4725,8 +4744,6 @@ def _rebuild_hub_cache():
 
   _hub_cache['data'] = (sport_summaries, unified_picks, today_display, all_games_today, live_games_today)
   _hub_cache['ts'] = time.time()
-  with _hub_refresh_lock:
-    _hub_refreshing = False
 
 
 @app.route('/')
@@ -4751,18 +4768,7 @@ def index():
   request itself pay the full per-sport rebuild cost (measured up to ~17s
   cold, dwarfing the TTL). Only the very first request after a cold start,
   with nothing cached yet, blocks on the synchronous rebuild."""
-  global _hub_refreshing
-  now = time.time()
-  if _hub_cache['data'] is None:
-    _rebuild_hub_cache()
-  elif (now - _hub_cache['ts']) >= _HUB_CACHE_TTL:
-    with _hub_refresh_lock:
-      already_refreshing = _hub_refreshing
-      _hub_refreshing = True
-    if not already_refreshing:
-      threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
-
-  sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _hub_cache['data']
+  sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _ensure_hub_cache()
   games = _attach_bets(all_games_today, _open_bets_by_game())
   live_games_today = [g for g in games if g['status'] == 'Live']
 
@@ -4819,7 +4825,8 @@ def _ensure_hub_cache():
       already_refreshing = _hub_refreshing
       _hub_refreshing = True
     if not already_refreshing:
-      threading.Thread(target=_rebuild_hub_cache, daemon=True, name='hub-refresh').start()
+      threading.Thread(target=_rebuild_hub_cache, kwargs={'live': True},
+                       daemon=True, name='hub-refresh').start()
   return _hub_cache['data']
 
 
