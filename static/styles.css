@@ -2879,6 +2879,10 @@ body.embed-mode .container { padding-bottom: 0; }
     gap: 14px 16px; margin-bottom: 18px;
 }
 .hub-greeting > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* Today: sport chips always on their own row under the title, rather than
+   beside it when the (randomly picked) flavor line happens to be short. */
+.hub-greeting-stacked { flex-direction: column; align-items: flex-start; }
+.hub-greeting-stacked > * { max-width: 100%; }
 .hub-title { margin: 0; font-size: clamp(2.1rem, 4.6vw, 3.4rem); line-height: 1; }
 .hub-cols { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
 .hub-main { flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; }
