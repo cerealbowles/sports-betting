@@ -1107,14 +1107,13 @@ def get_fantasy_pool_data_db(team_ids, player_ids, as_of_date, before_date=None)
                                          PlayerGameStat.game_id.in_(all_recent_game_ids))
                                  .all())
 
-    # Latest-per-player injury status, same "first row seen wins" rule as
-    # get_latest_injury_status (date-desc order), bucketed by team.
+    # Each team's latest snapshot only, same rule as get_latest_injury_status
+    # (date-desc order, so a team's first row seen carries its latest date).
     unavailable = defaultdict(set)
-    seen_player_status = {}
+    team_latest_date = {}
     for r in inj_rows:
-        if r.player_id in seen_player_status:
+        if team_latest_date.setdefault(r.team_id, r.date) != r.date:
             continue
-        seen_player_status[r.player_id] = r.status
         if r.status.lower() in _OUT_STATUSES:
             unavailable[r.team_id].add(r.player_id)
 
@@ -1260,20 +1259,23 @@ def get_latest_injury_status(team_id, as_of_date=None):
     game a few days out should still read today's (or the most recent)
     snapshot, not wait for a snapshot dated on the game's own future date
     that will never exist until that day arrives. {} if nothing stored for
-    this team yet (caller falls back to a live fetch)."""
+    this team yet (caller falls back to a live fetch).
+
+    Only the team's latest snapshot DATE counts, not each player's newest
+    row ever: ESPN's report is the team's full current list each time, so a
+    player missing from it has recovered or left the team and must drop
+    off (otherwise they stayed "Out" indefinitely)."""
     from app import app as flask_app, InjuryStatus
 
     with flask_app.app_context():
         q = InjuryStatus.query.filter_by(sport='NFL', team_id=team_id)
         if as_of_date:
             q = q.filter(InjuryStatus.date <= as_of_date)
-        rows = q.order_by(InjuryStatus.date.desc()).all()
-
-    latest = {}
-    for r in rows:  # date-desc, so the first row seen per player is its latest
-        if r.player_id not in latest:
-            latest[r.player_id] = r.status
-    return latest
+        latest_row = q.order_by(InjuryStatus.date.desc()).first()
+        if latest_row is None:
+            return {}
+        rows = InjuryStatus.query.filter_by(sport='NFL', team_id=team_id, date=latest_row.date).all()
+    return {r.player_id: r.status for r in rows}
 
 
 _OUT_STATUSES = {'out', 'injured reserve', 'suspension', 'suspended'}

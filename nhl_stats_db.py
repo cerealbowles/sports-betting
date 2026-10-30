@@ -294,45 +294,39 @@ def has_injury_snapshot(team_id, date_et):
 
 
 def get_latest_injury_status(team_id, as_of_date=None):
-    """Most recent status per player on or before as_of_date — same
-    deliberately-not-exact-date-match reasoning as nfl_stats_db's."""
+    """{player_id: status} from this team's most recent snapshot on or
+    before as_of_date — same deliberately-not-exact-date-match reasoning as
+    nfl_stats_db's."""
+    return {r.player_id: r.status for r in _latest_snapshot_rows(team_id, as_of_date)}
+
+
+def _latest_snapshot_rows(team_id, as_of_date=None):
+    """Rows from this team's most recent snapshot date only. ESPN's report
+    is the team's full current list each time, so a player missing from the
+    latest snapshot has recovered or left the team — taking each player's
+    newest row ever instead kept them listed forever (Hellebuyck still
+    "IR" for WPG weeks after moving to NJ, and still "Out" for NJ after
+    returning)."""
     from app import app as flask_app, InjuryStatus
 
     with flask_app.app_context():
         q = InjuryStatus.query.filter_by(sport='NHL', team_id=team_id)
         if as_of_date:
             q = q.filter(InjuryStatus.date <= as_of_date)
-        rows = q.order_by(InjuryStatus.date.desc()).all()
-
-    latest = {}
-    for r in rows:
-        if r.player_id not in latest:
-            latest[r.player_id] = r.status
-    return latest
+        latest = q.order_by(InjuryStatus.date.desc()).first()
+        if latest is None:
+            return []
+        return InjuryStatus.query.filter_by(sport='NHL', team_id=team_id, date=latest.date).all()
 
 
 def get_latest_injury_rows(team_id, as_of_date=None):
     """Same lookup as get_latest_injury_status() but keeps name/position
     instead of collapsing to {player_id: status} — the game-detail page's
     injuries section wants a display row (name/pos/status), not just a
-    status lookup table. Returns [{id, name, pos, status}], newest status
-    per player."""
-    from app import app as flask_app, InjuryStatus
-
-    with flask_app.app_context():
-        q = InjuryStatus.query.filter_by(sport='NHL', team_id=team_id)
-        if as_of_date:
-            q = q.filter(InjuryStatus.date <= as_of_date)
-        rows = q.order_by(InjuryStatus.date.desc()).all()
-
-    seen = set()
-    out = []
-    for r in rows:
-        if r.player_id in seen:
-            continue
-        seen.add(r.player_id)
-        out.append({'id': r.player_id, 'name': r.player_name, 'pos': r.position, 'status': r.status})
-    return out
+    status lookup table. Returns [{id, name, pos, status}] from the team's
+    latest snapshot (see _latest_snapshot_rows)."""
+    return [{'id': r.player_id, 'name': r.player_name, 'pos': r.position, 'status': r.status}
+            for r in _latest_snapshot_rows(team_id, as_of_date)]
 
 
 _OUT_STATUSES = {'out', 'injured reserve', 'suspension', 'suspended'}
