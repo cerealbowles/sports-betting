@@ -122,26 +122,39 @@ def _conn():
 
 def record(sport, game_key, home_odds, away_odds, home_spread=None,
            home_spread_price=None, away_spread_price=None, total_line=None,
-           over_odds=None, under_odds=None):
+           over_odds=None, under_odds=None, observed_at=None):
     """Write a snapshot only if any tracked value changed since the last
-    observation — moneyline, spread line/price, or total line/price."""
+    observation — moneyline, spread line/price, or total line/price.
+
+    `observed_at` (epoch seconds) is when the source data was actually
+    fetched from ESPN (see odds_api.stamp_fetched). Every sport records
+    from its own cached scoreboard, and each gunicorn worker keeps its own
+    cache, so a copy minutes older than one already recorded used to write
+    the old line straight back — an A->B->A->B ping-pong that made ~95% of
+    rows since the Oct 26 ESPN cutover bogus "moves". Data observed before
+    the game's latest stored row is now dropped, and rows are stamped with
+    the observation time rather than the write time."""
+    observed_iso = (datetime.fromtimestamp(observed_at, timezone.utc).isoformat()
+                    if observed_at else datetime.now(timezone.utc).isoformat())
     try:
         with _conn() as c:
             last = c.execute(
                 'SELECT home_odds, away_odds, home_spread, home_spread_price, '
-                'away_spread_price, total_line, over_odds, under_odds '
+                'away_spread_price, total_line, over_odds, under_odds, recorded_at '
                 'FROM odds_snapshot WHERE sport=? AND game_key=? ORDER BY id DESC LIMIT 1',
                 (sport, game_key),
             ).fetchone()
             new_vals = (home_odds, away_odds, home_spread, home_spread_price,
                         away_spread_price, total_line, over_odds, under_odds)
-            if last and tuple(last) == new_vals:
+            if last and tuple(last[:8]) == new_vals:
                 return  # unchanged — skip
+            if last and observed_at and observed_iso <= last[8]:
+                return  # stale copy — older than what's already recorded
             c.execute(
                 'INSERT INTO odds_snapshot (sport, game_key, home_odds, away_odds, '
                 'home_spread, home_spread_price, away_spread_price, total_line, '
                 'over_odds, under_odds, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                (sport, game_key, *new_vals, datetime.now(timezone.utc).isoformat()),
+                (sport, game_key, *new_vals, observed_iso),
             )
     except Exception:
         pass

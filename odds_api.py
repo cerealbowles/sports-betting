@@ -175,6 +175,20 @@ def get_next_fetch_time():
 _FREEZE_AFTER_START = set(SPORT_KEYS.values())
 
 
+def stamp_fetched(data, fetched_at=None):
+    """Marks every event in an ESPN scoreboard response with when it was
+    fetched, so get_odds_map() can tell odds_history.record() how old the
+    odds it's recording really are (see record()'s docstring). Each sport's
+    _cached_get calls this on a live fetch, so cached copies keep their
+    original fetch time. Returns `data` for chaining."""
+    if isinstance(data, dict):
+        ts = fetched_at or time.time()
+        for event in data.get('events') or []:
+            if isinstance(event, dict):
+                event['_fetched_at'] = ts
+    return data
+
+
 def _fetch_espn_events(sport, date_str=None):
     """Self-contained ESPN scoreboard fetch for sports with no other ESPN
     call already in scope (currently just MLB). `date_str` is YYYYMMDD;
@@ -190,7 +204,7 @@ def _fetch_espn_events(sport, date_str=None):
     try:
         r = requests.get(f"{ESPN_BASE}/{slug}/scoreboard", params=params, timeout=15)
         r.raise_for_status()
-        return r.json().get('events', [])
+        return stamp_fetched(r.json()).get('events', [])
     except Exception as e:
         print(f'[odds] ESPN scoreboard fetch failed for {sport}: {e}', flush=True)
         return []
@@ -281,7 +295,8 @@ def get_odds_map(sport, events=None, date_str=None):
                 odds_history.record(sport_key, hist_key, home_price, away_price,
                                      home_spread=home_spread, home_spread_price=home_spread_price,
                                      away_spread_price=away_spread_price, total_line=total_line,
-                                     over_odds=over_odds, under_odds=under_odds)
+                                     over_odds=over_odds, under_odds=under_odds,
+                                     observed_at=event.get('_fetched_at'))
         else:
             odds_history.save_live(sport_key, hist_key, home_price, away_price)
         movement = odds_history.get_movement(sport_key, hist_key)

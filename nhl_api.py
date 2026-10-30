@@ -68,7 +68,7 @@ def _cached_get(url, key, ttl):
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        data = r.json()
+        data = odds_api.stamp_fetched(r.json(), now)
     except Exception:
         return _cache[key][0] if key in _cache else None
     _cache[key] = (data, now)
