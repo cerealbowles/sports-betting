@@ -50,6 +50,24 @@ def _safe_float(val, default):
         return default
 
 
+def _shrink_toward_market(home_prob, market_home_prob):
+    """Shrink large model-vs-market disagreements — same guardrail added to
+    mlb_model.py, where 50 resolved games found 10+ point edges over the
+    vig-free market won only 25% of the time vs. ~58% under that threshold.
+    The 10pt threshold is fixed; the pull-back rate (_MKT_EDGE_RATE) is
+    data-driven — app.py's _recompute_market_edge_shrink('CFB') refits it
+    from resolved game_predictions as CFB accumulates its own large-edge
+    games, starting from the MLB-derived 25% prior until then."""
+    if market_home_prob is not None:
+        _MKT_EDGE_CAP = 0.10
+        edge = home_prob - market_home_prob
+        excess = abs(edge) - _MKT_EDGE_CAP
+        if excess > 0:
+            pull = excess * _MKT_EDGE_RATE
+            home_prob -= pull if edge > 0 else -pull
+    return home_prob
+
+
 def _rank_score(rank):
     """Rank 1 → 1.0, rank 25 → 0.04, unranked (>=99 or missing) → 0.0."""
     try:
@@ -183,26 +201,74 @@ def predict(home, away, game_time_utc=None, market_home_prob=None):
     if h_sos is not None and a_sos is not None:
         factors.append(('Strength of schedule (pending)', round((h_sos - a_sos) * 0.8, 3)))
 
-    home_prob = _sigmoid(logit)
-
-    # Shrink large model-vs-market disagreements — same guardrail added to
-    # mlb_model.py, where 50 resolved games found 10+ point edges over the
-    # vig-free market won only 25% of the time vs. ~58% under that threshold.
-    # The 10pt threshold is fixed; the pull-back rate (_MKT_EDGE_RATE) is
-    # data-driven — app.py's _recompute_market_edge_shrink('CFB') refits it
-    # from resolved game_predictions as CFB accumulates its own large-edge
-    # games, starting from the MLB-derived 25% prior until then.
-    if market_home_prob is not None:
-        _MKT_EDGE_CAP = 0.10
-        edge = home_prob - market_home_prob
-        excess = abs(edge) - _MKT_EDGE_CAP
-        if excess > 0:
-            pull = excess * _MKT_EDGE_RATE
-            home_prob -= pull if edge > 0 else -pull
+    home_prob = _shrink_toward_market(_sigmoid(logit), market_home_prob)
 
     return {
         'home_prob': round(home_prob, 4),
         'away_prob': round(1.0 - home_prob, 4),
         'logit':     round(logit, 3),
         'factors':   factors,
+    }
+
+
+# ── Live prediction: conference power rating + legacy factor model ──────────
+#
+# predict() above is the legacy factor model — still what cfb_backfill.py /
+# cfb_bootstrap.py score history with. Live games (cfb_api._build_game) go
+# through predict_live(), which works in POINTS rather than logit:
+#
+#   margin    = RATING_WEIGHT * cfb_rating margin + (1 - RATING_WEIGHT) * legacy margin
+#   home_prob = sigmoid(margin / MARGIN_SCALE), then the same market shrink
+#
+# legacy margin = LEGACY_MARGIN_FIT applied to predict()'s raw logit (the
+# old spread_proxy CFB fit, which is how the old margin was always shown).
+# spread_proxy's CFB coefficients are (0, MARGIN_SCALE, sigma), so
+# implied_margin(home_prob) gives back exactly this margin (before shrink).
+# Backtest 2026 (research/cfb/): avg miss 12.31 pts for the blend vs 14.14
+# legacy-only and 11.47 for the market; win-prob Brier 0.189 vs 0.217.
+RATING_WEIGHT = 0.75
+MARGIN_SCALE = 8.5                         # logistic fit of home win on rating margin, 2025-26
+LEGACY_MARGIN_FIT = (5.8699, 5.0698)       # margin = a + b * legacy logit
+
+
+def predict_live(home, away, rating=None, game_time_utc=None, market_home_prob=None):
+    """Same return shape as predict(), plus 'margin' (blended home margin
+    before market shrink). `rating` is cfb_rating.rating_inputs()'s dict;
+    None (fit unavailable) falls back to the legacy margin alone, on the
+    same points scale so the spread chip still reads correctly.
+
+    Factors are the legacy factors rescaled to their share of the blended
+    logit, plus a 'Power rating' row — they still sum to the logit
+    (except the display-only pending/tracking rows, as before)."""
+    legacy = predict(home, away, game_time_utc=game_time_utc)
+    a, b = LEGACY_MARGIN_FIT
+    legacy_margin = a + b * legacy['logit']
+    w = RATING_WEIGHT if rating else 0.0
+    margin = w * rating['margin'] + (1 - w) * legacy_margin if rating else legacy_margin
+
+    k = (1 - w) * b / MARGIN_SCALE
+    factors = []
+    for label, contrib in legacy['factors']:
+        val = contrib * k
+        if label == 'Home field':
+            val += (1 - w) * a / MARGIN_SCALE   # the legacy fit's intercept rides with home field
+        factors.append((label, round(val, 3)))
+    if rating:
+        factors.append(('Power rating (conf + team)', round(w * rating['margin'] / MARGIN_SCALE, 3)))
+        # Tracking only — NOT in the logit (same convention as the SoS
+        # '(pending)' row): eastbound 2+ time zones hasn't proven out
+        # against the market yet (see cfb_rating.py).
+        if rating.get('eastbound'):
+            import cfb_rating
+            factors.append(('Eastbound 2+ time zones (tracking)',
+                            round(rating['eastbound'] * cfb_rating.EASTBOUND_PTS / MARGIN_SCALE, 3)))
+
+    logit = margin / MARGIN_SCALE
+    home_prob = _shrink_toward_market(_sigmoid(logit), market_home_prob)
+    return {
+        'home_prob': round(home_prob, 4),
+        'away_prob': round(1.0 - home_prob, 4),
+        'logit':     round(logit, 3),
+        'factors':   factors,
+        'margin':    round(margin, 2),
     }

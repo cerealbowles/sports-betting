@@ -26,10 +26,22 @@ import math
 COEFFS = {
     'MLB':  (-0.2236, 2.5950, 4.543),
     'NFL':  ( 0.9042, 3.2622, 13.424),
-    'CFB':  ( 5.8699, 5.0698, 20.046),
+    # CFB since 2026-10-31: live home_prob comes from cfb_model.predict_live,
+    # which is sigmoid(points margin / MARGIN_SCALE), so the slope here is
+    # MARGIN_SCALE and implied_margin returns that margin exactly; sigma is
+    # the conference rating's walk-forward residual SD (15.5 in 2025-26).
+    # CFB rows written before then hold legacy-model home_probs, whose
+    # margin fit was (5.8699, 5.0698, 20.046) — see LEGACY_COEFFS.
+    'CFB':  ( 0.0,    8.5,    15.5),
     'NHL':  ( 0.0702, 1.0996, 2.581),
     'NBA':  (-0.5258, 5.3636, 14.734),
     'WNBA': ( 0.2765, 6.1636, 12.967),
+}
+
+# Coefficients that applied to a sport's game_predictions rows before its
+# model changed what home_prob means — for replaying historical rows.
+LEGACY_COEFFS = {
+    'CFB': {'until': '2026-11-01', 'coeffs': (5.8699, 5.0698, 20.046)},
 }
 
 
@@ -38,10 +50,20 @@ def _phi(x):
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
 
-def implied_margin(sport, home_prob):
+def _coeffs(sport, game_date=None):
+    """COEFFS for sport, or LEGACY_COEFFS' set when game_date (YYYY-MM-DD)
+    predates that sport's model change. No game_date = current coefficients."""
+    legacy = LEGACY_COEFFS.get(sport)
+    if legacy and game_date and game_date < legacy['until']:
+        return legacy['coeffs']
+    return COEFFS.get(sport)
+
+
+def implied_margin(sport, home_prob, game_date=None):
     """Model-implied home-team margin (positive = home wins by that much), or None
-    if this sport has no fitted coefficients or home_prob is degenerate."""
-    coeffs = COEFFS.get(sport)
+    if this sport has no fitted coefficients or home_prob is degenerate. Pass
+    game_date when replaying a historical row (see LEGACY_COEFFS)."""
+    coeffs = _coeffs(sport, game_date)
     if not coeffs or home_prob is None or not (0 < home_prob < 1):
         return None
     a, b, _ = coeffs
@@ -61,12 +83,12 @@ def implied_margin(sport, home_prob):
 UNVALIDATED_SHRINK = 0.35
 
 
-def cover_prob(sport, home_prob, home_spread_line):
+def cover_prob(sport, home_prob, home_spread_line, game_date=None):
     """P(home team covers home_spread_line) per the proxy model, or None if
     unavailable. home_spread_line follows market convention (negative = home
     favored) — home covers when actual_margin > -home_spread_line."""
-    coeffs = COEFFS.get(sport)
-    margin = implied_margin(sport, home_prob)
+    coeffs = _coeffs(sport, game_date)
+    margin = implied_margin(sport, home_prob, game_date)
     if margin is None or home_spread_line is None:
         return None
     _, _, sigma = coeffs

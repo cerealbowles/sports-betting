@@ -216,7 +216,7 @@ def _spread_proxy_ats_accuracy(sport, rows):
         line = row['spread_line']
         if line is None or row['home_prob'] is None:
             continue
-        margin = spread_proxy.implied_margin(sport, row['home_prob'])
+        margin = spread_proxy.implied_margin(sport, row['home_prob'], row['game_date'])
         if margin is None:
             continue
         cover_target = -line

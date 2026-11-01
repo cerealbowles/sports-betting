@@ -70,7 +70,7 @@ def run(sports=None, dry_run=False, force=False):
                     totals['no_home_prob'] += 1
                     continue
 
-                cover_prob = spread_proxy.cover_prob(sport, r.home_prob, r.spread_open)
+                cover_prob = spread_proxy.cover_prob(sport, r.home_prob, r.spread_open, r.game_date)
                 if cover_prob is None:
                     continue
 

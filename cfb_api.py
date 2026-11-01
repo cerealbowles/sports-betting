@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 import odds_api
 import cfb_model
+import cfb_rating
 import cfb_stats_db
 
 _ET = ZoneInfo('America/New_York')
@@ -673,6 +674,7 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
 
     comp = event.get('competitions', [{}])[0]
     venue_obj = comp.get('venue', {})
+    venue_addr = venue_obj.get('address') or {}
     venue = venue_obj.get('fullName', '')
     if venue_obj.get('city'):
         venue += f", {venue_obj['city']}"
@@ -781,11 +783,20 @@ def _build_game(event, team_stats, game_log, cfb_odds_map, prior_stats=None):
     game_odds = odds_api.lookup_game_odds(cfb_odds_map, home.get('name', ''), away.get('name', ''),
                                            game_date=event.get('date', '')[:13] or None)
 
-    # Run the model
+    # Run the model — conference power rating blended with the legacy
+    # factor model (see cfb_model.predict_live / cfb_rating.py). A rating
+    # failure degrades to the legacy margin alone rather than no model.
+    try:
+        rating = cfb_rating.rating_inputs(
+            home, away, bool(comp.get('neutralSite')),
+            venue_addr.get('city'), venue_addr.get('state'), event.get('date', ''),
+            allow_fetch=not _CACHE_ONLY)
+    except Exception:
+        rating = None
     try:
         market_home_prob = game_odds.get('home_implied') if game_odds else None
-        model = cfb_model.predict(home, away, game_time_utc=event.get('date', ''),
-                                   market_home_prob=market_home_prob)
+        model = cfb_model.predict_live(home, away, rating=rating, game_time_utc=event.get('date', ''),
+                                        market_home_prob=market_home_prob)
         model['factors'].sort(key=lambda f: abs(f[1]), reverse=True)
     except Exception:
         model = None
