@@ -1285,3 +1285,48 @@ def _label_slots(lineup, roster_requirements=None):
     for p in by_position['DST']:
         ordered.append({**p, 'slot': 'DST'})
     return ordered
+
+
+# ── Matchup adjustment + start/sit ladder (The Lab) ─────────────────────
+# adj = value x (1 + matchup pct / 100 x damping). The matchup pct is the
+# opponent defense's fantasy points allowed to that position vs league
+# average (app._nfl_build_matchup_card). Damping is Setting.matchup_damping;
+# 0.4 is the design's starting guess. Projections and the game sim already
+# condition on the opponent to a degree, so this partly double-counts, which
+# is why builds only use it when the user turns it on.
+DEFAULT_MATCHUP_DAMPING = 0.4
+
+# Adjusted-median floors for MUST START / SOLID / RISKY; below RISKY is BENCH.
+START_SIT_TIERS = {'QB': (19, 16, 13), 'RB': (16, 12, 8), 'WR': (13, 10, 7), 'TE': (10, 7.5, 5)}
+START_SIT_NAMES = ('MUST START', 'SOLID', 'RISKY', 'BENCH')
+
+
+def matchup_factor(pct, damping=DEFAULT_MATCHUP_DAMPING):
+    """Multiplier for a player's sim values; 1.0 when there's no grade."""
+    if pct is None:
+        return 1.0
+    return max(0.0, 1 + pct / 100.0 * damping)
+
+
+def start_sit_tier(position, adj_median):
+    """Tier name for an adjusted median, or None for positions without tiers."""
+    tiers = START_SIT_TIERS.get(position)
+    if not tiers:
+        return None
+    for name, floor in zip(START_SIT_NAMES, tiers):
+        if adj_median >= floor:
+            return name
+    return 'BENCH'
+
+
+def start_sit_ladder(players, position):
+    """[{'name', 'players'}] for one position, tiered by adj_median. Each
+    player gets 'move': positive when the matchup lifts them up the
+    position's ranking vs plain sim median. `players` need 'position',
+    'sim_median', 'adj_median'."""
+    ps = sorted((p for p in players if p['position'] == position), key=lambda p: p['adj_median'], reverse=True)
+    med_rank = {id(p): i for i, p in enumerate(sorted(ps, key=lambda p: p['sim_median'], reverse=True))}
+    out = {name: [] for name in START_SIT_NAMES}
+    for i, p in enumerate(ps):
+        out[start_sit_tier(position, p['adj_median'])].append({**p, 'move': med_rank[id(p)] - i})
+    return [{'name': name, 'players': out[name]} for name in START_SIT_NAMES]

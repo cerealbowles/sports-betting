@@ -522,12 +522,12 @@ window.mpDrawTrend = function () {
   var ctx = document.getElementById('chartTrend');
   if (!ctx) return;
 
-  Chart.defaults.color       = '#9a93ad';
+  Chart.defaults.color       = '#A89EA9';
   Chart.defaults.borderColor = 'rgba(154,147,173,0.12)';
-  Chart.defaults.font.family = "'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+  Chart.defaults.font.family = "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
   Chart.defaults.font.size   = 11;
 
-  var orange = '#ff7a1a', blue = '#cbb8ff';
+  var orange = '#FF7A1A', blue = '#C9B8FF';
   var labels = weeks.map(function (w) { return w.label; });
   var wr     = weeks.map(function (w) { return w.win_rate; });
   var brier  = weeks.map(function (w) { return w.brier; });
@@ -550,8 +550,8 @@ window.mpDrawTrend = function () {
       plugins: {
         legend: { position: 'top', labels: { padding: 10, boxWidth: 12 } },
         tooltip: {
-          backgroundColor: '#13111a', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
-          titleColor: '#ece8f4', bodyColor: '#9a93ad', padding: 10, cornerRadius: 6,
+          backgroundColor: '#17121A', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
+          titleColor: '#F4EEE8', bodyColor: '#A89EA9', padding: 10, cornerRadius: 6,
           callbacks: {
             afterBody: function (items) {
               var n = counts[items[0].dataIndex];

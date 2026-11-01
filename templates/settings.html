@@ -53,6 +53,11 @@
         <div class="set-mini"><span class="gy-kpi-label">Max-size losses to lose 99%</span><span class="mono" id="set-bust"></span></div>
         <p class="set-cap-note" id="set-cap-note"></p>
       </div>
+      <label class="set-bankroll set-damping">
+        <span class="gy-kpi-label">Fantasy matchup damping (%)</span>
+        <input type="number" name="matchup_damping" value="{{ ((settings.matchup_damping if settings.matchup_damping is not none else 0.4) * 100) | round | int }}" min="0" max="100" step="5" class="mono">
+        <span class="set-sub">How much of a defense's matchup swing The Lab's adjusted points keep. 40% is a starting guess; the sim and projections already account for the opponent somewhat, so tune it against the post-mortem.</span>
+      </label>
     </section>
 
     <section id="alerts" class="card set-card set-card-flush" aria-labelledby="al-h">

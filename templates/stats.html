@@ -11,6 +11,7 @@
     <div>
         <span class="hub-kicker">{{ sport }}{% if season %} · {{ season }}{% if sport in ('NBA', 'NHL') %}–{{ (season + 1) % 100 }}{% endif %} season{% endif %} {{ sb.season_badge(sport) }}</span>
         <h1 class="hub-title">The Almanac</h1>
+        <a href="{{ url_for('matchups_page') }}" class="stats-ouija-link">Today's NFL matchups{% if ouija_targets is not none %} · {{ ouija_targets }} target{{ 's' if ouija_targets != 1 }}{% endif %} → The Ouija Board</a>
     </div>
     <nav class="stats-sport-switch" aria-label="Sport">
         {% for sp in sports %}

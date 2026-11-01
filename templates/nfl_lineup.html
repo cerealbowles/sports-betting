@@ -139,6 +139,7 @@
 {% else %}
 
 <form method="get" action="{{ url_for('nfl_lineup') }}" id="dfs-game-form">
+{% if use_adj %}<input type="hidden" name="adj" value="1">{% endif %}
 <input type="hidden" name="week" value="{{ week_ctx.week }}">
 <input type="hidden" name="filtered" value="1">
 {% for pid in locks %}<input type="hidden" name="lock" value="{{ pid }}">{% endfor %}
@@ -233,7 +234,7 @@
             </div>
             <label class="gy-field">Sort
                 <select id="lab-sort">
-                    <option value="med">Median</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
+                    <option value="med">Median</option><option value="adj">Matchup-adjusted</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
                 </select>
             </label>
         </div>
@@ -257,10 +258,10 @@
             <tbody>
             {% for p in pool %}
             {% set L = p.id in locks %}{% set B = p.id in bans %}
-            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
+            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-adj="{{ p.adj_median if p.adj_median is defined else p.sim_median }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
                 <th scope="row">
                     <span class="lab-pl">{{ p.name }}{% if p.likely_out %}<span class="gy-tag bad">Out?</span>{% endif %}{% if p.id in in_balanced %}<span class="lab-in">● in lineup</span>{% endif %}</span>
-                    <span class="lab-pl-sub">{{ p.position }} · {{ p.team }} vs {{ p.opponent }}</span>
+                    <span class="lab-pl-sub">{{ p.position }} · {{ p.team }} vs {{ p.opponent }}{% if p.mgrade %} · <span class="lab-mg {{ p.mtone }}" title="{{ p.opponent }} defense vs {{ p.position }}s">{{ p.mgrade }} {{ '+' if p.mpct > 0 }}{{ p.mpct }}%</span>{% endif %}</span>
                 </th>
                 <td class="curve">{% if p.curve %}<svg role="img" aria-label="{{ p.name }}: floor {{ p.sim_floor }}, median {{ p.sim_median }}, ceiling {{ p.sim_ceiling }}" viewBox="0 0 100 26" preserveAspectRatio="none"><line x1="10" y1="26" x2="10" y2="0" class="g"/><line x1="50" y1="26" x2="50" y2="0" class="g"/><polygon points="{{ p.curve }}" class="{{ 'out' if p.likely_out else ('in' if p.id in in_balanced else '') }}"/><line x1="{{ p.median_x }}" y1="26" x2="{{ p.median_x }}" y2="2" class="m"/></svg>{% else %}<span class="small">projection only</span>{% endif %}</td>
                 <td class="r mono muted">{{ p.sim_floor | round(1) if p.game_id else '—' }}</td>
@@ -281,12 +282,48 @@
     <div class="lab-table-foot small"><span id="lab-shown"></span> Salaries are synthetic, so value per $1k is a tiebreaker only. Curves are each player's 150 simulated outcomes. <button type="button" class="gy-link-btn" id="lab-more">Show all</button></div>
 </section>
 
+{# ── Start / sit ladder ── #}
+{% if ladder %}
+<section class="card lab-card lab-pad" aria-labelledby="lad-h" id="ladder">
+    <div class="lab-head" style="padding:0; margin-bottom:14px;">
+        <div>
+            <h2 id="lad-h" class="gy-h2">Start / sit ladder</h2>
+            <p class="set-sub" style="margin-bottom:0;">Every <span id="lad-pos-name">RB</span> in your selected games, tiered by matchup-adjusted median. Arrows show moves vs. the plain sim median.</p>
+        </div>
+        <div class="gy-seg" role="group" aria-label="Ladder position" id="lad-tabs">
+            {% for pos in ['QB', 'RB', 'WR', 'TE'] %}<button type="button" data-lpos="{{ pos }}" aria-pressed="{{ 'true' if pos == 'RB' else 'false' }}"{% if pos == 'RB' %} class="on"{% endif %}>{{ pos }}</button>{% endfor %}
+        </div>
+    </div>
+    {% for pos, tiers in ladder.items() %}
+    <div class="lab-ladder" data-lpos="{{ pos }}"{% if pos != 'RB' %} hidden{% endif %}>
+        {% for t in tiers %}
+        <div class="lab-tier t{{ loop.index }}">
+            <div class="lab-tier-h"><span>{{ t.name }}</span><span class="mono">{{ t.players | length }}</span></div>
+            {% for p in t.players %}
+            <div class="lab-tier-row">
+                <span class="ob-ell"><strong>{{ p.name }}</strong><span class="small">{{ p.team }} vs {{ p.opponent }}{% if p.mgrade %} · <span class="lab-mg {{ p.mtone }}">{{ p.mgrade }} {{ '+' if p.mpct > 0 }}{{ p.mpct }}%</span>{% endif %}</span></span>
+                <span class="mono r">{{ p.adj_median | round(1) }}</span>
+                <span class="mono r lab-move{{ ' up' if p.move > 0 else (' down' if p.move < 0) }}">{% if p.move > 0 %}▲{{ p.move }}{% elif p.move < 0 %}▼{{ -p.move }}{% endif %}</span>
+            </div>
+            {% else %}
+            <div class="small lab-tier-empty">Nobody here in these games.</div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    <p class="small" style="margin:12px 0 0;">Adjusted median = sim median × (1 + {{ (damping * 100) | round | int }}% of the matchup swing). The damping is a starting guess (change it in <a href="{{ url_for('settings_page') }}#sizing">Settings</a>); the sim already conditions on the opponent somewhat, so tune it once the post-mortem shows how much matchups really move results.</p>
+</section>
+{% endif %}
+
 {# ── 3. Lineups ── #}
 <section id="lineups" class="lab-lineups" aria-labelledby="l-h">
     <div class="lab-head" style="padding:0;">
         <div>
             <h2 id="l-h" class="gy-h2"><span class="mono lab-step">3</span>Three ways to build</h2>
             <p class="set-sub" style="margin-bottom:0;">Re-optimized from your games, locks and bans. Likely-out players are never used.</p>
+            {% set _qa = request.args.to_dict(flat=False) %}{% set _ = _qa.update({'adj': [] if use_adj else ['1']}) %}
+            <a class="lab-adj{{ ' on' if use_adj }}" aria-pressed="{{ 'true' if use_adj else 'false' }}" href="{{ url_for('nfl_lineup', **_qa) }}#lineups">{{ 'Builds use matchup-adjusted points ✓' if use_adj else 'Use matchup-adjusted points in builds' }}</a>
         </div>
         {% if locks or bans %}
         <div class="lab-note on">{% for b in builds %}{{ b.label }} {% if b.delta is not none %}<span class="mono">{{ '+' if b.delta >= 0 }}{{ b.delta }}</span>{% else %}—{% endif %}{{ ' · ' if not loop.last }}{% endfor %} median vs no locks/bans · <a href="{{ url_for('nfl_lineup', week=week_ctx.week, filtered=1, games=selected_ids | list, cap=salary_cap, target=target) }}">Clear {{ locks | length + bans | length }}</a></div>
@@ -420,6 +457,19 @@ function labOpenSim(id, btn) {
     panel.hidden = !open;
     if (open) { btn.setAttribute('aria-expanded', 'true'); btn.textContent = 'Hide sim ▴'; btn.closest('.lab-game').classList.add('open'); }
 }
+
+/* ── Start/sit ladder position tabs ── */
+(function () {
+    var tabs = document.getElementById('lad-tabs');
+    if (!tabs) return;
+    tabs.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        var pos = b.dataset.lpos;
+        tabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+        document.querySelectorAll('.lab-ladder').forEach(function (l) { l.hidden = l.dataset.lpos !== pos; });
+        document.getElementById('lad-pos-name').textContent = pos;
+    });
+}());
 
 /* ── Player table: position chips, sort, likely-out toggle, top-16 ── */
 (function () {

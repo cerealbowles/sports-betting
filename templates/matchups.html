@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+{% block title %}The Ouija Board — Dead Money{% endblock %}
+
+{% macro chip(c) -%}
+<span class="ob-chip ob-{{ c.tone }}" title="{{ c.pos }} matchup">{{ c.pos }} <span class="mono">{{ c.grade }}{% if c.pct is not none %} {{ '+' if c.pct > 0 }}{{ c.pct }}%{% endif %}</span></span>
+{%- endmacro %}
+{% macro mg(p) -%}
+{% if p.grade %}<span class="ob-mg ob-{{ p.tone }}" title="Matchup vs this defense">{{ p.grade }} {{ '+' if p.pct > 0 }}{{ p.pct }}%</span>{% endif %}
+{%- endmacro %}
+{% macro edge_bar(label, x, cls) -%}
+{% set w = [50, (x | abs) / 8 * 50] | min if x is not none else 0 %}
+<div class="ob-sig{{ ' faint' if x is none or (x | abs) < 0.5 }}">
+    <span class="ob-sig-l">{{ label }}</span>
+    <span class="ob-sig-track"><i class="ob-sig-mid"></i>{% if x is not none %}<i class="ob-sig-bar {{ cls }}" style="left:{{ 50 if x >= 0 else 50 - w }}%;width:{{ [1, w] | max }}%;"></i>{% endif %}</span>
+    <span class="mono ob-sig-v">{% if x is none %}—{% else %}{{ '+' if x >= 0 else '−' }}{{ '%.1f' % (x | abs) }}{% endif %}</span>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="schedule-body ob">
+
+<div class="hub-greeting ob-head">
+    <div>
+        <a href="{{ url_for('stats_page', sport='NFL') }}" class="ob-back">← The Almanac</a>
+        <span class="hub-kicker">{{ board.day_title }} · NFL week {{ board.week }} · {{ board.games | length }} game{{ 's' if board.games | length != 1 }}{% if board.span %} · {{ board.span }}{% endif %}</span>
+        <h1 class="hub-title">The Ouija Board</h1>
+        <p class="ob-lede">Every game read three ways against the market spread: your betting model, the game simulator, and each team's point differential. When all three point the same way, that's a matchup worth a look.</p>
+    </div>
+    <nav class="gy-seg ob-days" aria-label="Day">
+        {% for d in board.days %}
+        <a href="{{ url_for('matchups_page', day=d.date) }}" class="{{ 'on' if d.date == board.day }}"{% if d.date == board.day %} aria-current="page"{% endif %}>{{ d.label }} <span class="mono">{{ d.n }}</span></a>
+        {% endfor %}
+    </nav>
+</div>
+
+{% if not board.games %}
+<div class="card ob-empty"><div class="gy-h2 sm">Dead quiet.</div><p class="small">No NFL games on this day.</p></div>
+{% else %}
+
+{% if board.sims_missing %}
+<p class="ob-note">{{ board.sims_missing }} of {{ board.games | length }} games have no simulation yet (the sim job runs daily). Those games are read on the model and point differential only, so they can lean but never reach Target.</p>
+{% endif %}
+
+<div class="ob-top">
+    <section class="card ob-targets" aria-labelledby="tgt-h">
+        <div class="gy-h2-row">
+            <h2 id="tgt-h" class="gy-h2 sm">Where all three agree</h2>
+            <span class="small">Ranked by average edge vs the spread</span>
+        </div>
+        {% if board.targets %}
+        <div class="ob-target-grid">
+            {% for t in board.targets %}
+            <a href="#{{ t.id }}" class="ob-target" data-open="{{ t.id }}">
+                <span class="ob-k">{{ t.game }} · {{ t.time }}</span>
+                <span class="ob-target-side">{{ t.side }}</span>
+                <span class="ob-target-edge">{{ t.edge }} pts of edge · ●●●</span>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="small">Nothing today where the model, sim and point differential all agree by 3+ points.</p>
+        {% endif %}
+    </section>
+    <div class="ob-side">
+        {% if board.avoids %}
+        <section class="card ob-avoid" aria-labelledby="avoid-h">
+            <h2 id="avoid-h" class="ob-k ob-loss">Stay away · signals split</h2>
+            {% for a in board.avoids %}
+            <a href="#{{ a.id }}" data-open="{{ a.id }}" class="ob-avoid-row"><strong>{{ a.game }}</strong><span class="small">{{ a.why }}</span></a>
+            {% endfor %}
+        </section>
+        {% endif %}
+        {% if board.leaning %}
+        <div class="ob-care">
+            <span class="ob-k ob-gold">Read with care</span>
+            <p><strong>{{ board.dogs }} of {{ board.leaning }} edges point at the underdog.</strong> None of these three signals has a proven record against the NFL spread, so rank these games against each other rather than betting all of them. Your actual picks stay on the game pages.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if board.glance %}
+<div class="ob-glance">
+    {% for gl in board.glance %}
+    <div class="card ob-glance-card">
+        <span class="ob-k">{{ gl.label }}</span>
+        <span class="ob-glance-v{{ ' mono' if gl.ledger }}">{% if gl.ledger %}{{ gl.game.split(' · ')[0] }} · <span style="color:{{ 'var(--win)' if gl.roi >= 0 else 'var(--loss)' }};">{{ gl.game.split(' · ')[1] }}</span>{% else %}{{ gl.game }}{% endif %}</span>
+        <span class="small">{{ gl.sub }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="ob-controls">
+    <div class="ob-verdicts" role="group" aria-label="Verdict" id="ob-verdicts">
+        {% for v, label, cls in [('all', 'All games', 'all'), ('TARGET', 'Target', 'target'), ('LEAN', 'Lean', 'lean'), ('WATCH', 'Watch', 'watch'), ('STAY AWAY', 'Stay away', 'avoid')] %}
+        <button type="button" data-v="{{ v }}" aria-pressed="{{ 'true' if v == 'all' else 'false' }}" class="{{ 'on' if v == 'all' }}"><i class="ob-dot ob-v-{{ cls }}"></i>{{ label }} <span class="mono">{{ board.games | length if v == 'all' else board.games | selectattr('verdict', 'equalto', v) | list | length }}</span></button>
+        {% endfor %}
+    </div>
+    <div class="gy-seg" role="group" aria-label="Sort" id="ob-sort">
+        <button type="button" data-sort="edge" aria-pressed="true" class="on">Biggest edge</button>
+        <button type="button" data-sort="verdict" aria-pressed="false">By verdict</button>
+        <button type="button" data-sort="time" aria-pressed="false">Kickoff</button>
+    </div>
+</div>
+
+<p class="ob-legend small"><span class="ob-legend-text">Each bar starts at the <strong>market spread</strong> and points to the side that signal says is underpriced. Longer means a bigger gap.</span>
+    <span><i class="ob-sw model"></i>Model</span><span><i class="ob-sw sim"></i>Simulator</span><span><i class="ob-sw form"></i>Point diff</span></p>
+
+{% set vrank = {'TARGET': 0, 'LEAN': 1, 'WATCH': 2, 'STAY AWAY': 3} %}
+<section class="ob-board" aria-label="Games" id="ob-board">
+{% for g in board.games %}
+{% set vcls = {'TARGET': 'target', 'LEAN': 'lean', 'WATCH': 'watch', 'STAY AWAY': 'avoid'}.get(g.verdict, 'none') %}
+<article class="card ob-game ob-v-{{ vcls }}" id="{{ g.id }}" data-verdict="{{ g.verdict or '' }}" data-edge="{{ (g.comp | abs) if g.comp is defined else 0 }}" data-vrank="{{ vrank.get(g.verdict, 4) }}" data-kick="{{ loop.index0 }}"
+         aria-label="{{ g.away }} at {{ g.home }}{% if g.verdict %}: {{ g.verdict }} {{ g.side_label }}{% endif %}">
+    <div class="ob-row">
+        <div class="ob-teams">
+            <div class="ob-k ob-teams-top"><span>{{ g.time }}{% if g.status == 'Live' %} · <span class="ob-live">LIVE</span>{% elif g.status == 'Final' %} · FINAL{% endif %}</span><span>{{ g.move }}</span></div>
+            {% for t in g.teams %}
+            {% set mine = g.verdict in ('TARGET', 'LEAN', 'WATCH') and g.side_team == t.abbr %}
+            <div class="ob-team">
+                <span class="ob-abbr{{ ' mine' if mine }}">{{ '@' if loop.index == 2 }}{{ t.abbr }}</span>
+                <span class="ob-team-mid">
+                    <span>{{ t.record }} <span class="muted">· {{ t.split }}</span></span>
+                    <span class="small">{% if t.diff_pg is not none %}<span class="mono" style="color:{{ 'var(--win)' if t.diff_pg >= 0 else 'var(--loss)' }};">{{ '+' if t.diff_pg >= 0 }}{{ t.diff_pg }}</span> pts/game{% else %}pt diff unavailable{% endif %}</span>
+                </span>
+                <span class="ob-team-r"><span class="mono">{{ t.line }}</span>{% if t.sim is not none %}<span class="small">sim <span class="mono">{{ t.sim }}</span></span>{% endif %}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="ob-signals">
+            {% if g.verdict %}
+            <div class="ob-k ob-sig-head"><span>← {{ g.away }} value</span><span class="ob-mkt">Market {{ g.mkt_label }}</span><span>{{ g.home }} value →</span></div>
+            {{ edge_bar('Model', g.edges.model, 'model') }}
+            {{ edge_bar('Simulator', g.edges.sim, 'sim') }}
+            {{ edge_bar('Point diff', g.edges.form, 'form') }}
+            {% else %}
+            <p class="small">No market spread yet, so there's nothing to read against.</p>
+            {% endif %}
+            <div class="ob-wp small">
+                {% if g.wp.market is not none %}<span>Win %: market <span class="mono">{{ g.wp.market }}%</span></span>{% endif %}
+                {% if g.wp.model is not none %}<span>model <span class="mono">{{ g.wp.model }}%</span></span>{% endif %}
+                {% if g.wp.sim is not none %}<span>sim <span class="mono">{{ g.wp.sim }}%</span></span>{% endif %}
+                <span class="muted">({{ g.home }})</span>
+            </div>
+        </div>
+
+        <div class="ob-verdict">
+            {% if g.verdict %}
+            <span class="ob-badge">{{ g.verdict }}</span>
+            <span class="ob-side-label">{% if g.verdict == 'STAY AWAY' %}No side{% elif g.verdict == 'WATCH' %}{{ g.side_label }}?{% else %}{{ g.side_label }}{% endif %}</span>
+            <span class="small"><span class="ob-dots">{{ '●' * g.agree }}{{ '○' * (3 - g.agree) }}</span> {{ g.agree }} of {{ g.n_signals }} agree{% if g.oppose %} · {{ g.oppose }} against{% endif %} · {{ '%.1f' % (g.comp | abs) }} pts</span>
+            {% endif %}
+            {% if g.sim_score %}<span class="small">Sim <span class="mono ob-strong">{{ g.sim_score }}</span> · total <span class="mono ob-strong">{{ g.total }}</span> {% if g.env in ('SHOOTOUT', 'GRINDER') %}<span class="ob-env {{ g.env | lower }}">{{ g.env }}</span>{% endif %}</span>{% endif %}
+            <button type="button" class="gy-btn ob-toggle" aria-expanded="false" aria-controls="{{ g.id }}-more">Matchup details ▾</button>
+        </div>
+    </div>
+
+    <div class="ob-fx">
+        {% for x in g.fx %}
+        <div class="ob-fx-item">
+            <span class="ob-fx-label">{{ x.label }}</span>
+            {% for c in x.cells %}{{ chip(c) }}{% endfor %}
+            {% if x.vol %}<span class="small">{{ x.vol.pass_att_pg | round | int }} pass · {{ x.vol.rush_att_pg | round | int }} rush /g</span>{% endif %}
+        </div>
+        {% endfor %}
+        {% if g.script %}<span class="ob-script"><span class="ob-k ob-gold">Script{% if g.pace %} · {{ g.pace }}{% endif %}</span> {{ g.script }}</span>
+        {% elif g.pace %}<span class="ob-script"><span class="ob-k ob-gold">Pace · {{ g.pace }}</span></span>{% endif %}
+    </div>
+
+    <div class="ob-more" id="{{ g.id }}-more" hidden>
+        <div class="ob-sides">
+            {% for sd in g.sides %}
+            <div class="ob-sideblock">
+                <div class="ob-k ob-sideblock-h"><span>{{ sd.team }} players · sim points</span><span class="mono">floor · median · ceiling</span></div>
+                {% for p in sd.players %}
+                {% set lo = [0, [100, (p.floor + 5) / 50 * 100] | min] | max %}
+                {% set hi = [0, [100, (p.ceil + 5) / 50 * 100] | min] | max %}
+                {% set md = [0, [100, (p.med + 5) / 50 * 100] | min] | max %}
+                <div class="ob-prow{{ ' out' if p.out }}">
+                    <span class="ob-ppos">{{ p.pos }}</span>
+                    <span class="ob-pname">{{ p.name }}{% if p.out %} <span class="ob-flag out">OUT?</span>{% endif %}{% if p.boom %} <span class="ob-flag boom">CEILING 25+</span>{% endif %}{% if not p.has_sim %} <span class="ob-flag">NO SIM</span>{% endif %} {{ mg(p) }}</span>
+                    <span class="ob-range" aria-hidden="true"><i style="left:{{ lo }}%;width:{{ [1, hi - lo] | max }}%;"></i><b style="left:{{ md }}%;"></b></span>
+                    <span class="mono ob-r">{{ p.med }}</span>
+                    <span class="mono ob-r muted">{{ p.ceil }}</span>
+                </div>
+                {% else %}
+                <p class="small">No players in this week's pool for {{ sd.team }}.</p>
+                {% endfor %}
+                {% if sd.rush %}
+                <div class="ob-rush"><span class="ob-k ob-violet">Pass rush</span>{% for r in sd.rush %} <span>{{ r.name }} <span class="mono">{{ r.sacks }}</span> sacks · <span class="mono">{{ r.hits }}</span> QB hits</span>{% endfor %}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="ob-more-grid">
+            <div>
+                <div class="ob-k">Team stats</div>
+                {% set a, h = g.teams[0], g.teams[1] %}
+                {% set va, vh = g.vol.away, g.vol.home %}
+                <div class="ob-ts"><span class="mono">{{ a.record }}</span><span>Record</span><span class="mono">{{ h.record }}</span></div>
+                {% if a.diff_pg is not none and h.diff_pg is not none %}
+                <div class="ob-ts"><span class="mono{{ ' better' if a.diff_pg > h.diff_pg }}">{{ '+' if a.diff_pg >= 0 }}{{ a.diff_pg }}</span><span>Pt diff / game</span><span class="mono{{ ' better' if h.diff_pg > a.diff_pg }}">{{ '+' if h.diff_pg >= 0 }}{{ h.diff_pg }}</span></div>
+                {% endif %}
+                <div class="ob-ts"><span class="mono">{{ a.split.split(' ')[0] }}</span><span>Road · home record</span><span class="mono">{{ h.split.split(' ')[0] }}</span></div>
+                {% if va and vh %}
+                {% for k, label in [('pass_att_pg', 'Pass att / g (last 5)'), ('pass_yds_pg', 'Pass yds / g'), ('rush_att_pg', 'Rush att / g'), ('rush_yds_pg', 'Rush yds / g')] %}
+                <div class="ob-ts"><span class="mono{{ ' better' if va[k] > vh[k] }}">{{ va[k] | round | int }}</span><span>{{ label }}</span><span class="mono{{ ' better' if vh[k] > va[k] }}">{{ vh[k] | round | int }}</span></div>
+                {% endfor %}
+                {% endif %}
+            </div>
+            <div>
+                <div class="ob-k">Why this read</div>
+                <p class="ob-why">{{ g.why }}</p>
+            </div>
+            <div class="ob-links">
+                <a href="{{ g.href }}" class="gy-btn">Game center</a>
+                <a href="{{ url_for('nfl_lineup') }}" class="gy-btn">Players in The Lab</a>
+            </div>
+        </div>
+    </div>
+</article>
+{% endfor %}
+</section>
+
+{% if board.heat %}
+<section class="card ob-panel" aria-labelledby="heat-h">
+    <div class="gy-h2-row">
+        <h2 id="heat-h" class="gy-h2 sm">Fantasy points allowed</h2>
+        <span class="small">How much more (or less) each defense gives up to a position than average</span>
+    </div>
+    <div class="ob-spots">
+        <div class="ob-spotlist smash">
+            <div class="ob-k ob-win">Smash spots</div>
+            {% for s in board.smash %}<div class="ob-spot"><strong>{{ s.team }} {{ s.pos }}</strong><span class="ob-ell">{{ s.player or '—' }}{% if s.med is not none %} ({{ s.med }}){% endif %} <span class="muted">vs {{ s.opp }}</span></span><span class="mono ob-r ob-win">+{{ s.pct }}%</span></div>{% endfor %}
+        </div>
+        <div class="ob-spotlist wall">
+            <div class="ob-k ob-loss">Brick walls</div>
+            {% for s in board.walls %}<div class="ob-spot"><strong>{{ s.team }} {{ s.pos }}</strong><span class="ob-ell">{{ s.player or '—' }}{% if s.med is not none %} ({{ s.med }}){% endif %} <span class="muted">vs {{ s.opp }}</span></span><span class="mono ob-r ob-loss">{{ s.pct }}%</span></div>{% endfor %}
+        </div>
+    </div>
+    <div class="gy-table-wrap">
+        <table class="ob-heat">
+            <thead><tr><th scope="col">Game</th><th scope="col">Offense</th><th scope="col">QB</th><th scope="col">RB</th><th scope="col">WR / TE</th><th scope="col">Pass · rush att/g</th><th scope="col">Yds/g</th></tr></thead>
+            <tbody>
+            {% for h in board.heat %}
+            <tr>
+                <td class="muted nowrap">{{ h.game }}</td>
+                <th scope="row">{{ h.team }} <span class="muted">vs {{ h.opp }} D</span></th>
+                {% for c in h.cells %}<td class="ob-cell ob-{{ c.tone }}"><span class="mono">{{ c.grade }}{% if c.pct is not none %} {{ '+' if c.pct > 0 }}{{ c.pct }}%{% endif %}</span></td>{% endfor %}
+                <td class="mono c">{% if h.vol %}{{ h.vol.pass_att_pg | round | int }} · {{ h.vol.rush_att_pg | round | int }}{% else %}—{% endif %}</td>
+                <td class="mono c muted">{% if h.vol %}{{ h.vol.pass_yds_pg | round | int }} · {{ h.vol.rush_yds_pg | round | int }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="small">Volume is each offense's last 5 games. WR and TE share one pass-catcher grade.</p>
+</section>
+{% endif %}
+
+{% if board.pod | selectattr('rows') | list %}
+<section class="card ob-panel" aria-labelledby="pod-h">
+    <div class="gy-h2-row">
+        <h2 id="pod-h" class="gy-h2 sm">Players of the day</h2>
+        <span class="small">Highest simulated medians on this slate · likely-out players excluded</span>
+    </div>
+    <div class="ob-pod">
+        {% for col in board.pod if col.rows %}
+        <div class="ob-podcol">
+            <div class="ob-k">{{ col.pos }}</div>
+            {% for p in col.rows %}
+            <div class="ob-podrow">
+                <span class="ob-ell"><strong>{{ p.name }}</strong><span class="small">{{ p.team }} vs {{ p.opp }}{% if p.grade %} · {{ mg(p) }}{% endif %}{% if p.game_read %} · <span class="{{ 'ob-win' if p.game_read_tone == 'good' else 'muted' }}">{{ p.game_read }}</span>{% endif %}</span></span>
+                <span class="mono ob-r ob-acc">{{ p.med }}</span>
+                <span class="mono ob-r muted">{{ p.ceil }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    <div class="ob-spots">
+        {% if board.outs %}
+        <div class="ob-spotlist wall">
+            <div class="ob-k ob-loss">The sim says they're not playing</div>
+            {% for o in board.outs %}<div class="ob-outrow"><span><strong>{{ o.name }}</strong> <span class="muted">{{ o.team }} {{ o.pos }}</span></span><span class="mono muted">{{ o.proj }} proj → {{ o.med }} sim</span></div>{% endfor %}
+            <p class="small">Projected for real volume, but the simulator (which reads the current depth chart) barely plays them. Check the injury report before trusting the projection.</p>
+        </div>
+        {% endif %}
+        {% if board.rushers %}
+        <div class="ob-spotlist">
+            <div class="ob-k ob-violet">Pass rushers playing today</div>
+            {% for r in board.rushers %}<div class="ob-rushrow"><span><strong>{{ r.name }}</strong> <span class="muted">{{ r.team }} vs {{ r.opp }}</span></span><span class="mono ob-r">{{ r.sacks }} sk</span><span class="mono ob-r muted">{{ r.hits }} hits</span></div>{% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if board.envs %}
+<section class="card ob-panel" aria-labelledby="env-h">
+    <div class="gy-h2-row">
+        <h2 id="env-h" class="gy-h2 sm">Shootouts &amp; grinders</h2>
+        <span class="small">Simulated combined points · where to stack in fantasy</span>
+    </div>
+    {% for e in board.envs %}
+    <div class="ob-env-row">
+        <a href="#{{ e.id }}" data-open="{{ e.id }}"><strong>{{ e.game }}</strong></a>
+        <span class="ob-env-track"><i class="{{ e.tag | lower }}" style="width:{{ [4, [100, ((e.total - 30) / 25 * 100) | round] | min] | max }}%;"></i></span>
+        <span class="mono ob-r">{{ e.total }}</span>
+        <span class="ob-env {{ e.tag | lower }}">{{ e.tag }}</span>
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+
+<p class="small ob-foot">Market lines are DraftKings via ESPN. Market win % is the de-vigged moneyline. Point-diff line is half the per-game differential gap plus 1.5 for home field, and is left out when the season game log doesn't cover a team's full record. Injury report detail lives on each game page.</p>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var board = document.getElementById('ob-board');
+    if (!board) return;
+    var cards = Array.prototype.slice.call(board.querySelectorAll('.ob-game'));
+    var verdict = 'all', sort = 'edge';
+
+    function render() {
+        var list = cards.slice();
+        if (sort === 'edge') list.sort(function (a, b) { return b.dataset.edge - a.dataset.edge; });
+        else if (sort === 'time') list.sort(function (a, b) { return a.dataset.kick - b.dataset.kick; });
+        else list.sort(function (a, b) { return (a.dataset.vrank - b.dataset.vrank) || (b.dataset.edge - a.dataset.edge); });
+        list.forEach(function (c) {
+            c.hidden = verdict !== 'all' && c.dataset.verdict !== verdict;
+            board.appendChild(c);
+        });
+    }
+    function seg(id, attr, cb) {
+        var el = document.getElementById(id);
+        el.addEventListener('click', function (e) {
+            var b = e.target.closest('button'); if (!b) return;
+            el.querySelectorAll('button').forEach(function (x) { var on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+            cb(b.getAttribute(attr)); render();
+        });
+    }
+    seg('ob-verdicts', 'data-v', function (v) { verdict = v; });
+    seg('ob-sort', 'data-sort', function (v) { sort = v; });
+
+    function setOpen(card, open) {
+        var more = card.querySelector('.ob-more'), btn = card.querySelector('.ob-toggle');
+        more.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.textContent = open ? 'Hide details ▴' : 'Matchup details ▾';
+    }
+    board.addEventListener('click', function (e) {
+        var btn = e.target.closest('.ob-toggle'); if (!btn) return;
+        var card = btn.closest('.ob-game');
+        setOpen(card, card.querySelector('.ob-more').hidden);
+    });
+    document.querySelectorAll('[data-open]').forEach(function (a) {
+        a.addEventListener('click', function () {
+            var card = document.getElementById(a.getAttribute('data-open'));
+            if (card) { card.hidden = false; setOpen(card, true); }
+        });
+    });
+    if (location.hash) {
+        var c = document.getElementById(location.hash.slice(1));
+        if (c && c.classList.contains('ob-game')) setOpen(c, true);
+    }
+    render();
+}());
+</script>
+{% endblock %}

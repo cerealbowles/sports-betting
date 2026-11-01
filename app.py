@@ -171,6 +171,9 @@ class Setting(db.Model):
   alert_prefs_json      = db.Column(db.Text, default='{}')
   favorite_teams_json = db.Column(db.Text, default='{}')  # {"NFL": ["Chicago Bears", ...], ...}
   show_lines = db.Column(db.Boolean, default=True)  # odds chips on game-card summaries (header toggle)
+  # The Lab's matchup adjustment: adj = sim value x (1 + grade pct/100 x this).
+  # 0.4 is the design's starting guess, not a fitted number.
+  matchup_damping = db.Column(db.Float, default=0.4)
 
 class AlertSent(db.Model):
   """One row per Discord alert actually posted, keyed by a sender-chosen
@@ -1036,6 +1039,7 @@ def ensure_column_exists():
     _add('setting',          'show_lines',          'BOOLEAN DEFAULT 1')
     _add('setting',          'discord_channels_json', 'TEXT DEFAULT NULL')
     _add('setting',          'alert_prefs_json',    'TEXT DEFAULT NULL')
+    _add('setting',          'matchup_damping',     'FLOAT DEFAULT 0.4')
     _add('closed_bet',       'cashout_amount',     'FLOAT DEFAULT NULL')
     _add('team_game_stats',  'team_name',          'TEXT DEFAULT NULL')
     _add('team_game_stats',  'opponent_name',      'TEXT DEFAULT NULL')
@@ -4916,7 +4920,16 @@ def stats_page():
   return render_template('stats.html', today_display=today_display, sport=sport,
                          sports=standings_api.SPORTS, season=data['season'], rows=rows,
                          groups=data['groups'], trends=trends, faceoff=faceoff, ledger=ledger,
-                         subnav_sport=sport)
+                         subnav_sport=sport, ouija_targets=_cached_ouija_target_count())
+
+
+def _cached_ouija_target_count():
+  """TARGET count from an already-built default Ouija Board, else None —
+  the Stats page link must never pay for a cold board build."""
+  hit = _matchup_board_cache.get('')
+  if hit and time.time() - hit[0] < _MATCHUP_BOARD_TTL:
+    return len(hit[1]['targets'])
+  return None
 
 
 def _attach_bets(games, bets_by_game):
@@ -5211,6 +5224,37 @@ def search_page():
   return render_template('search.html', q=q, groups=groups, total=len(results))
 
 
+_whispers_latest_cache = {'ts': 0.0, 'data': None}
+
+
+@app.route('/api/whispers/latest')
+def api_whispers_latest():
+  """Newest whisper's timestamp, for the header bell's unread dot (the
+  browser compares it with when it last opened /whispers). Reads the hub
+  cache only if it's already warm — the bell must never be what forces a
+  six-sport rebuild — and memoizes the answer for a minute."""
+  now = time.time()
+  if _whispers_latest_cache['data'] is not None and now - _whispers_latest_cache['ts'] < 60:
+    return jsonify(_whispers_latest_cache['data'])
+  data = {'latest': None, 'count': 0}
+  if _hub_cache['data'] is not None:
+    try:
+      _summaries, unified_picks, _td, all_games_today, _live = _hub_cache['data']
+      items = _build_whispers(_attach_bets(all_games_today, _open_bets_by_game()), unified_picks)
+      # LIVE and MODEL items are stamped "now" on every build, so they'd
+      # keep the dot lit forever — only types carrying a real event time count.
+      stamps = [w['ts'] for w in items if w.get('ts') and w['type'] in ('LINE', 'NEWS', 'INJURY', 'FINAL')]
+      if stamps:
+        latest = max(stamps)
+        if latest.tzinfo is None:
+          latest = latest.replace(tzinfo=timezone.utc)
+        data = {'latest': latest.isoformat(), 'count': len(items)}
+    except Exception:
+      app.logger.exception('whispers latest failed')
+  _whispers_latest_cache.update(ts=now, data=data)
+  return jsonify(data)
+
+
 @app.route('/whispers')
 def whispers_page():
   _summaries, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
@@ -5482,6 +5526,11 @@ def save_settings():
     raw_pct = float(request.form.get('percent_bankroll', s.percent_bankroll * 100))
     s.percent_bankroll = raw_pct / 100.0
   except Exception:
+    pass
+  try:
+    if request.form.get('matchup_damping') not in (None, ''):
+      s.matchup_damping = max(0.0, min(1.0, float(request.form['matchup_damping']) / 100.0))
+  except ValueError:
     pass
   s.discord_webhook_url = request.form.get('discord_webhook_url', '').strip()
   import discord_alerts
@@ -8539,9 +8588,31 @@ def nfl_lineup():
   # this. Never used in a build; shown flagged in the player table.
   for p in pool:
     p['likely_out'] = bool(p.get('game_id')) and p['projection'] >= 12 and p['sim_median'] < 2.5
+
+  # Matchup adjustment (see nfl_fantasy.matchup_factor): every player gets
+  # adj_floor/adj_median/adj_ceiling; builds only use them when ?adj=1.
+  _s = Setting.query.first()
+  damping = _s.matchup_damping if _s and _s.matchup_damping is not None else nfl_fantasy.DEFAULT_MATCHUP_DAMPING
+  use_adj = request.args.get('adj') == '1'
+  if pool:
+    _profile = _nfl_league_defense_profile(season)
+    _abbr_to_id = {v: k for k, v in _nfl_team_abbrev_map().items()}
+    for p in pool:
+      opp_id = _abbr_to_id.get(p.get('opponent'))
+      card = (_nfl_build_matchup_card(_profile, opp_id, p['position'])
+              if opp_id and p['position'] != 'DST' else None)
+      p['mpct'] = round(card['pct']) if card else None
+      p['mgrade'] = card['grade'] if card else None
+      p['mtone'] = card['tone'] if card else 'neutral'
+      k = nfl_fantasy.matchup_factor(p['mpct'], damping)
+      p['adj_floor'] = round(p['sim_floor'] * k, 2)
+      p['adj_median'] = round(p['sim_median'] * k, 2)
+      p['adj_ceiling'] = round(p['sim_ceiling'] * k, 2)
+
   usable = [p for p in pool if not p['likely_out']]
   build_pool = [p for p in usable if p['id'] not in bans]
   lock_ids = [pid for pid in locks if pid not in bans]
+  ladder = {pos: nfl_fantasy.start_sit_ladder(usable, pos) for pos in ('QB', 'RB', 'WR', 'TE')}
 
   def _build(objective, with_locks=True):
     pool_ = build_pool if with_locks else usable
@@ -8565,6 +8636,9 @@ def nfl_lineup():
     ('bal', 'Balanced', 'sim_median', 'Maximizes sim median. The middle-of-the-road build.'),
     ('ceil', 'Ceiling', 'sim_ceiling', "Maximizes every player's sim ceiling (80th percentile). For top-heavy contests."),
   ]
+  if use_adj:
+    build_defs = [(k, l, o.replace('sim_', 'adj_'), d.replace('sim ', 'matchup-adjusted sim ', 1))
+                  for k, l, o, d in build_defs]
   builds = []
   for key, label, objective, desc in build_defs:
     res = _build(objective)
@@ -8657,6 +8731,7 @@ def nfl_lineup():
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
                          pool=pool, usable_count=len(usable), builds=builds, in_balanced=in_balanced,
                          locks=lock_ids, bans=bans, stacks=stacks[:4], recap=recap, target=target,
+                         ladder=ladder, use_adj=use_adj, damping=damping,
                          salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
                          roster_requirements_summary=roster_requirements_summary,
                          methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min,
@@ -9571,6 +9646,340 @@ def nfl_compare():
                          side_a=side_a, side_b=side_b, verdict=verdict,
                          player_names=sorted({p['name'] for p in pool})))
   return _set_last_sport_cookie(resp, 'NFL')
+
+
+# ── The Ouija Board (/stats/matchups) ────────────────────────────────────
+_matchup_board_cache = {}   # day -> (ts, board)
+_MATCHUP_BOARD_TTL = 300
+
+
+def _nfl_line_move_text(g):
+  """'Line ▲ toward DET' from the opening vs current home moneyline, or ''."""
+  odds = g.get('odds') or {}
+  opened, now = odds.get('opening_home'), odds.get('home_best')
+  if opened is None or now is None or opened == now:
+    return ''
+  imp = lambda a: (-a / (-a + 100)) if a < 0 else (100 / (a + 100))
+  home, away = g['home']['abbr'], g['away']['abbr']
+  return f'Line ▲ toward {home}' if imp(now) > imp(opened) else f'Line ▲ toward {away}'
+
+
+def _build_nfl_matchup_board(day=None):
+  """Everything /stats/matchups shows for one NFL slate day, as plain
+  JSON-able data. See matchup_board.py for the three signals and the
+  verdict rules. `day` is 'YYYY-MM-DD' within the current week; defaults to
+  today if today has games, else the next day that does."""
+  import matchup_board as mb
+
+  week_ctx = nfl_api.build_week_schedule_context()
+  _stamp_confidence_blend(week_ctx['days'], 'NFL')
+  season, wk = week_ctx['season'], week_ctx['week']
+  days = [d for d in week_ctx['days'] if d['games']]
+  today = datetime.now(_ET).strftime('%Y-%m-%d')
+  if day not in {d['date'] for d in days}:
+    future = [d for d in days if d['date'] >= today]
+    day = (future[0] if future else (days[-1] if days else {'date': today}))['date']
+
+  sims = nfl_stats_db.get_sim_game_summary_db(season, wk)
+  profile = _nfl_league_defense_profile(season)
+
+  # Point differential per game, straight from the season game log. Only
+  # trusted when the log holds every game the team's record says it has
+  # played: ESPN week fetches can fail quietly, and a two-game sample would
+  # make the "form" signal swing wildly (seen locally: DEN +18.5).
+  diff_pg = {}
+  try:
+    pts = defaultdict(lambda: [0, 0, 0])
+    for lg in nfl_api._get_season_game_log(season):
+      for name, f, ag in ((lg['home_name'], lg['home_score'], lg['away_score']),
+                          (lg['away_name'], lg['away_score'], lg['home_score'])):
+        pts[name][0] += f
+        pts[name][1] += ag
+        pts[name][2] += 1
+    for d in week_ctx['days']:
+      for g in d['games']:
+        for t in (g['home'], g['away']):
+          played = (t.get('wins') or 0) + (t.get('losses') or 0)
+          f, ag, n = pts.get(t.get('name'), (0, 0, 0))
+          if n and n >= played:
+            diff_pg[t.get('name')] = (f - ag) / n
+  except Exception:
+    app.logger.exception('season game log failed')
+  offense_cache = {}
+
+  def offense(team_id):
+    if team_id not in offense_cache:
+      offense_cache[team_id] = _nfl_team_offense_snapshot(team_id) if team_id else None
+    return offense_cache[team_id]
+
+  def grades(off_abbr, def_id):
+    out = []
+    for pos, label in (('QB', 'QB'), ('RB', 'RB'), ('WR', 'WR/TE')):
+      card = _nfl_build_matchup_card(profile, def_id, pos) if def_id else None
+      pct = round(card['pct']) if card else None
+      out.append({'pos': label, 'grade': card['grade'] if card else '—', 'pct': pct,
+                  'tone': mb.grade_style(pct)})
+    return out
+
+  # Player sim distributions for the whole week (same pipeline as the Lab).
+  light = nfl_api.build_week_games_light(wk)
+  pool = nfl_fantasy.build_player_pool(light['games']) if light['games'] else []
+  if pool:
+    nfl_fantasy.attach_sim_data(pool, season, wk)
+  for p in pool:
+    p['likely_out'] = bool(p.get('game_id')) and p['projection'] >= 12 and p['sim_median'] < 2.5
+  players_by_team = defaultdict(list)
+  for p in pool:
+    if p['position'] != 'DST' and p.get('team'):
+      players_by_team[p.get('team')].append(p)
+
+  rushers_by_team = defaultdict(list)
+  try:
+    abbrev = _nfl_team_abbrev_map()
+    for d in nfl_stats_db.get_defender_season_stats_db(season):
+      if d.get('sacks') or d.get('qb_hits'):
+        rushers_by_team[abbrev.get(str(d['team_id']), abbrev.get(d['team_id']))].append(d)
+    for t in rushers_by_team:
+      rushers_by_team[t].sort(key=lambda d: (d['sacks'], d['qb_hits']), reverse=True)
+  except Exception:
+    app.logger.exception('defender stats failed')
+
+  def player_row(p, opp_def_id):
+    card = _nfl_build_matchup_card(profile, opp_def_id, p['position']) if opp_def_id else None
+    pct = round(card['pct']) if card else None
+    return {'id': p['id'], 'name': p['name'], 'pos': p['position'], 'team': p.get('team'),
+            'proj': round(p['projection'], 1), 'floor': round(p['sim_floor'], 1),
+            'med': round(p['sim_median'], 1), 'ceil': round(p['sim_ceiling'], 1),
+            'out': p['likely_out'], 'boom': (not p['likely_out']) and p['sim_ceiling'] >= 25,
+            'has_sim': bool(p.get('game_id')),
+            'grade': card['grade'] if card else None, 'pct': pct, 'tone': mb.grade_style(pct)}
+
+  games_out = []
+  for d in week_ctx['days']:
+    for g in d['games']:
+      home, away = g['home'], g['away']
+      h, a = home['abbr'], away['abbr']
+      odds = g.get('odds') or {}
+      mkt_h = odds.get('home_spread')
+      model = g.get('model') or {}
+      model_hp = model.get('final_home_prob', model.get('home_prob'))
+      margin = spread_model.best_margin('NFL', model.get('factors'), model_hp) if model_hp is not None else None
+      model_h = mb.spread_from_margin(margin)
+      sim = sims.get(g['game_id'])
+      sim_h = sim['home_avg_score'] if sim else None
+      sim_a = sim['away_avg_score'] if sim else None
+      diff = lambda t: diff_pg.get(t.get('name'))
+      read = mb.read_game(mkt_h, model_h, sim_h, sim_a, diff(home), diff(away))
+      vol_a, vol_h = offense(away.get('id')), offense(home.get('id'))
+      script = mb.script_read(a, h, vol_a, vol_h, sim_a, sim_h)
+      move = _nfl_line_move_text(g)
+      total = round(sim_h + sim_a) if sim else None
+
+      def team_side(t, diff_pg, line, sim_pts):
+        split = f"{t.get('split_w', 0)}–{t.get('split_l', 0)} {(t.get('split_label') or '').lower()}".strip()
+        return {'abbr': t['abbr'], 'id': t.get('id'), 'logo': t.get('logo_url'),
+                'record': f"{t.get('wins', 0)}–{t.get('losses', 0)}", 'split': split,
+                'diff_pg': None if diff_pg is None else round(diff_pg, 1),
+                'line': mb.fmt_line(line), 'sim': None if sim_pts is None else round(sim_pts)}
+
+      def vol(v):
+        return None if not v else {k: round(v[k], 1) for k in ('pass_att_pg', 'pass_yds_pg', 'rush_att_pg', 'rush_yds_pg')}
+
+      sides = []
+      for t, opp in ((away, home), (home, away)):
+        ps = sorted(players_by_team.get(t['abbr'], []), key=lambda p: p['sim_median'], reverse=True)[:7]
+        sides.append({'team': t['abbr'], 'players': [player_row(p, opp.get('id')) for p in ps],
+                      'rush': [{'name': r['player_name'], 'sacks': r['sacks'], 'hits': r['qb_hits']}
+                               for r in rushers_by_team.get(t['abbr'], [])[:2]]})
+
+      try:
+        kick = datetime.fromisoformat(g['game_time_utc'].replace('Z', '+00:00')).astimezone(_ET)
+        kick_label = kick.strftime('%-I:%M %p')
+      except (ValueError, AttributeError):
+        kick, kick_label = None, ''
+      entry = {
+        'id': f'{a}-{h}', 'game_id': g['game_id'], 'day': d['date'], 'kick': kick.isoformat() if kick else None,
+        'time': kick_label, 'status': g.get('status'), 'away': a, 'home': h,
+        'href': url_for('nfl_game_detail_page', game_id=g['game_id']),
+        'teams': [team_side(away, diff(away), None if mkt_h is None else -mkt_h, sim_a),
+                  team_side(home, diff(home), mkt_h, sim_h)],
+        'mkt_h': mkt_h, 'mkt_label': f'{h} {mb.fmt_line(mkt_h)}' if mkt_h is not None else None,
+        'move': move,
+        'wp': {'market': round(odds['home_implied'] * 100) if odds.get('home_implied') else None,
+               'model': round(model_hp * 100) if model_hp is not None else None,
+               'sim': round(sim['home_win_pct']) if sim else None},
+        'sim_score': f'{a} {sim_a:.0f}–{sim_h:.0f} {h}' if sim else None,
+        'total': total, 'env': mb.env_tag(total),
+        'fx': [{'label': f'{a} O vs {h} D', 'cells': grades(a, home.get('id')), 'vol': vol(vol_a)},
+               {'label': f'{h} O vs {a} D', 'cells': grades(h, away.get('id')), 'vol': vol(vol_h)}],
+        'pace': script['pace'], 'script': script['text'],
+        'sides': sides, 'vol': {'away': vol(vol_a), 'home': vol(vol_h)},
+      }
+      if read:
+        side_team = h if read['side'] == 'home' else a
+        entry.update({
+          'verdict': read['verdict'], 'comp': round(read['comp'], 2), 'agree': read['agree'],
+          'oppose': read['oppose'], 'n_signals': read['n_signals'], 'side_team': side_team,
+          'side_label': f"{side_team} {mb.fmt_line(read['side_line'])}", 'is_dog': read['is_dog'],
+          'edges': {k: None if v is None else round(v, 2) for k, v in read['edges'].items()},
+          'why': mb.why_text(h, a, read, move),
+        })
+      else:
+        entry.update({'verdict': None, 'why': 'No market spread yet, so there is nothing to read against.'})
+      games_out.append(entry)
+
+  day_games = [g for g in games_out if g['day'] == day]
+  board_ids = {g['id'] for g in day_games}
+
+  # Fantasy points allowed: one row per offense on the day's slate.
+  heat, spots = [], []
+  for g in day_games:
+    for i, fx in enumerate(g['fx']):
+      team = g['away'] if i == 0 else g['home']
+      opp = g['home'] if i == 0 else g['away']
+      v = g['vol']['away' if i == 0 else 'home']
+      heat.append({'game': f"{g['away']} @ {g['home']}" if i == 0 else '', 'team': team, 'opp': opp,
+                   'cells': fx['cells'], 'vol': v})
+      roster = players_by_team.get(team, [])
+      for c in fx['cells']:
+        if c['pct'] is None:
+          continue
+        want = ('WR', 'TE') if c['pos'] == 'WR/TE' else (c['pos'],)
+        cands = sorted((p for p in roster if p['position'] in want and not p['likely_out']),
+                       key=lambda p: p['sim_median'], reverse=True)
+        spots.append({'team': team, 'pos': c['pos'], 'opp': opp, 'pct': c['pct'],
+                      'player': cands[0]['name'] if cands else None,
+                      'med': round(cands[0]['sim_median'], 1) if cands else None})
+  smash = sorted(spots, key=lambda s: s['pct'], reverse=True)[:8]
+  walls = sorted(spots, key=lambda s: s['pct'])[:8]
+
+  # Players of the day + likely-out list, from the day's games only.
+  by_id = {g['id']: g for g in day_games}
+  team_game = {}
+  for g in day_games:
+    team_game[g['away']] = g
+    team_game[g['home']] = g
+  day_players = [p for t, ps in players_by_team.items() if t in team_game for p in ps]
+  pod = []
+  for pos, label in (('QB', 'Quarterbacks'), ('RB', 'Running backs'), ('WR', 'Receivers'), ('TE', 'Tight ends')):
+    rows = []
+    for p in sorted((p for p in day_players if p['position'] == pos and not p['likely_out']),
+                    key=lambda p: p['sim_median'], reverse=True)[:5]:
+      g = team_game[p['team']]
+      opp = g['home'] if g['away'] == p['team'] else g['away']
+      opp_id = next((t['id'] for t in g['teams'] if t['abbr'] == opp), None)
+      row = player_row(p, opp_id)
+      row['opp'] = opp
+      if g.get('verdict') in ('TARGET', 'LEAN'):
+        row['game_read'] = 'on our side' if g['side_team'] == p['team'] else 'against our side'
+        row['game_read_tone'] = 'good' if g['side_team'] == p['team'] else 'muted'
+      else:
+        row['game_read'] = (g.get('verdict') or '').lower()
+        row['game_read_tone'] = 'muted'
+      rows.append(row)
+    pod.append({'pos': label, 'rows': rows})
+  outs = [{'name': p['name'], 'team': p['team'], 'pos': p['position'],
+           'proj': round(p['projection'], 1), 'med': round(p['sim_median'], 1)}
+          for p in day_players if p['likely_out']]
+  rushers = sorted(({'name': r['player_name'], 'team': t, 'opp': (team_game[t]['home'] if team_game[t]['away'] == t else team_game[t]['away']),
+                     'sacks': r['sacks'], 'hits': r['qb_hits']}
+                    for t in team_game for r in rushers_by_team.get(t, [])[:2]),
+                   key=lambda r: (r['sacks'], r['hits']), reverse=True)[:8]
+
+  envs = sorted((g for g in day_games if g['total'] is not None), key=lambda g: g['total'], reverse=True)
+  read_games = [g for g in day_games if g.get('verdict')]
+  targets = sorted((g for g in read_games if g['verdict'] == 'TARGET'), key=lambda g: abs(g['comp']), reverse=True)
+  avoids = [g for g in read_games if g['verdict'] == 'STAY AWAY']
+  dogs = sum(1 for g in read_games if g['is_dog'] and abs(g['comp']) >= 0.5)
+  leaning = sum(1 for g in read_games if abs(g['comp']) >= 0.5)
+
+  glance = []
+  if read_games:
+    mism = max(read_games, key=lambda g: abs(g['mkt_h']))
+    fav = mism['home'] if mism['mkt_h'] < 0 else mism['away']
+    glance.append({'label': 'Biggest mismatch on paper', 'game': f"{mism['away']} @ {mism['home']}",
+                   'sub': f"{mism['teams'][0]['record']} at {mism['teams'][1]['record']} · {fav} {mb.fmt_line(-abs(mism['mkt_h']))}"})
+    close = min(read_games, key=lambda g: abs(g['mkt_h']))
+    glance.append({'label': 'Tightest line', 'game': f"{close['away']} @ {close['home']}",
+                   'sub': f"{close['mkt_label']} · {close['teams'][0]['record']} at {close['teams'][1]['record']}"})
+  if envs:
+    glance.append({'label': 'Best fantasy environment', 'game': f"{envs[0]['away']} @ {envs[0]['home']}",
+                   'sub': f"Sim total {envs[0]['total']} pts"})
+  nfl_closed = ClosedBet.query.filter(db.func.upper(ClosedBet.sport) == 'NFL').all()
+  if nfl_closed:
+    w = sum(1 for b in nfl_closed if b.outcome == 'win')
+    l = sum(1 for b in nfl_closed if b.outcome == 'loss')
+    staked = sum(b.stake for b in nfl_closed)
+    roi = sum(b.profit for b in nfl_closed) / staked * 100 if staked else 0.0
+    clvs = [b.clv for b in nfl_closed if b.clv is not None]
+    glance.append({'label': 'Your NFL ledger', 'game': f'{w}–{l} · {roi:+.1f}%', 'ledger': True, 'roi': roi,
+                   'sub': 'ROI' + (f' · CLV {sum(clvs) / len(clvs):+.1f}%' if clvs else '')})
+
+  day_tabs = []
+  for d in days:
+    n = len(d['games'])
+    finals = sum(1 for g in d['games'] if g.get('status') == 'Final')
+    try:
+      label = datetime.strptime(d['date'], '%Y-%m-%d').strftime('%a')
+    except ValueError:
+      label = d['date']
+    if d['date'] == today:
+      label += ' · today'
+    day_tabs.append({'date': d['date'], 'label': label,
+                     'n': f'{n} final' if finals == n else str(n)})
+
+  kicks = sorted(g['kick'] for g in day_games if g['kick'])
+  span = ''
+  if kicks:
+    k0, k1 = datetime.fromisoformat(kicks[0]), datetime.fromisoformat(kicks[-1])
+    span = k0.strftime('%-I:%M') + ('' if k0 == k1 else '–' + k1.strftime('%-I:%M %p'))
+  try:
+    day_title = datetime.strptime(day, '%Y-%m-%d').strftime('%A, %B %-d').upper()
+  except ValueError:
+    day_title = day
+
+  return {
+    'sport': 'NFL', 'season': season, 'week': wk, 'day': day, 'day_title': day_title,
+    'span': span, 'days': day_tabs, 'games': day_games,
+    'targets': [{'id': g['id'], 'game': f"{g['away']} @ {g['home']}", 'time': g['time'],
+                 'side': g['side_label'], 'edge': round(abs(g['comp']), 1)} for g in targets],
+    'avoids': [{'id': g['id'], 'game': f"{g['away']} @ {g['home']}",
+                'why': 'Model → ' + (g['home'] if (g['edges']['model'] or 0) > 0 else g['away'])
+                       + ', sim → ' + (g['home'] if (g['edges']['sim'] or 0) > 0 else g['away'])}
+               for g in avoids],
+    'dogs': dogs, 'leaning': leaning, 'glance': glance,
+    'heat': heat, 'smash': smash, 'walls': walls, 'pod': pod, 'outs': outs, 'rushers': rushers,
+    'envs': [{'id': g['id'], 'game': f"{g['away']} @ {g['home']}", 'total': g['total'], 'tag': g['env']} for g in envs],
+    'sims_missing': sum(1 for g in day_games if g['total'] is None),
+  }
+
+
+def _matchup_board(day):
+  key = day or ''
+  hit = _matchup_board_cache.get(key)
+  if hit and time.time() - hit[0] < _MATCHUP_BOARD_TTL:
+    return hit[1]
+  board = _build_nfl_matchup_board(day)
+  _matchup_board_cache[key] = (time.time(), board)
+  return board
+
+
+@app.route('/stats/matchups')
+def matchups_page():
+  """The Ouija Board — every game on one NFL slate day read three ways
+  (betting model, game sim, point differential) against the market's home
+  spread. NFL only for now: it's the one sport with a daily game sim and
+  defense-vs-position grades. Context, not picks."""
+  board = _matchup_board(request.args.get('day'))
+  resp = make_response(render_template('matchups.html', board=board, subnav_sport='NFL'))
+  return _set_last_sport_cookie(resp, 'NFL')
+
+
+@app.route('/api/stats/matchups')
+def api_matchups():
+  """Same data as /stats/matchups, as JSON (grades, last-5 volume, sims)."""
+  return jsonify(_matchup_board(request.args.get('day')))
+
 
 @app.route('/cfb')
 def cfb_schedule():
