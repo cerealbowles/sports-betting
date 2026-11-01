@@ -161,6 +161,11 @@
 .gdp .gdp-cols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
 .gdp .gdp-main { flex:999 1 560px; min-width:0; }
 .gdp .gdp-rail { flex:1 1 320px; min-width:0; }
+.gdp .gdp-notes { list-style:none; margin:0; padding:0; }
+.gdp .gdp-note { background:var(--gdp-surface2); border-left:3px solid #3A3F58; border-radius:8px; padding:9px 12px; margin-bottom:8px; font-size:13px; line-height:1.45; }
+.gdp .gdp-note.fav-away { border-left-color:#6E9BFF; }
+.gdp .gdp-note.fav-home { border-left-color:#FF8A3D; }
+.gdp .gdp-note.sample { background:none; border-left-color:transparent; color:var(--gdp-dim); font-size:11px; padding:2px 12px; }
 .gdp .gdp-unit-row { display:grid; grid-template-columns:1fr 90px 1fr; align-items:center; gap:10px; background:var(--gdp-surface2); border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13px; }
 .gdp .gdp-unit-row .edge { text-align:center; font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:#23263A; color:var(--gdp-muted); }
 .gdp .gdp-stat-row { display:grid; grid-template-columns:50px 1fr 110px 1fr 50px; align-items:center; gap:8px; margin-bottom:8px; font-size:13px; }
@@ -418,6 +423,24 @@
         </div>
         <div class="gdp-lm-chart-wrap"><canvas id="lineChart" role="img" aria-label="DraftKings line movement for {{ detail.teams.away.abbr }} at {{ detail.teams.home.abbr }}"></canvas></div>
         <div id="lmModelNote" class="gdp-lm-model-note" hidden></div>
+      </div>
+      {% endif %}
+
+      {# ── Matchup notes (rule-based commentary; context, not picks) ──── #}
+      {% if detail.notes %}
+      <div data-gtab="matchup" class="gdp-card">
+        <div class="gdp-section-head"><span>MATCHUP NOTES</span><span>Auto-generated · context, not picks</span></div>
+        <ul class="gdp-notes">
+        {% for n in detail.notes %}
+          {# Border = whose favor the note cuts toward (away blue / home orange); neutral grey otherwise. #}
+          {% set _fav = none %}
+          {% if n.team and n.tone != 'neutral' %}
+            {% set _is_away = n.team == detail.teams.away.abbr %}
+            {% set _fav = ('away' if _is_away else 'home') if n.tone == 'good' else ('home' if _is_away else 'away') %}
+          {% endif %}
+          <li class="gdp-note{% if _fav %} fav-{{ _fav }}{% endif %}{% if n.kind == 'sample' %} sample{% endif %}">{{ n.text }}</li>
+        {% endfor %}
+        </ul>
       </div>
       {% endif %}
 

@@ -24,6 +24,7 @@ from datetime import datetime
 import game_math as gm
 import game_detail_common as gdc
 import nfl_api
+import nfl_matchup_notes
 import nfl_stats_db
 import spread_model
 import team_venues
@@ -102,6 +103,10 @@ def _league_rank_table(season, game_date_et):
             opp_rush_att = sum(g.get('rush_att', 0) for g in allowed_games)
             opp_rush_yds = sum(g.get('rush_yds', 0) for g in allowed_games)
             giveaways = sum(g.get('giveaways', 0) for g in off_games)
+            n_off = len(off_games)
+            n_allowed = len(allowed_games)
+            explos = nfl_stats_db.get_team_explosiveness_db(team_id, before_date=game_date_et, limit=20)
+            long_allowed = sum(e.get('long_plays_allowed') or 0 for e in explos)
 
             any_a = ((pass_yds + 20 * pass_td - 45 * pass_int) / pass_att) if pass_att else None
             ypc = (rush_yds / rush_att) if rush_att else None
@@ -118,15 +123,27 @@ def _league_rank_table(season, game_date_et):
                 'rush_ypc_allowed':  ypc_allowed,
                 'sacks':             sacks_for or None,
                 'turnover_diff':     turnover_diff,
+                # Volume/per-game context for nfl_matchup_notes.py — not shown
+                # in the Team Comparison table (stat_rows picks its own keys).
+                'games':             n_off,
+                'rush_ypg':          (rush_yds / n_off) if n_off else None,
+                'pass_ypg':          (pass_yds / n_off) if n_off else None,
+                'rush_ypg_allowed':  (opp_rush_yds / n_allowed) if n_allowed else None,
+                'pass_ypg_allowed':  (opp_pass_yds / n_allowed) if n_allowed else None,
+                'sacks_pg':          (sacks_for / len(def_games)) if def_games else None,
+                'long_plays_allowed_pg': (long_allowed / len(explos)) if explos else None,
             }
 
         # Rank each stat across every team that has a value for it. Higher
         # is better except *_allowed (lower allowed = better defense).
-        lower_is_better = {'pass_any_a_allowed', 'rush_ypc_allowed'}
+        lower_is_better = {'pass_any_a_allowed', 'rush_ypc_allowed', 'rush_ypg_allowed',
+                           'pass_ypg_allowed', 'long_plays_allowed_pg'}
         n_teams = len(raw)
-        ranked = {tid: {} for tid in raw}
+        ranked = {tid: {'games': (v['games'], None)} for tid, v in raw.items()}
         for stat in ('pass_any_a', 'rush_ypc', 'pass_any_a_allowed',
-                     'rush_ypc_allowed', 'sacks', 'turnover_diff'):
+                     'rush_ypc_allowed', 'sacks', 'turnover_diff',
+                     'rush_ypg', 'pass_ypg', 'rush_ypg_allowed', 'pass_ypg_allowed',
+                     'sacks_pg', 'long_plays_allowed_pg'):
             vals = [(tid, v[stat]) for tid, v in raw.items() if v[stat] is not None]
             reverse = stat not in lower_is_better
             vals.sort(key=lambda x: x[1], reverse=reverse)
@@ -343,6 +360,32 @@ def build_game_detail(game_id):
         'home': _recent_form(season, home['name'], game_date_et),
     }
 
+    # ── matchup notes: rule-based commentary over the same real numbers ────
+    try:
+        kickoff_et_hour = None
+        tz_change = None
+        if g.get('game_time_utc'):
+            from zoneinfo import ZoneInfo
+            kdt = datetime.fromisoformat(g['game_time_utc'].replace('Z', '+00:00'))
+            kickoff_et_hour = kdt.astimezone(ZoneInfo('America/New_York')).hour
+            if away_venue and home_venue:
+                tz_change = team_venues.timezone_change_hours(away['abbr'], home['abbr'], kdt)
+        usage = {}
+        for t in (away, home):
+            try:
+                u = nfl_stats_db.get_team_usage_shares_db(t['id'], before_date=game_date_et,
+                                                          injury_aware=False)
+            except Exception:
+                u = None
+            if u and u.get('qb_id'):
+                usage[t['id']] = u
+        notes = nfl_matchup_notes.build_notes(usage=usage, 
+            away=away, home=home, ranks=ranks, n_teams=rank_table['n_teams'],
+            weather=g.get('weather'), tz_change=tz_change, kickoff_et_hour=kickoff_et_hour,
+            recent=recent)
+    except Exception:
+        notes = []
+
     return {
         'game': {
             'id': g['game_id'], 'league': 'NFL', 'kickoff_utc': g['game_time_utc'],
@@ -371,6 +414,7 @@ def build_game_detail(game_id):
         },
         'verdicts': verdicts,
         'matchups': unit_rows,
+        'notes': notes,
         'stats': stat_rows,
         'recent': recent,
         'injuries': {'away': away.get('injuries') or [], 'home': home.get('injuries') or []},

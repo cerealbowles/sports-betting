@@ -1598,7 +1598,7 @@ def _redistribute_shares(shares, unavailable):
     return {pid: v + (v / remaining_total) * out_total for pid, v in remaining.items()}
 
 
-def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
+def get_team_usage_shares_db(team_id, before_date=None, window_games=5, injury_aware=True):
     """Recent offensive usage for one team, derived from NflPlay (not the
     CURRENT-roster-gated nfl_roster_api path build_player_pool() uses) —
     feeds nfl_game_simulator.py's player attribution step, which needs
@@ -1629,7 +1629,11 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
     true backup's own play style would differ — the underlying play
     outcomes still come from the league-wide resampled pool, tilted only
     by team offense/defense grade (see nfl_game_simulator.py's own
-    documented scope)."""
+    documented scope).
+
+    injury_aware=False skips that redistribution and returns the raw
+    recent shares — used by nfl_matchup_notes.py to tell whether an
+    injured player is actually a starter/high-usage player at all."""
     from app import app as flask_app, NflPlay
 
     with flask_app.app_context():
@@ -1667,7 +1671,7 @@ def get_team_usage_shares_db(team_id, before_date=None, window_games=5):
     rush_shares = {pid: c / rush_total for pid, c in rush_counts.items()} if rush_total else {}
     rec_shares = {pid: c / rec_total for pid, c in rec_counts.items()} if rec_total else {}
 
-    unavailable = get_unavailable_player_ids(team_id, before_date)
+    unavailable = get_unavailable_player_ids(team_id, before_date) if injury_aware else None
     if unavailable:
         rush_shares = _redistribute_shares(rush_shares, unavailable)
         rec_shares = _redistribute_shares(rec_shares, unavailable)
