@@ -1,0 +1,89 @@
+{# Game-state cells for recommendation rows. `live` is the dict built by
+   app._rec_live(); `outcome` is the graded result (True/False/None), which
+   wins over the score-derived cover once a game is Final.
+
+   rec_score   — start time (Preview) / "● Q3 · 5:42  17–14" (Live) /
+                 "Final 24–17" (Final). Scores are shown away–home, matching
+                 the "AWY @ HOME" matchup text beside it.
+   rec_chip    — Winning/Losing/Tied while Live, W/L/Push once Final.
+
+   Both carry data-rec-gk so _schedule_live_poll.html can repaint them in
+   place via recApplyLive() below (same render logic in JS). #}
+
+{% macro _attrs(live) -%}
+data-rec-gk="{{ live.game_key }}" data-rec-side="{{ live.side }}" data-rec-line="{{ live.line if live.line is not none else '' }}"
+{%- endmacro %}
+
+{% macro rec_score(live, game_time_utc) -%}
+<span class="rec-score" {{ _attrs(live) }}>
+  {%- if live.status == 'Live' -%}
+    <span class="status-live">● {{ live.clock or 'Live' }}</span>{% if live.away_score is not none %} <span class="mono rec-score-num">{{ live.away_score }}–{{ live.home_score }}</span>{% endif %}
+  {%- elif live.status == 'Final' -%}
+    <span class="status-final">Final</span>{% if live.away_score is not none %} <span class="mono rec-score-num">{{ live.away_score }}–{{ live.home_score }}</span>{% endif %}
+  {%- elif game_time_utc -%}
+    <span class="game-time" data-utc="{{ game_time_utc }}">—</span>
+  {%- endif -%}
+</span>
+{%- endmacro %}
+
+{% macro rec_chip(live, outcome) -%}
+{%- set c = live.cover -%}
+{%- if live.status == 'Final' and outcome is not none -%}{% set c = 'win' if outcome else 'loss' %}{%- endif -%}
+<span class="rec-chip" {{ _attrs(live) }} data-rec-graded="{{ '' if outcome is none else ('1' if outcome else '0') }}">
+  {%- if live.status in ('Live', 'Final') and c -%}
+    {%- set fin = live.status == 'Final' -%}
+    <span class="kelly-verdict {{ 'edge-pos' if c == 'win' else ('edge-neg' if c == 'loss' else 'edge-neutral') }}"
+          title="{{ 'Graded result for this recommendation' if fin else 'Where the pick stands at the current score' }}">
+      {%- if fin %}{{ 'W' if c == 'win' else ('L' if c == 'loss' else 'Push') }}{% else %}{{ 'Winning' if c == 'win' else ('Losing' if c == 'loss' else 'Tied') }}{% endif -%}
+    </span>
+  {%- elif live.status == 'Live' -%}
+    <span class="kelly-verdict edge-neutral" title="Game in progress — recommendation frozen at the pre-game line">Live</span>
+  {%- endif -%}
+</span>
+{%- endmacro %}
+
+{% macro rec_live_script() %}
+<script>
+/* Repaints .rec-score / .rec-chip cells from a live-scores poll payload
+   ({status, away_score, home_score, live_state}). Mirrors app._rec_live()
+   and the macros above. */
+window.recApplyLive = window.recApplyLive || function (gk, info) {
+  var sel = '[data-rec-gk="' + gk + '"]';
+  var cells = document.querySelectorAll('.rec-score' + sel + ', .rec-chip' + sel);
+  if (!cells.length || !info || info.status === 'Preview') return;
+  var live = info.status === 'Live', fin = info.status === 'Final';
+  var as = (info.away_score === null || info.away_score === '' || info.away_score === undefined) ? NaN : Number(info.away_score);
+  var hs = (info.home_score === null || info.home_score === '' || info.home_score === undefined) ? NaN : Number(info.home_score);
+  var ls = info.live_state || {};
+  var clock = '';
+  if (live) clock = ls.period ? ('Q' + ls.period + (ls.display_clock ? ' · ' + ls.display_clock : '')) : (ls.clock_text || '');
+  var scoreHtml = (!isNaN(as) && !isNaN(hs)) ? ' <span class="mono rec-score-num">' + as + '–' + hs + '</span>' : '';
+  cells.forEach(function (el) {
+    if (el.classList.contains('rec-score')) {
+      el.innerHTML = (live ? '<span class="status-live">● ' + (clock || 'Live') + '</span>'
+                           : '<span class="status-final">Final</span>') + scoreHtml;
+      return;
+    }
+    var side = el.getAttribute('data-rec-side');
+    var lineAttr = el.getAttribute('data-rec-line');
+    var line = lineAttr === '' ? NaN : parseFloat(lineAttr);
+    var graded = el.getAttribute('data-rec-graded');
+    var c = null;
+    if (!isNaN(as) && !isNaN(hs) && !isNaN(line) && (side === 'home' || side === 'away')) {
+      var d = (side === 'home' ? hs - as : as - hs) + line;
+      c = d > 0 ? 'win' : (d < 0 ? 'loss' : 'push');
+    }
+    if (fin && graded) c = graded === '1' ? 'win' : 'loss';
+    if (!c) {
+      el.innerHTML = live ? '<span class="kelly-verdict edge-neutral">Live</span>' : '';
+      return;
+    }
+    var cls = c === 'win' ? 'edge-pos' : (c === 'loss' ? 'edge-neg' : 'edge-neutral');
+    var txt = fin ? (c === 'win' ? 'W' : (c === 'loss' ? 'L' : 'Push'))
+                  : (c === 'win' ? 'Winning' : (c === 'loss' ? 'Losing' : 'Tied'));
+    el.innerHTML = '<span class="kelly-verdict ' + cls + '" title="'
+      + (fin ? 'Result at the final score' : 'Where the pick stands at the current score') + '">' + txt + '</span>';
+  });
+};
+</script>
+{% endmacro %}

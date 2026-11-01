@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rec_status.html" import rec_score, rec_chip, rec_live_script %}
 {% block title %}MLB Today — Dead Money{% endblock %}
 
 {% block head %}
@@ -198,13 +199,8 @@
         {% if not b.sp_confirmed %}<span style="font-size:0.62rem;font-weight:700;color:#f59e0b;margin-left:6px;vertical-align:middle;" title="Both starting pitchers not yet announced">SP TBD</span>{% endif %}
       </td>
       <td style="padding:6px 8px;white-space:nowrap;">
-        {% if b.status == 'Live' %}
-          <span style="color:var(--win);font-weight:700;font-size:0.72rem;">● Live</span>
-        {% elif b.status == 'Final' %}
-          <span style="color:var(--text-muted);font-size:0.72rem;">Final{% if b.outcome %} <span style="font-weight:700;color:{% if b.outcome == 'W' %}var(--win){% else %}var(--loss){% endif %};">{{ b.outcome }}</span>{% endif %}</span>
-        {% elif b.game_time_utc %}
-          <span class="game-time" data-utc="{{ b.game_time_utc }}" style="font-size:0.72rem;color:var(--text-muted);">—</span>
-        {% endif %}
+        <span style="font-size:0.72rem;color:var(--text-muted);">{{ rec_score(b.live, b.game_time_utc) }}</span>
+        {% if b.status in ('Live', 'Final') %} {{ rec_chip(b.live, {'W': True, 'L': False}.get(b.outcome)) }}{% endif %}
       </td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ '+' if b.amer_odds > 0 }}{{ b.amer_odds }}</td>
       <td class="rec-col-hide" style="padding:6px 8px;text-align:right;color:var(--text-muted);">{{ b.mkt_implied }}%</td>
@@ -342,6 +338,7 @@
 {% block scripts %}
 {% include "_open_bets_scripts.html" with context %}
 {% set live_scores_endpoint = url_for('api_mlb_live_scores') %}
+{{ rec_live_script() }}
 {% include "_schedule_live_poll.html" %}
 <script>
 /* ── Click-to-sort by TS ─────────────────────────────── */

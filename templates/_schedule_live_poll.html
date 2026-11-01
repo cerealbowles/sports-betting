@@ -165,7 +165,11 @@
     fetch(ENDPOINT)
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        Object.keys(data).forEach(function (gk) { applyUpdate(gk, data[gk]); });
+        Object.keys(data).forEach(function (gk) {
+          applyUpdate(gk, data[gk]);
+          // Recommendations pane rows (_rec_status.html), if on this page.
+          if (window.recApplyLive) window.recApplyLive(gk, data[gk]);
+        });
       })
       .catch(function () {});
   }

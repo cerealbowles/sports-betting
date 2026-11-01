@@ -4614,6 +4614,8 @@ def _hub_sport_data(sport, icon, href, today_str, live=False):
               'omen_score':    b['omen_score'],
               'score_kind':    b['score_kind'],
               'logo_url':      b['pick_logo'],
+              'live':          b['live'],
+              'outcome':       {'W': True, 'L': False}.get(b['outcome']),
           })
       else:
         if sport == 'NHL':
@@ -4662,6 +4664,8 @@ def _hub_sport_data(sport, icon, href, today_str, live=False):
               'omen_score':    r['omen_score'],
               'score_kind':    r['score_kind'],
               'logo_url':      (g['away'] if r['pick_side'] == 'away' else g['home']).get('logo_url', ''),
+              'live':          r['live'],
+              'outcome':       r['outcome'],
           })
   except Exception:
     games_today, top_picks, all_games = 0, [], []
@@ -6308,6 +6312,7 @@ def _mlb_candidates(schedule):
         'has_open_bet':  bool(game.get('open_bets')),
         'status':        status,
         'outcome':       outcome,
+        'live':          _rec_live(game, 'ml', bet_side, 0.0),
       })
 
   # Unconfirmed-SP games sort below every confirmed-SP game regardless of
@@ -8083,6 +8088,46 @@ def model_performance():
   ))
   return _set_last_sport_cookie(resp, sport)
 
+def _pick_line(market, label):
+  """Spread line off a rec label ("BUF -3.5" -> -3.5); 0 for moneyline.
+  Labels are the only place the frozen spread line survives (GamePrediction
+  stores rec_label, not the number), so it's parsed back out here."""
+  if market != 'spread':
+    return 0.0
+  try:
+    return float(str(label).rsplit(' ', 1)[-1])
+  except (TypeError, ValueError):
+    return None
+
+
+def _rec_live(game, market, side, line):
+  """Current game state for a recommendation row — status, score, clock and
+  whether the pick is winning/losing right now (or won/lost, once Final).
+  Same fields/logic as recLiveHtml() in _rec_status.html so the server
+  render and the live-poll patch agree. `cover` is 'win'/'loss'/'push' or
+  None when there's no score to judge yet."""
+  status = game.get('status', 'Preview')
+  away_s = _int_score((game.get('away') or {}).get('score'))
+  home_s = _int_score((game.get('home') or {}).get('score'))
+  ls = game.get('live_state') or {}
+  clock = ''
+  if status == 'Live':
+    if ls.get('period'):
+      clock = f"Q{ls['period']}" + (f" · {ls['display_clock']}" if ls.get('display_clock') else '')
+    else:
+      clock = ls.get('clock_text') or game.get('live_clock') or game.get('inning_info') or ''
+  cover = None
+  if status in ('Live', 'Final') and away_s is not None and home_s is not None \
+     and side in ('home', 'away') and line is not None:
+    mine, theirs = (home_s, away_s) if side == 'home' else (away_s, home_s)
+    diff = mine + line - theirs
+    cover = 'win' if diff > 0 else ('loss' if diff < 0 else 'push')
+  return {'status': status, 'away_score': away_s, 'home_score': home_s,
+          'clock': clock, 'cover': cover,
+          'game_key': game.get('game_key', ''), 'market': market,
+          'side': side, 'line': line}
+
+
 def _edge_recommendations(days, sport, limit=15):
   """Primary-score-ranked recommendation list for the non-MLB sports (MLB has
   its own full table, filtered separately by _mlb_star_pick since that
@@ -8194,6 +8239,8 @@ def _edge_recommendations(days, sport, limit=15):
           'score_kind':   score_kind,
           'status':       status,
           'outcome':      outcome,
+          'live':         _rec_live(game, pick['market'], pick['side'],
+                                    _pick_line(pick['market'], pick['label'])),
       })
 
   recommended.sort(key=lambda r: -(r['omen_score'] if r['omen_score'] is not None else -1))
