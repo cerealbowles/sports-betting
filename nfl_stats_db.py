@@ -18,8 +18,11 @@ Same lazy `from app import ...` pattern as nba_stats_db.py and every
 *_backfill.py script — avoids a circular import with app.py, which
 imports nfl_api.py (and, transitively, this module) at module level.
 """
+import hashlib
 import json
+import os
 import re
+import threading
 from collections import defaultdict
 
 GAME_TYPE_BY_ESPN_SEASON_TYPE = {1: 'preseason', 2: 'regular', 3: 'postseason'}
@@ -1248,6 +1251,61 @@ def has_injury_snapshot(team_id, date_et):
 
     with flask_app.app_context():
         return InjuryStatus.query.filter_by(sport='NFL', team_id=team_id, date=date_et).first() is not None
+
+
+# ── Final-game box score fingerprints ─────────────────────────────────────────
+# nfl_api._build_game() re-ingests every Final game's box score and play-by-
+# play on each render, and ingest_play_by_play's per-play UPDATEs made that
+# ~0.6s per game (~8s for a full Sunday) even with every cache warm. A
+# fingerprint of exactly what those ingests write lets a render skip them
+# when nothing changed since the last write — any real change (an ESPN stat
+# correction) still differs and re-ingests. Kept next to bets.db, not in
+# memory, so every gunicorn worker (and a restart) shares it.
+_FINGERPRINT_PATH = os.path.join(
+    os.path.dirname(os.environ.get('DB_PATH', '')) or
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance'),
+    'nfl_ingest_fingerprints.json')
+_fingerprint_lock = threading.Lock()
+
+
+def box_score_fingerprint(*parts):
+    """Stable hash of the parsed data a Final game's ingest would write."""
+    blob = json.dumps(parts, sort_keys=True, default=str, separators=(',', ':'))
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
+def _load_fingerprints():
+    try:
+        with open(_FINGERPRINT_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def box_score_unchanged(event_id, fingerprint):
+    """True if `fingerprint` matches the last box-score ingest for this game
+    AND its plays are actually in the DB — the second check keeps a stale
+    fingerprint file (say, next to a freshly restored bets.db) from
+    skipping a game the DB never got."""
+    if _load_fingerprints().get(str(event_id)) != fingerprint:
+        return False
+    from app import app as flask_app, NflPlay
+
+    with flask_app.app_context():
+        return NflPlay.query.filter_by(game_id=event_id).first() is not None
+
+
+def mark_box_score_ingested(event_id, fingerprint):
+    with _fingerprint_lock:
+        fps = _load_fingerprints()
+        fps[str(event_id)] = fingerprint
+        tmp = f'{_FINGERPRINT_PATH}.{os.getpid()}.tmp'
+        try:
+            with open(tmp, 'w') as f:
+                json.dump(fps, f)
+            os.replace(tmp, _FINGERPRINT_PATH)
+        except OSError:
+            pass
 
 
 def get_latest_injury_status(team_id, as_of_date=None):

@@ -10,8 +10,10 @@ import odds_history
 import nfl_model
 import nfl_stats_db
 import nfl_boxscore_api
+import nfl_playbyplay_api
 import nfl_player_model
 import nfl_ensemble_model
+import season_log_store
 
 _ET = ZoneInfo('America/New_York')
 
@@ -182,9 +184,17 @@ def _get_season_game_log(season):
         if now_ts - ts < _TTL['season_log']:
             return data
 
-    games = []
-    for week in range(1, 19):
-        week_data = _cached_get(
+    # A completed season never changes — see season_log_store.py. This is
+    # the path last season's log takes for the early-season blend unless
+    # it was backfilled into the DB.
+    completed = season < _get_nfl_season()
+    stored = season_log_store.load('nfl', season) if completed else None
+    if stored is not None:
+        _cache[key] = (stored, now_ts)
+        return stored
+
+    def _fetch_week(week):
+        return _cached_get(
             ESPN_NFL,
             # `dates` (not `season`) is what actually selects the year on
             # this endpoint — see nfl_bootstrap.py's fetch_season_games for
@@ -195,6 +205,14 @@ def _get_season_game_log(season):
             f'nfl_week_{season}_{week}',
             _TTL['season_log'],
         )
+
+    # All 18 weeks in parallel (one at a time they were ~0.5s each), then
+    # walked in order with the same early stop as before.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        weekly = list(pool.map(_fetch_week, range(1, 19)))
+
+    games = []
+    for week, week_data in enumerate(weekly, start=1):
         if not week_data:
             continue
         found_completed = False
@@ -230,6 +248,8 @@ def _get_season_game_log(season):
             break
 
     _cache[key] = (games, now_ts)
+    if completed and games and all(weekly):
+        season_log_store.save('nfl', season, games)
     return games
 
 
@@ -875,13 +895,21 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
             # stat columns.
             player_boxscore = nfl_boxscore_api.parse_player_boxscore(summary)
             if player_boxscore:
-                nfl_stats_db.ingest_player_stats(
-                    event.get('id'), game_date_et, _get_nfl_season(), game_type,
-                    home.get('id'), away.get('id'), player_boxscore)
-                nfl_stats_db.ingest_team_defense_vs_position(
-                    event.get('id'), home.get('id'), away.get('id'), player_boxscore)
-                nfl_stats_db.ingest_play_by_play(
-                    event.get('id'), game_date_et, _get_nfl_season(), game_type, summary)
+                # Skipped when nothing changed since the last ingest — see
+                # nfl_stats_db.box_score_fingerprint; this block was most
+                # of every warm /nfl render's time.
+                fingerprint = nfl_stats_db.box_score_fingerprint(
+                    game_date_et, _get_nfl_season(), game_type, home.get('id'), away.get('id'),
+                    player_boxscore, nfl_playbyplay_api.parse_play_splits(summary))
+                if not nfl_stats_db.box_score_unchanged(event.get('id'), fingerprint):
+                    nfl_stats_db.ingest_player_stats(
+                        event.get('id'), game_date_et, _get_nfl_season(), game_type,
+                        home.get('id'), away.get('id'), player_boxscore)
+                    nfl_stats_db.ingest_team_defense_vs_position(
+                        event.get('id'), home.get('id'), away.get('id'), player_boxscore)
+                    nfl_stats_db.ingest_play_by_play(
+                        event.get('id'), game_date_et, _get_nfl_season(), game_type, summary)
+                    nfl_stats_db.mark_box_score_ingested(event.get('id'), fingerprint)
 
             # Weather — best-effort, going forward only (see TeamGameStat.
             # weather_temp's docstring in app.py: ESPN drops this off

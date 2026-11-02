@@ -9,6 +9,7 @@ import odds_api
 import cfb_model
 import cfb_rating
 import cfb_stats_db
+import season_log_store
 
 _ET = ZoneInfo('America/New_York')
 
@@ -40,6 +41,13 @@ _cache = {}
 # summary (weather only for CFB — no injuries block exists on this sport's
 # ESPN summary payload, confirmed live) doesn't need that freshness.
 _TTL = {'scoreboard': 120, 'season_log': 3600, 'summary': 600}
+
+# One keep-alive session for every ESPN call — a cold week build makes
+# ~100 requests to the same host, and a fresh TLS handshake per bare
+# requests.get() roughly doubled each one's latency. Pool sized for the
+# summary prefetch plus the season-log fetches running alongside it.
+_session = requests.Session()
+_session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=32))
 
 
 def _parse_linescores(comp, regulation_periods=4):
@@ -90,7 +98,7 @@ def _cached_get(url, params, key, ttl):
     if _CACHE_ONLY:
         return None
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = _session.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = odds_api.stamp_fetched(r.json(), now)
     except Exception:
@@ -171,9 +179,15 @@ def _get_season_game_log(season):
         if now_ts - ts < _TTL['season_log']:
             return data
 
-    games = []
-    for week in range(1, 16):
-        week_data = _cached_get(
+    # A completed season never changes — see season_log_store.py.
+    completed = season < _get_cfb_season()
+    stored = season_log_store.load('cfb', season) if completed else None
+    if stored is not None:
+        _cache[key] = (stored, now_ts)
+        return stored
+
+    def _fetch_week(week):
+        return _cached_get(
             ESPN_CFB,
             # `dates` (not `season`) is what actually selects the year on
             # this endpoint — same quirk nfl_bootstrap.py documented for the
@@ -184,6 +198,16 @@ def _get_season_game_log(season):
             f'cfb_week_{season}_{week}',
             _TTL['season_log'],
         )
+
+    # All 15 weeks in parallel, then walked in order below with the same
+    # early stop as before — fetched one at a time these were ~0.5s each
+    # and the single biggest cost of a cold /cfb build. The walk may stop
+    # before using the last few (future) weeks; they're cached either way.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        weekly = list(pool.map(_fetch_week, range(1, 16)))
+
+    games = []
+    for week, week_data in enumerate(weekly, start=1):
         if not week_data:
             continue
         found_completed = False
@@ -228,6 +252,10 @@ def _get_season_game_log(season):
             break
 
     _cache[key] = (games, now_ts)
+    # Only a fully fetched completed season goes to disk — a failed week
+    # would otherwise be missing from it for good.
+    if completed and games and all(weekly):
+        season_log_store.save('cfb', season, games)
     return games
 
 
@@ -443,6 +471,24 @@ def _prefetch_game_summaries(events):
         return
     with ThreadPoolExecutor(max_workers=min(len(event_ids), 8)) as pool:
         list(pool.map(_get_game_summary, event_ids))
+
+
+def _gather_build_inputs(season, events):
+    """(game_log, team_stats, prior_stats, cfb_odds_map) for _build_game,
+    with the independent fetches behind them — this season's and last
+    season's game logs, every event's summary, and cfb_rating's fit plus
+    venue geocodes — run concurrently instead of back to back. Each piece
+    warms its own cache, so _build_game's per-game calls are all hits."""
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        log_f   = pool.submit(_get_season_game_log, season)
+        prior_f = pool.submit(_get_prior_season_team_stats, season - 1)
+        pool.submit(_prefetch_game_summaries, events)
+        pool.submit(cfb_rating.prefetch, events, allow_fetch=not _CACHE_ONLY)
+        game_log    = log_f.result()
+        prior_stats = prior_f.result()
+    team_stats   = _compute_team_season_stats(game_log)
+    cfb_odds_map = odds_api.get_odds_map('cfb', events=events)
+    return game_log, team_stats, prior_stats, cfb_odds_map
 
 
 def _parse_weather(summary):
@@ -907,13 +953,7 @@ def build_schedule_context():
     if not today_events:
         return []
 
-    season       = _get_cfb_season()
-    game_log     = _get_season_game_log(season)
-    team_stats   = _compute_team_season_stats(game_log)
-    prior_stats  = _get_prior_season_team_stats(season - 1)
-    cfb_odds_map = odds_api.get_odds_map('cfb', events=today_events)
-
-    _prefetch_game_summaries(today_events)
+    game_log, team_stats, prior_stats, cfb_odds_map = _gather_build_inputs(_get_cfb_season(), today_events)
     games = [_build_game(event, team_stats, game_log, cfb_odds_map, prior_stats) for event in today_events]
 
     date_display = _fmt(datetime.now(_ET), '%a, %b %-d')
@@ -956,12 +996,7 @@ def build_week_schedule_context(week=None):
     )
     events = (data or {}).get('events', [])
 
-    game_log     = _get_season_game_log(season)
-    team_stats   = _compute_team_season_stats(game_log)
-    prior_stats  = _get_prior_season_team_stats(season - 1)
-    cfb_odds_map = odds_api.get_odds_map('cfb', events=events)
-
-    _prefetch_game_summaries(events)
+    game_log, team_stats, prior_stats, cfb_odds_map = _gather_build_inputs(season, events)
     by_date = defaultdict(list)
     for event in events:
         by_date[_event_date_et(event.get('date', ''))].append(

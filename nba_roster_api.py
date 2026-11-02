@@ -186,6 +186,23 @@ def get_player_gamelog(player_id, season_type_contains='Regular Season'):
     return rows
 
 
+def prefetch(team_ids):
+    """Warm get_active_roster()'s caches for a whole slate at once: every
+    team's roster in parallel, then every rostered player's gamelog in one
+    shared pool. nba_api._build_game() calls get_active_roster() per team
+    per game, one game at a time — each call is parallel inside, but the
+    slate as a whole ran ~30 roster fetches back to back on a cold cache."""
+    team_ids = [t for t in dict.fromkeys(team_ids) if t]
+    if not team_ids:
+        return
+    with ThreadPoolExecutor(max_workers=min(len(team_ids), 8)) as ex:
+        rosters = list(ex.map(get_roster, team_ids))
+    player_ids = list(dict.fromkeys(p['id'] for roster in rosters for p in roster))
+    if player_ids:
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            list(ex.map(get_player_gamelog, player_ids))
+
+
 def get_active_roster(team_id, min_recent_games=1, lookback=3, unavailable_ids=None):
     """Best-effort "who's probably playing tonight" for team_id: roster
     players whose own gamelog shows minutes in at least `min_recent_games`

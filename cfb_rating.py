@@ -35,6 +35,7 @@ import os
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -87,6 +88,7 @@ _seasons = {}       # season -> (games, fetched_at)
 _fits = {}          # (season, as_of_date, n_games) -> fit dict
 _geo = None
 _geo_failed = {}    # "City|ST" -> time of last failed lookup
+_geo_lock = threading.Lock()   # serializes cfb_venue_geo.json writes
 
 
 def season_for_date(date_str):
@@ -125,23 +127,31 @@ def _event_date_et(ts):
     return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(_ET).strftime('%Y-%m-%d')
 
 
+def _fetch_week(season, stype, week):
+    r = requests.get(ESPN_CFB, params={'seasontype': stype, 'week': week, 'dates': season,
+                                       'groups': _FBS_GROUP, 'limit': 400}, timeout=15)
+    r.raise_for_status()
+    return r.json().get('events', [])
+
+
 def _fetch_season(season):
+    # 17 weekly requests, fetched in parallel — one at a time they added
+    # ~10s to any page build that found the current season's copy stale.
+    weeks = [(2, w) for w in range(1, 17)] + [(3, 1)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(_fetch_week, season, stype, week) for stype, week in weeks]
     games = {}
-    for stype, weeks in ((2, range(1, 17)), (3, [1])):
-        for week in weeks:
-            try:
-                r = requests.get(ESPN_CFB, params={'seasontype': stype, 'week': week, 'dates': season,
-                                                   'groups': _FBS_GROUP, 'limit': 400}, timeout=15)
-                r.raise_for_status()
-                events = r.json().get('events', [])
-            except Exception:
-                # A failed week would silently drop games from the fit — fail the
-                # whole season fetch instead so the caller keeps its last good copy.
-                return None
-            for ev in events:
-                g = _parse_event(ev, season)
-                if g:
-                    games[g['id']] = g
+    for f in futures:
+        try:
+            events = f.result()
+        except Exception:
+            # A failed week would silently drop games from the fit — fail the
+            # whole season fetch instead so the caller keeps its last good copy.
+            return None
+        for ev in events:
+            g = _parse_event(ev, season)
+            if g:
+                games[g['id']] = g
     return sorted(games.values(), key=lambda g: g['ts'])
 
 
@@ -281,12 +291,13 @@ def _geocode(city, state, allow_fetch):
         # an hour so an outage doesn't cost a timeout on every game build.
         _geo_failed[key] = time.time()
         return None
-    geo[key] = hit and {'lat': hit['latitude'], 'lon': hit['longitude'], 'tz': hit['timezone']}
-    try:
-        with open(_GEO_PATH, 'w') as f:
-            json.dump(geo, f)
-    except OSError:
-        pass
+    with _geo_lock:
+        geo[key] = hit and {'lat': hit['latitude'], 'lon': hit['longitude'], 'tz': hit['timezone']}
+        try:
+            with open(_GEO_PATH, 'w') as f:
+                json.dump(geo, f)
+        except OSError:
+            pass
     return geo[key]
 
 
@@ -322,6 +333,35 @@ def eastbound_2tz(team_name, venue_city, venue_state, kickoff_utc, allow_fetch=T
 # Fitted on all 2023-26 games (see module docstring) — used only to size the
 # tracking factor's display value, never added to the model's logit.
 EASTBOUND_PTS = 3.8
+
+
+def prefetch(events, allow_fetch=True):
+    """Warm everything rating_inputs() will need for a slate of ESPN
+    scoreboard events: the fit for each game date, then every unseen home
+    city and venue geocoded in parallel. Without this, a week with new
+    venues paid one sequential geocode round-trip per lookup inside the
+    per-game build loop."""
+    dates, places, teams = set(), set(), set()
+    for ev in events:
+        comp = (ev.get('competitions') or [{}])[0]
+        if ev.get('date'):
+            try:
+                dates.add(_event_date_et(ev['date']))
+            except ValueError:
+                pass
+        addr = (comp.get('venue') or {}).get('address') or {}
+        places.add((addr.get('city'), addr.get('state')))
+        teams.update((c.get('team') or {}).get('displayName', '') for c in comp.get('competitors', []))
+    for d in sorted(dates):
+        get_fit(d, allow_fetch=allow_fetch)
+    if not allow_fetch:
+        return
+    places.update(_home_city(t) or (None, None) for t in teams if t)
+    geo = _load_geo()
+    todo = [(c, s) for c, s in places if c and s and f'{c}|{s}' not in geo]
+    if todo:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda p: _geocode(p[0], p[1], True), todo))
 
 
 def rating_inputs(home, away, neutral, venue_city, venue_state, kickoff_utc, allow_fetch=True):

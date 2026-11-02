@@ -1,6 +1,7 @@
 import time
 import requests
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
@@ -12,6 +13,7 @@ import nba_ensemble_model
 import nba_boxscore_api
 import nba_stats_db
 import spread_proxy
+import season_log_store
 
 _ET = ZoneInfo('America/New_York')
 
@@ -170,17 +172,33 @@ def _get_season_game_log(season):
         if now_ts - ts < _TTL['season_log']:
             return data
 
-    games = []
-    seen_ids = set()
+    # A completed season never changes — see season_log_store.py. This is
+    # the path last season's log takes for the early-season blend unless it
+    # was backfilled into the DB, and its ~270-day walk below was the bulk
+    # of a cold /nba build.
+    completed = season < _get_nba_season()
+    stored = season_log_store.load('nba', season) if completed else None
+    if stored is not None:
+        _cache[key] = (stored, now_ts)
+        return stored
+
     start = datetime(season, 10, 1, tzinfo=_ET).date()
     today = datetime.now(_ET).date()
     end = min(today, datetime(season + 1, 6, 30, tzinfo=_ET).date())
-    day = start
-    while day <= end:
-        date_str = day.strftime('%Y%m%d')
-        data = _cached_get(ESPN_NBA, {'dates': date_str, 'limit': 100},
-                            f'nba_day_{date_str}', _TTL['season_log'])
-        day += timedelta(days=1)
+    date_strs = [(start + timedelta(days=i)).strftime('%Y%m%d') for i in range((end - start).days + 1)]
+
+    def _fetch_day(date_str):
+        return _cached_get(ESPN_NBA, {'dates': date_str, 'limit': 100},
+                           f'nba_day_{date_str}', _TTL['season_log'])
+
+    # Every day in parallel (one at a time this was ~270 requests, ~2.5
+    # minutes), then walked in date order exactly as before.
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        daily = list(pool.map(_fetch_day, date_strs))
+
+    games = []
+    seen_ids = set()
+    for data in daily:
         if not data:
             continue
         for event in data.get('events', []):
@@ -215,6 +233,8 @@ def _get_season_game_log(season):
                 pass
 
     _cache[key] = (games, now_ts)
+    if completed and games and all(daily):
+        season_log_store.save('nba', season, games)
     return games
 
 
@@ -752,10 +772,21 @@ def build_schedule_context(target_date=None):
     if not today_events:
         return []
 
-    season       = _get_nba_season(today_str)
-    game_log     = _get_season_game_log(season)
+    season = _get_nba_season(today_str)
+    # Everything _build_game() fetches per game — season logs, each game's
+    # summary, each team's roster and players' gamelogs — warmed up front
+    # and concurrently, so the per-game loop below is all cache hits.
+    team_ids = [c.get('team', {}).get('id') for e in today_events
+                for c in (e.get('competitions') or [{}])[0].get('competitors', [])]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        log_f   = pool.submit(_get_season_game_log, season)
+        prior_f = pool.submit(_get_prior_season_team_stats, season - 1)
+        if not _CACHE_ONLY:
+            pool.submit(nba_boxscore_api.prefetch, [e.get('id') for e in today_events])
+            pool.submit(nba_roster_api.prefetch, team_ids)
+        game_log    = log_f.result()
+        prior_stats = prior_f.result()
     team_stats   = _compute_team_season_stats(game_log)
-    prior_stats  = _get_prior_season_team_stats(season - 1)
     nba_odds_map = odds_api.get_odds_map('nba', events=today_events)
 
     games = [_build_game(event, team_stats, game_log, nba_odds_map, prior_stats) for event in today_events]

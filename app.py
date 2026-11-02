@@ -102,20 +102,32 @@ def _get_season_phase(sport):
     if fn is None:
         return None
     now = time.time()
-    with _SEASON_PHASE_LOCK:
-        cached = _SEASON_PHASE_CACHE.get(sport)
-    if cached is not None:
+
+    def _fresh(s):
+        with _SEASON_PHASE_LOCK:
+            cached = _SEASON_PHASE_CACHE.get(s)
+        if cached is None:
+            return False
         phase, ts = cached
-        ttl = _SEASON_PHASE_TTL_OK if phase else _SEASON_PHASE_TTL_FAIL
-        if now - ts < ttl:
-            return phase
-    try:
-        phase = fn()
-    except Exception:
-        phase = None
+        return now - ts < (_SEASON_PHASE_TTL_OK if phase else _SEASON_PHASE_TTL_FAIL)
+
+    if not _fresh(sport):
+        # The nav badges ask for every sport in one render, so a miss
+        # refreshes all the stale ones at once, in parallel — one at a time
+        # they added ~3-4s to every cold page.
+        def _fetch(s):
+            try:
+                phase = _SEASON_PHASE_FNS[s]()
+            except Exception:
+                phase = None
+            with _SEASON_PHASE_LOCK:
+                _SEASON_PHASE_CACHE[s] = (phase, now)
+
+        stale = [s for s in _SEASON_PHASE_FNS if not _fresh(s)]
+        with ThreadPoolExecutor(max_workers=len(stale)) as pool:
+            list(pool.map(_fetch, stale))
     with _SEASON_PHASE_LOCK:
-        _SEASON_PHASE_CACHE[sport] = (phase, now)
-    return phase
+        return _SEASON_PHASE_CACHE[sport][0]
 
 
 app.jinja_env.globals['season_phase'] = _get_season_phase
@@ -9548,10 +9560,12 @@ def nfl_defense_page():
   season = request.args.get('season', type=int) or nfl_api.get_current_week()[0]
   rows = nfl_stats_db.get_defender_season_stats_db(season)
 
-  position_by_team = {}
   team_abbrevs = _nfl_team_abbrev_map()
-  for team_id in {r['team_id'] for r in rows if r['team_id']}:
-    position_by_team[team_id] = nfl_roster_api.get_defense_roster(team_id)
+  # All 32 rosters in parallel — fetched one at a time on a cold cache they
+  # were ~16s of this page's load.
+  team_ids = sorted({r['team_id'] for r in rows if r['team_id']})
+  with ThreadPoolExecutor(max_workers=8) as pool:
+    position_by_team = dict(zip(team_ids, pool.map(nfl_roster_api.get_defense_roster, team_ids)))
 
   for r in rows:
     r['position'] = position_by_team.get(r['team_id'], {}).get(r['player_id'], '?')

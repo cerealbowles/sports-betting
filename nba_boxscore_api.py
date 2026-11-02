@@ -60,6 +60,17 @@ def _get(event_id):
     return data
 
 
+def prefetch(event_ids):
+    """Warm _get()'s per-game summary cache for a whole slate in parallel —
+    injuries, live boxscore and pace all read from it, and nba_api's
+    per-game build otherwise fetched these one game at a time."""
+    event_ids = [e for e in dict.fromkeys(event_ids) if e]
+    if event_ids:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(event_ids), 8)) as ex:
+            list(ex.map(_get, event_ids))
+
+
 # Statuses that mean "not available tonight" — excluded from the active
 # roster. Anything else (Day-To-Day, Probable, Questionable, Game-Time
 # Decision) is left in, same philosophy as the recent-participation
