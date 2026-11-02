@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Ouija Record — Dead Money{% endblock %}
+
+{% macro rec(x) -%}
+{% if x.n %}<span class="mono">{{ x.w }}–{{ x.l }}{% if x.p %}–{{ x.p }}{% endif %}</span> <span class="muted">· {{ x.pct }}% · ROI <span style="color:{{ 'var(--win)' if x.roi > 0 else 'var(--loss)' }};">{{ '%+.0f' % x.roi }}%</span></span>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+{% macro band(b, key) -%}
+<span class="mono{{ ' ob-win' if 75 <= b[key].inside <= 85 else ' ob-loss' if b[key].inside < 72 else '' }}">{{ b[key].inside }}%</span><span class="ob-uo mono">{{ b[key].below }}↓ {{ b[key].above }}↑</span>
+{%- endmacro %}
+
+{% block content %}
+<div class="schedule-body ob">
+
+<div class="hub-greeting ob-head">
+    <div>
+        <a href="{{ url_for('matchups_page') }}" class="ob-back">← The Ouija Board</a>
+        <span class="hub-kicker">NFL {{ r.season }} · {{ r.clean_weeks | length }} graded week{{ 's' if r.clean_weeks | length != 1 }} · {{ r.n_games }} games</span>
+        <h1 class="hub-title">The Séance Log</h1>
+        <p class="ob-lede">Every past read, rebuilt as it looked at kickoff and graded against what happened. Player lines and matchups come first, since that's what the board is for. Game verdicts are last.</p>
+    </div>
+</div>
+
+{% set excluded = r.weeks | rejectattr('clean') | list %}
+{% if excluded %}
+<p class="ob-note">Not graded: week{{ 's' if excluded | length != 1 }} {{ excluded | map(attribute='week') | join(', ') }}. Those sims were run after the games were played, so they could have seen the results.</p>
+{% endif %}
+
+{% if not r.clean_weeks %}
+<div class="card ob-empty"><div class="gy-h2 sm">Nothing to grade yet.</div><p class="small">A week counts once its sims ran before kickoff and its games are final.</p></div>
+{% else %}
+
+{% set pl = r.players %}
+<section class="card ob-panel" aria-labelledby="pl-h">
+    <div class="gy-h2-row">
+        <h2 id="pl-h" class="gy-h2 sm">Player lines</h2>
+        <span class="small">Sim fantasy points vs what each player scored</span>
+    </div>
+    <p class="small" style="margin:0;">Range = the share of players who landed between the sim's floor (P10) and ceiling (P90). 80% is right; ↓ / ↑ are the shares that fell under or beat it.</p>
+    {% if pl.overall %}
+    <div class="ob-glance">
+        <div class="card ob-glance-card"><span class="ob-k">Avg miss vs sim median</span><span class="ob-glance-v mono">{{ pl.overall.mae }} pts</span><span class="small">{{ pl.overall.n }} player-games · bias {{ '%+.1f' % pl.overall.bias }}</span></div>
+        <div class="card ob-glance-card"><span class="ob-k">Inside the floor–ceiling range</span><span class="ob-glance-v">{{ band(pl.overall, 'cal') }}</span><span class="small">calibrated · raw sim was {{ pl.overall.raw.inside }}% · target 80%</span></div>
+        {% if pl.pod.n %}<div class="card ob-glance-card"><span class="ob-k">Players of the day</span><span class="ob-glance-v mono">{{ pl.pod.avg_med }} → {{ pl.pod.avg_actual }}</span><span class="small">avg sim median → avg actual · {{ pl.pod.beat_med }}% met their median</span></div>{% endif %}
+    </div>
+    <div class="gy-table-wrap">
+        <table class="gy-table ob-rec-table">
+            <thead><tr><th scope="col">Position</th><th scope="col" class="r">n</th><th scope="col" class="r" title="Average miss vs sim median, fantasy points">Miss</th><th scope="col" class="r ob-hide-sm">Bias</th><th scope="col">Raw</th><th scope="col" title="After the calibration stretch">Calib.</th><th scope="col" class="r ob-hide-sm">Stretch ↓ · ↑</th></tr></thead>
+            <tbody>
+            {% for b in pl.by_pos %}
+            <tr><th scope="row">{{ b.pos }}</th><td class="r mono">{{ b.n }}</td><td class="r mono">{{ b.mae }}</td><td class="r mono ob-hide-sm">{{ '%+.1f' % b.bias }}</td><td>{{ band(b, 'raw') }}</td><td>{{ band(b, 'cal') }}</td>
+                <td class="r mono muted ob-hide-sm">{% set sc = pl.scale.get(b.pos) %}{% if sc %}×{{ sc[0] }} · ×{{ sc[1] }}{% else %}—{% endif %}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if pl.by_week | length > 1 %}
+    <div class="gy-table-wrap">
+        <table class="gy-table ob-rec-table">
+            <thead><tr><th scope="col">Week</th><th scope="col" class="r">n</th><th scope="col" class="r" title="Average miss vs sim median, fantasy points">Miss</th><th scope="col">Raw</th><th scope="col" title="After the calibration stretch">Calib.</th></tr></thead>
+            <tbody>
+            {% for b in pl.by_week %}
+            <tr><th scope="row">Week {{ b.week }}{% if b.week in pl.fit_weeks %} <span class="muted small">(fit)</span>{% endif %}</th><td class="r mono">{{ b.n }}</td><td class="r mono">{{ b.mae }}</td><td>{{ band(b, 'raw') }}</td><td>{{ band(b, 'cal') }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    <p class="small">The calibration stretch was fit on {% if pl.fit_weeks %}week{{ 's' if pl.fit_weeks | length > 1 }} {{ pl.fit_weeks | join(' and ') }}{% else %}earlier weeks{% endif %}, so those look good by construction. Every other week is a real test; if those drift away from 80%, the stretch needs a refit.</p>
+    {% endif %}
+</section>
+
+{% set pj = r.projection %}
+<section class="card ob-panel" aria-labelledby="pj-h">
+    <div class="gy-h2-row">
+        <h2 id="pj-h" class="gy-h2 sm">Combined projection</h2>
+        <span class="small">Average miss in fantasy points · lower is better</span>
+    </div>
+    {% if pj.table %}
+    <div class="gy-table-wrap">
+        <table class="gy-table ob-rec-table">
+            <thead><tr><th scope="col">Position</th><th scope="col" class="r">n</th><th scope="col" class="r">Old proj</th><th scope="col" class="r">Combined</th><th scope="col" class="r" title="Sim median vs the combined projection on the same players">Sim · comb</th><th scope="col" class="r">Range</th></tr></thead>
+            <tbody>
+            {% for t in pj.table %}
+            <tr><th scope="row">{{ t.pos }}</th><td class="r mono">{{ t.n }}</td><td class="r mono">{{ t.projection }}</td>
+                <td class="r mono{{ ' ob-win' if t.combined < t.projection else '' }}">{{ t.combined }}</td>
+                <td class="r mono">{% if t.sim is not none %}<span class="{{ 'ob-win' if t.sim < t.combined_same else '' }}">{{ t.sim }}</span> · {{ t.combined_same }}{% else %}—{% endif %}</td>
+                <td class="r mono">{{ t.inside }}%</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="small">Graded from pregame snapshots, weeks {{ pj.weeks | join(', ') }}. The WR/TE sim column is the one to watch: it beat the projection in weeks 6–8, and switching WR/TE over to the sim needs another season agreeing.</p>
+    {% else %}
+    <p class="small">Starts grading once a week with pregame projection snapshots (week 9 on) is final. Fit and holdout results so far: QBs gain 1–2% from adding the market's team total; RB and WR/TE stay on the existing projection.</p>
+    {% endif %}
+</section>
+
+{% set ch = r.chips %}
+<section class="card ob-panel" aria-labelledby="ch-h">
+    <div class="gy-h2-row">
+        <h2 id="ch-h" class="gy-h2 sm">Matchup chips</h2>
+        <span class="small">Pregame defense-vs-position grade vs what that defense actually allowed</span>
+    </div>
+    <div class="ob-glance">
+        <div class="card ob-glance-card"><span class="ob-k">Smash &amp; wall calls right</span><span class="ob-glance-v mono">{{ ch.extreme_hit if ch.extreme_hit is not none else '—' }}%</span><span class="small">direction only · 50% is a coin flip</span></div>
+        <div class="card ob-glance-card"><span class="ob-k">Grade vs result correlation</span><span class="ob-glance-v mono">{{ '%+.2f' % ch.r if ch.r is not none else '—' }}</span><span class="small">{{ ch.n }} offense-vs-defense cells · 0 = no relationship</span></div>
+    </div>
+    <p class="small" style="margin:0;">What each grade's defenses actually allowed, vs league average:</p>
+    <div class="ob-tones">
+        {% for t in ch.tones %}
+        <div class="ob-tone-row"><span class="ob-chip ob-{{ t.tone }}">{{ t.tone | upper }}</span><span class="mono">{{ '%+.1f' % t.avg }}%</span><span class="small">above avg {{ t.beat }}% · n={{ t.n }}</span></div>
+        {% endfor %}
+    </div>
+    {% if ch.latest %}
+    <div class="ob-k" style="margin-top:4px;">Week {{ r.latest_week }}'s biggest calls</div>
+    <div class="ob-calls">
+        {% for c in ch.latest %}
+        <div class="ob-call"><span><strong>{{ c.off.split(' ')[-1] }} {{ c.pos }}</strong> <span class="muted">vs {{ c.def.split(' ')[-1] }}</span></span><span class="mono">{{ '%+d' % c.pct }}%</span><span class="muted">→</span><span class="mono">{{ '%+d' % c.actual_pct }}%</span><span class="{{ 'ob-win' if (c.pct > 0) == (c.actual_pct > 0) else 'ob-loss' }}">{{ '✓' if (c.pct > 0) == (c.actual_pct > 0) else '✗' }}</span></div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+
+{% set gm = r.games %}
+<section class="card ob-panel" aria-labelledby="gm-h">
+    <div class="gy-h2-row">
+        <h2 id="gm-h" class="gy-h2 sm">Game reads</h2>
+        <span class="small">Against the spread on the side each read pointed, at −110</span>
+    </div>
+    <div class="ob-rec-grid">
+        <div>
+            <div class="ob-k">By verdict</div>
+            {% for v in gm.verdicts %}<div class="ob-rec-row"><span>{{ v.verdict | title }}</span>{{ rec(v) }}</div>{% endfor %}
+            <div class="ob-rec-row"><span>All three agree</span>{{ rec(gm.agree3) }}</div>
+        </div>
+        <div>
+            <div class="ob-k">Each signal alone</div>
+            {% for v in gm.signals %}<div class="ob-rec-row"><span>{{ v.signal }}</span>{{ rec(v) }}</div>{% endfor %}
+        </div>
+        <div>
+            <div class="ob-k">Avg miss on the final margin</div>
+            {% for k, label in [('market', 'Market'), ('sim', 'Simulator'), ('model', 'Model'), ('form', 'Point diff')] %}
+            <div class="ob-rec-row"><span>{{ label }}</span><span class="mono">{{ gm.margin_err[k] if gm.margin_err[k] is not none else '—' }} pts</span></div>
+            {% endfor %}
+        </div>
+    </div>
+    {% if gm.latest %}
+    <div class="ob-k">Week {{ r.latest_week }}</div>
+    <div class="gy-table-wrap">
+        <table class="gy-table ob-rec-table">
+            <thead><tr><th scope="col">Game</th><th scope="col" class="r">Final</th><th scope="col" class="r">Line</th><th scope="col">Read</th><th scope="col">Result</th></tr></thead>
+            <tbody>
+            {% for g in gm.latest %}
+            <tr>
+                <th scope="row">{{ g.away.split(' ')[-1] }} @ {{ g.home.split(' ')[-1] }}</th>
+                <td class="r mono">{{ g.away_pts | int }}–{{ g.home_pts | int }}</td>
+                <td class="r mono">{% if g.mkt is not none %}{{ g.home.split(' ')[-1] }} {{ '%+g' % g.mkt }}{% else %}—{% endif %}</td>
+                <td>{% if g.verdict %}<span class="ob-badge-inline ob-v-{{ {'TARGET': 'target', 'LEAN': 'lean', 'WATCH': 'watch', 'STAY AWAY': 'avoid'}[g.verdict] }}">{{ g.verdict }}</span>{% if g.verdict != 'STAY AWAY' %} {{ g.side_team.split(' ')[-1] }} {{ '%+g' % g.side_line }}{% endif %}{% else %}—{% endif %}</td>
+                <td>{% if g.verdict and g.verdict != 'STAY AWAY' %}{% if g.covered is none %}<span class="muted">push</span>{% elif g.covered %}<span class="ob-win">covered</span>{% else %}<span class="ob-loss">missed</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    <p class="small">Lines are the last pregame DraftKings spread. Small samples swing a lot: treat a record under ~100 games as a trend to watch, not an edge.</p>
+</section>
+{% endif %}
+</div>
+{% endblock %}

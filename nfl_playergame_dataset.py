@@ -274,7 +274,11 @@ def _build_row(player_row, team_row, categories, season):
         _opponent_grade_cache[opp_key] = pm.compute_defense_grade(def_list)
     opponent_defense_grade = _opponent_grade_cache[opp_key]
 
-    projection = nfl_fantasy.project_points(bucket, points_hist, opponent_defense_grade)
+    # Same call shape as the live build_player_pool(): RB's fitted coefficients
+    # assume the volume term is present, so leaving it out understated every
+    # RB projection (avg 3.6 projected vs 8.5 actual in the 2026-11-02 run).
+    recent_volume_pg = nfl_fantasy._recent_touches_per_game(gamelog) if bucket == 'RB' else None
+    projection = nfl_fantasy.project_points(bucket, points_hist, opponent_defense_grade, recent_volume_pg)
     actual = nfl_fantasy.compute_fantasy_points(categories)
     projection_error = (actual - projection) if projection is not None else None
 

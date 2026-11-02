@@ -21,7 +21,7 @@
 
 <div class="hub-greeting ob-head">
     <div>
-        <a href="{{ url_for('stats_page', sport='NFL') }}" class="ob-back">← The Almanac</a>
+        <span class="ob-crumbs"><a href="{{ url_for('stats_page', sport='NFL') }}" class="ob-back">← The Almanac</a><a href="{{ url_for('matchups_record_page') }}" class="ob-back">How these reads have done →</a></span>
         <span class="hub-kicker">{{ board.day_title }} · NFL week {{ board.week }} · {{ board.games | length }} game{{ 's' if board.games | length != 1 }}{% if board.span %} · {{ board.span }}{% endif %}</span>
         <h1 class="hub-title">The Ouija Board</h1>
         <p class="ob-lede">Every game read three ways against the market spread: your betting model, the game simulator, and each team's point differential. When all three point the same way, that's a matchup worth a look.</p>
@@ -131,12 +131,12 @@
 
         <div class="ob-signals">
             {% if g.verdict %}
-            <div class="ob-k ob-sig-head"><span>← {{ g.away }} value</span><span class="ob-mkt">Market {{ g.mkt_label }}</span><span>{{ g.home }} value →</span></div>
+            <div class="ob-k ob-sig-head"><span>← {{ g.away }} value</span><span class="ob-mkt">{{ 'Closing' if g.line_source == 'kickoff' else 'Market' }} {{ g.mkt_label }}</span><span>{{ g.home }} value →</span></div>
             {{ edge_bar('Model', g.edges.model, 'model') }}
             {{ edge_bar('Simulator', g.edges.sim, 'sim') }}
             {{ edge_bar('Point diff', g.edges.form, 'form') }}
             {% else %}
-            <p class="small">No market spread yet, so there's nothing to read against.</p>
+            <p class="small">{{ g.why }}</p>
             {% endif %}
             <div class="ob-wp small">
                 {% if g.wp.market is not none %}<span>Win %: market <span class="mono">{{ g.wp.market }}%</span></span>{% endif %}
@@ -180,7 +180,7 @@
                 {% set md = [0, [100, (p.med + 5) / 50 * 100] | min] | max %}
                 <div class="ob-prow{{ ' out' if p.out }}">
                     <span class="ob-ppos">{{ p.pos }}</span>
-                    <span class="ob-pname">{{ p.name }}{% if p.out %} <span class="ob-flag out">OUT?</span>{% endif %}{% if p.boom %} <span class="ob-flag boom">CEILING 25+</span>{% endif %}{% if not p.has_sim %} <span class="ob-flag">NO SIM</span>{% endif %} {{ mg(p) }}</span>
+                    <span class="ob-pname">{{ p.name }}{% if p.out %} <span class="ob-flag out">OUT?</span>{% endif %}{% if p.boom %} <span class="ob-flag boom">CEILING 25+</span>{% endif %}{% if not p.has_sim %} <span class="ob-flag">NO SIM</span>{% endif %} {{ mg(p) }}{% if p.comb is not none %} <span class="ob-proj mono" title="Combined projection, likely {{ p.comb_floor }}–{{ p.comb_ceil }}{% if p.comb_market %}, uses the {{ p.implied }}-pt team total{% endif %}">proj {{ p.comb }}{% if p.comb_market %}◆{% endif %}</span>{% endif %}</span>
                     <span class="ob-range" aria-hidden="true"><i style="left:{{ lo }}%;width:{{ [1, hi - lo] | max }}%;"></i><b style="left:{{ md }}%;"></b></span>
                     <span class="mono ob-r">{{ p.med }}</span>
                     <span class="mono ob-r muted">{{ p.ceil }}</span>

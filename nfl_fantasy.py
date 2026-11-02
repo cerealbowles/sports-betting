@@ -562,6 +562,30 @@ def simulate_pool(pool, n=10, rng=None):
 # replaces the independent-Gaussian functions above.
 SIM_CEILING_PERCENTILE = 0.80
 
+# Calibration of the sim's per-player spread (2026-11-02 backtest, weeks 7-8,
+# n=538 player-games): only 66% of real outcomes landed inside the raw
+# P10-P90, and the misses were lopsided — real duds below the floor far more
+# often than blowups above the ceiling (WR 27% below vs 11% above). Each
+# draw is stretched away from the median by (below, above) so P10/P90 hold
+# ~80% again (82-83% in sample). Provisional: fit on two weeks — refit from
+# /stats/matchups/record's band-coverage row as weeks accumulate.
+SIM_BAND_SCALE = {'QB': (1.2, 1.3), 'RB': (1.2, 1.15), 'TE': (1.5, 1.15), 'WR': (1.75, 1.15)}
+SIM_BAND_FIT_WEEKS = {2026: (7, 8)}  # weeks the stretch was fit on (in-sample on the record page)
+
+
+def calibrate_draws(draws, position, median=None):
+    """Sorted, calibrated copy of one player's sim draws (see SIM_BAND_SCALE).
+    The median is unchanged; nothing is pushed below min(0, raw minimum)."""
+    d = sorted(draws)
+    if not d:
+        return d
+    below, above = SIM_BAND_SCALE.get(position, (1.0, 1.0))
+    if below == above == 1.0:
+        return d
+    m = median if median is not None else d[len(d) // 2]
+    lo_bound = min(0.0, d[0])
+    return [max(lo_bound, m - below * (m - x)) if x < m else m + above * (x - m) for x in d]
+
 # Sim Median was found (2026-10-15 backtest, docs/nfl_game_simulator_
 # validation.md) to run systematically low vs. real outcomes at every
 # position even after fixing the two drive-loop bugs that caused it. Rather
@@ -637,7 +661,7 @@ def attach_sim_data(pool, season, week):
         if row is None or not row.get('sim'):
             p['sim_median'] = p['sim_mean'] = p['sim_ceiling'] = p['sim_floor'] = p['projection']
             continue
-        draws = sorted(row['sim'])
+        draws = calibrate_draws(row['sim'], p['position'], row.get('sim_median'))
         boom_at, bust_at = BOOM_BUST_THRESHOLDS.get(p['position'], (20, 5))
         p['sim_floor'] = round(draws[int(round(0.10 * (len(draws) - 1)))], 2)
         p['boom_pct'] = round(sum(1 for d in draws if d >= boom_at) / len(draws) * 100)
@@ -1330,3 +1354,65 @@ def start_sit_ladder(players, position):
     for i, p in enumerate(ps):
         out[start_sit_tier(position, p['adj_median'])].append({**p, 'move': med_rank[id(p)] - i})
     return [{'name': name, 'players': out[name]} for name in START_SIT_NAMES]
+
+
+# ── Combined projection (research/nfl/combined_projection.py, 2026-11-02) ──
+# One number per player plus a range from how past projections actually
+# missed. Each piece is in only because it beat the live projection on
+# held-out seasons (train 2024-25 -> 2026, 2024 -> 2025, 2025 -> 2024):
+#   QB   projection + market-implied team points: won all three splits
+#        (MAE -1.1%, -2.4%, -2.1%). Fit below is on all three seasons.
+#   RB   projection as-is: no market feature beat it consistently, and the
+#        game sim was worse (5.40 vs 4.98 MAE, 2026 weeks 6-8).
+#   REC  projection as-is: market features never helped. The game sim beat
+#        it by ~9% on 2026 weeks 6-8, but that's one season — tracked on
+#        /stats/matchups/record, not used, until a second season agrees.
+# Bands: P10/P90 of (actual - combined) by projection tier, fit on 2024-26;
+# 76-84% coverage out of sample on two held-out seasons (target 80%).
+COMBINED_FIT = {'QB': {'intercept': -4.771, 'projection': 0.528, 'implied': 0.578}}
+COMBINED_BANDS = {
+    'QB': ((15.8, 18.3), ((-9.1, 10.1), (-10.4, 10.4), (-10.9, 10.6))),
+    'RB': ((5.2, 10.8), ((-3.6, 5.4), (-6.6, 8.6), (-9.2, 12.7))),
+    'REC': ((4.2, 6.8), ((-3.1, 5.1), (-4.7, 7.1), (-7.5, 10.6))),
+}
+
+
+def implied_team_points(home_spread, total, is_home):
+    """Market-implied points for one team. home_spread: negative = home
+    favored (app convention)."""
+    if home_spread is None or total is None:
+        return None
+    return total / 2 - home_spread / 2 if is_home else total / 2 + home_spread / 2
+
+
+def combined_projection(position, projection, implied_points=None):
+    """{'point', 'floor', 'ceiling', 'uses_market'} or None (DST / no
+    projection). Falls back to the plain projection for a QB with no market
+    line yet, so the number is never missing just because odds are."""
+    if projection is None:
+        return None
+    bucket = 'REC' if position in ('WR', 'TE') else position
+    if bucket not in COMBINED_BANDS:
+        return None
+    fit = COMBINED_FIT.get(bucket)
+    uses_market = bool(fit and implied_points is not None)
+    point = (fit['intercept'] + fit['projection'] * projection + fit['implied'] * implied_points
+             if uses_market else projection)
+    (cut1, cut2), bands = COMBINED_BANDS[bucket]
+    lo, hi = bands[0 if point < cut1 else 1 if point < cut2 else 2]
+    return {'point': round(point, 1), 'floor': round(max(0.0, point + lo), 1),
+            'ceiling': round(point + hi, 1), 'uses_market': uses_market}
+
+
+def attach_combined(pool, implied_by_team):
+    """Sets combined / comb_floor / comb_ceiling / implied_pts on each pool
+    entry. implied_by_team: {team_abbr: implied points}."""
+    for p in pool:
+        imp = implied_by_team.get(p.get('team'))
+        c = combined_projection(p['position'], p.get('projection'), imp)
+        p['implied_pts'] = None if imp is None else round(imp, 1)
+        p['combined'] = c['point'] if c else None
+        p['comb_floor'] = c['floor'] if c else None
+        p['comb_ceiling'] = c['ceiling'] if c else None
+        p['comb_market'] = c['uses_market'] if c else False
+    return pool

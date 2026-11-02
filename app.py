@@ -831,6 +831,30 @@ class NflSimResult(db.Model):
   __table_args__ = (db.UniqueConstraint('season', 'week', 'player_id', name='uq_nfl_sim_result'),)
 
 
+class NflProjectionSnapshot(db.Model):
+  """Each player's projection as it stood before kickoff, so the combined
+  projection can be graded later (/stats/matchups/record) — nothing else
+  stores the projection point-in-time. Upserted while the player's game is
+  still Preview (see _snapshot_nfl_projections), never touched after."""
+  __tablename__ = 'nfl_projection_snapshot'
+  id           = db.Column(db.Integer, primary_key=True)
+  season       = db.Column(db.Integer, nullable=False, index=True)
+  week         = db.Column(db.Integer, nullable=False, index=True)
+  game_id      = db.Column(db.String(20), nullable=False, index=True)
+  player_id    = db.Column(db.String(20), nullable=False, index=True)
+  player_name  = db.Column(db.String(80))
+  position     = db.Column(db.String(10))
+  team         = db.Column(db.String(10))
+  projection   = db.Column(db.Float)
+  combined     = db.Column(db.Float)
+  comb_floor   = db.Column(db.Float)
+  comb_ceiling = db.Column(db.Float)
+  implied_pts  = db.Column(db.Float)
+  sim_median   = db.Column(db.Float)
+  recorded_at  = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  __table_args__ = (db.UniqueConstraint('season', 'week', 'player_id', name='uq_nfl_proj_snap'),)
+
+
 class NflSimGame(db.Model):
   """Team-score-level companion to NflSimResult's per-player rows — one
   row per (season, week, game_id) summarizing nfl_game_simulator.
@@ -3328,6 +3352,13 @@ def _upsert_predictions(schedule, sport='MLB'):
             # NFL's player model has no margin signal to blend).
             pred.blended_spread_cover_prob = _margin_cover_prob(
                 sport, model.get('ensemble_margin'), spread_line)
+
+          # Market total is captured (not modeled — Totals were removed
+          # 2026-10-23): the NFL combined projection's QB fit uses the
+          # market-implied team total, i.e. total/2 -/+ spread/2.
+          total_line = odds.get('total_line')
+          if total_line is not None:
+            pred.total_pick_line = total_line
 
         # Freeze whatever _best_market_pick currently says about this game —
         # see GamePrediction.rec_market's comment. Recomputed every cycle
@@ -8508,6 +8539,71 @@ def nfl_game_detail_page(game_id):
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
+def _nfl_implied_points_by_team(games, live_odds=None):
+  """{team_abbr: market-implied points} for these games. live_odds:
+  optional {game_id: odds dict} (home_spread/total_line) from the full
+  schedule pipeline; otherwise the line GamePrediction holds (updated while
+  Preview, frozen at kickoff)."""
+  dates = {_et_date(g.get('game_time_utc') or '') for g in games}
+  preds = {}
+  if dates:
+    for p in GamePrediction.query.filter(GamePrediction.sport == 'NFL', GamePrediction.game_date.in_(dates)).all():
+      preds[(p.game_date, p.home_team, p.away_team)] = p
+  out = {}
+  for g in games:
+    home, away = g.get('home') or {}, g.get('away') or {}
+    spread = total = None
+    o = (live_odds or {}).get(g.get('game_id')) or {}
+    if o.get('home_spread') is not None and o.get('total_line') is not None:
+      spread, total = o['home_spread'], o['total_line']
+    else:
+      p = preds.get((_et_date(g.get('game_time_utc') or ''), home.get('name'), away.get('name')))
+      if p is not None:
+        spread, total = p.spread_pick_line, p.total_pick_line
+    for t, is_home in ((home, True), (away, False)):
+      imp = nfl_fantasy.implied_team_points(spread, total, is_home)
+      if imp is not None and t.get('abbr'):
+        out[t['abbr']] = imp
+  return out
+
+
+_nfl_snapshot_last = {}
+
+
+def _snapshot_nfl_projections(pool, games, season, week):
+  """Upsert NflProjectionSnapshot for players whose game hasn't started
+  (at most every 20 minutes per week). Never fails the page."""
+  key = (season, week)
+  if time.time() - _nfl_snapshot_last.get(key, 0) < 1200:
+    return
+  _nfl_snapshot_last[key] = time.time()
+  try:
+    upcoming = {}
+    for g in games:
+      if g.get('status') == 'Preview':
+        for side in ('home', 'away'):
+          if (g.get(side) or {}).get('abbr'):
+            upcoming[g[side]['abbr']] = g['game_id']
+    rows = {r.player_id: r for r in NflProjectionSnapshot.query.filter_by(season=season, week=week).all()}
+    for p in pool:
+      gid = upcoming.get(p.get('team'))
+      if not gid or p['position'] == 'DST' or p.get('projection') is None:
+        continue
+      r = rows.get(p['id'])
+      if r is None:
+        r = NflProjectionSnapshot(season=season, week=week, player_id=p['id'])
+        db.session.add(r)
+      r.game_id, r.player_name, r.position, r.team = gid, p['name'], p['position'], p.get('team')
+      r.projection, r.combined = p['projection'], p.get('combined')
+      r.comb_floor, r.comb_ceiling, r.implied_pts = p.get('comb_floor'), p.get('comb_ceiling'), p.get('implied_pts')
+      r.sim_median = p.get('sim_median') if p.get('game_id') else None
+      r.recorded_at = datetime.now(timezone.utc)
+    db.session.commit()
+  except Exception:
+    db.session.rollback()
+    app.logger.exception('projection snapshot failed')
+
+
 @app.route('/nfl/lineup')
 def nfl_lineup():
   """Weekly salary-cap lineup builder — see nfl_fantasy.py's module
@@ -8582,6 +8678,9 @@ def nfl_lineup():
   if pool:
     nfl_fantasy.attach_sim_data(pool, season, wk)
     draws_by_id = {pid: r['sim'] for pid, r in nfl_fantasy._sim_rows_by_player(season, wk).items() if r.get('sim')}
+    nfl_fantasy.attach_combined(pool, _nfl_implied_points_by_team(selected_games))
+    if len(selected_games) == len(all_games):
+      _snapshot_nfl_projections(pool, all_games, season, wk)
 
   # Likely out: projected for real volume but the simulator (which reads the
   # current depth chart) barely plays them — the Week 7 zeros all looked like
@@ -8660,7 +8759,9 @@ def nfl_lineup():
     return ' '.join(pts)
   for p in pool:
     d = draws_by_id.get(p['id'])
-    p['curve'] = _curve(d) if d else None
+    # Curve matches the calibrated floor/ceiling; stacks below keep the raw,
+    # index-paired draws (calibrate_draws sorts, which would break pairing).
+    p['curve'] = _curve(nfl_fantasy.calibrate_draws(d, p['position'], p.get('sim_median'))) if d else None
     p['median_x'] = round(max(0, min(100, (p['sim_median'] + 5) / 50 * 100)), 1)
     p['value_per_k'] = round(p['sim_median'] / (p['salary'] / 1000), 2) if p['salary'] else None
 
@@ -9683,6 +9784,29 @@ def _build_nfl_matchup_board(day=None):
   sims = nfl_stats_db.get_sim_game_summary_db(season, wk)
   profile = _nfl_league_defense_profile(season)
 
+  # Once a game kicks off the live feed stops carrying a spread, so live and
+  # final games fall back to the line frozen at kickoff (GamePrediction.
+  # spread_pick_line: updated while Preview, never after).
+  # Started/finished games are also read from kickoff-time inputs (stored
+  # model factors, point diff from earlier games only), so looking back at a
+  # final shows the read as it stood, not one rebuilt with that game's result.
+  frozen = {}
+  week_dates = [d['date'] for d in week_ctx['days']]
+  if week_dates:
+    for p in GamePrediction.query.filter(GamePrediction.sport == 'NFL',
+                                         GamePrediction.game_date.in_(week_dates)).all():
+      frozen[(p.game_date, p.home_team, p.away_team)] = p
+  season_log = []
+  try:
+    season_log = nfl_api._get_season_game_log(season)
+  except Exception:
+    app.logger.exception('season game log failed')
+
+  def diff_before(team_name, before):
+    games_ = [(lg['home_score'] - lg['away_score']) if lg['home_name'] == team_name else (lg['away_score'] - lg['home_score'])
+              for lg in season_log if lg['game_date'] < before and team_name in (lg['home_name'], lg['away_name'])]
+    return sum(games_) / len(games_) if games_ else None
+
   # Point differential per game, straight from the season game log. Only
   # trusted when the log holds every game the team's record says it has
   # played: ESPN week fetches can fail quietly, and a two-game sample would
@@ -9690,7 +9814,7 @@ def _build_nfl_matchup_board(day=None):
   diff_pg = {}
   try:
     pts = defaultdict(lambda: [0, 0, 0])
-    for lg in nfl_api._get_season_game_log(season):
+    for lg in season_log:
       for name, f, ag in ((lg['home_name'], lg['home_score'], lg['away_score']),
                           (lg['away_name'], lg['away_score'], lg['home_score'])):
         pts[name][0] += f
@@ -9726,6 +9850,9 @@ def _build_nfl_matchup_board(day=None):
   pool = nfl_fantasy.build_player_pool(light['games']) if light['games'] else []
   if pool:
     nfl_fantasy.attach_sim_data(pool, season, wk)
+    live_odds = {g['game_id']: g.get('odds') or {} for d in week_ctx['days'] for g in d['games']}
+    nfl_fantasy.attach_combined(pool, _nfl_implied_points_by_team(light['games'], live_odds))
+    _snapshot_nfl_projections(pool, light['games'], season, wk)
   for p in pool:
     p['likely_out'] = bool(p.get('game_id')) and p['projection'] >= 12 and p['sim_median'] < 2.5
   players_by_team = defaultdict(list)
@@ -9752,6 +9879,8 @@ def _build_nfl_matchup_board(day=None):
             'med': round(p['sim_median'], 1), 'ceil': round(p['sim_ceiling'], 1),
             'out': p['likely_out'], 'boom': (not p['likely_out']) and p['sim_ceiling'] >= 25,
             'has_sim': bool(p.get('game_id')),
+            'comb': p.get('combined'), 'comb_floor': p.get('comb_floor'), 'comb_ceil': p.get('comb_ceiling'),
+            'comb_market': p.get('comb_market'), 'implied': p.get('implied_pts'),
             'grade': card['grade'] if card else None, 'pct': pct, 'tone': mb.grade_style(pct)}
 
   games_out = []
@@ -9760,15 +9889,33 @@ def _build_nfl_matchup_board(day=None):
       home, away = g['home'], g['away']
       h, a = home['abbr'], away['abbr']
       odds = g.get('odds') or {}
+      g_date = _et_date(g.get('game_time_utc') or '')
+      pred = frozen.get((g_date, home.get('name'), away.get('name')))
+      started = g.get('status') != 'Preview'
       mkt_h = odds.get('home_spread')
+      line_source = 'live'
+      if mkt_h is None and pred is not None and pred.spread_pick_line is not None:
+        mkt_h, line_source = pred.spread_pick_line, 'kickoff'
+      elif mkt_h is None:
+        line_source = None
       model = g.get('model') or {}
       model_hp = model.get('final_home_prob', model.get('home_prob'))
-      margin = spread_model.best_margin('NFL', model.get('factors'), model_hp) if model_hp is not None else None
+      factors = model.get('factors')
+      if started and pred is not None and pred.home_prob is not None:
+        model_hp = pred.home_prob
+        try:
+          factors = [tuple(f) for f in json.loads(pred.factors_json or '[]')]
+        except (TypeError, ValueError):
+          factors = []
+      margin = spread_model.best_margin('NFL', factors, model_hp) if model_hp is not None else None
       model_h = mb.spread_from_margin(margin)
       sim = sims.get(g['game_id'])
       sim_h = sim['home_avg_score'] if sim else None
       sim_a = sim['away_avg_score'] if sim else None
-      diff = lambda t: diff_pg.get(t.get('name'))
+      if started:
+        diff = lambda t, _d=g_date: diff_before(t.get('name'), _d)
+      else:
+        diff = lambda t: diff_pg.get(t.get('name'))
       read = mb.read_game(mkt_h, model_h, sim_h, sim_a, diff(home), diff(away))
       vol_a, vol_h = offense(away.get('id')), offense(home.get('id'))
       script = mb.script_read(a, h, vol_a, vol_h, sim_a, sim_h)
@@ -9804,6 +9951,7 @@ def _build_nfl_matchup_board(day=None):
         'teams': [team_side(away, diff(away), None if mkt_h is None else -mkt_h, sim_a),
                   team_side(home, diff(home), mkt_h, sim_h)],
         'mkt_h': mkt_h, 'mkt_label': f'{h} {mb.fmt_line(mkt_h)}' if mkt_h is not None else None,
+        'line_source': line_source,
         'move': move,
         'wp': {'market': round(odds['home_implied'] * 100) if odds.get('home_implied') else None,
                'model': round(model_hp * 100) if model_hp is not None else None,
@@ -9825,7 +9973,9 @@ def _build_nfl_matchup_board(day=None):
           'why': mb.why_text(h, a, read, move),
         })
       else:
-        entry.update({'verdict': None, 'why': 'No market spread yet, so there is nothing to read against.'})
+        entry.update({'verdict': None, 'why': ('No market spread was posted for this game, so there is nothing to read against.'
+                                               if g.get('status') != 'Preview' else
+                                               'No market spread yet, so there is nothing to read against.')})
       games_out.append(entry)
 
   day_games = [g for g in games_out if g['day'] == day]
@@ -9973,6 +10123,34 @@ def matchups_page():
   board = _matchup_board(request.args.get('day'))
   resp = make_response(render_template('matchups.html', board=board, subnav_sport='NFL'))
   return _set_last_sport_cookie(resp, 'NFL')
+
+
+_ouija_record_cache = {}  # season -> (ts, data)
+
+
+def _ouija_record(season):
+  hit = _ouija_record_cache.get(season)
+  if hit and time.time() - hit[0] < 3600:
+    return hit[1]
+  import ouija_grading
+  data = ouija_grading.grade_season(season)
+  _ouija_record_cache[season] = (time.time(), data)
+  return data
+
+
+@app.route('/stats/matchups/record')
+def matchups_record_page():
+  """How the Ouija Board's reads have held up, week by week: player sim
+  lines first, then matchup chips, then game verdicts. Rebuilt from stored
+  point-in-time data by ouija_grading.py (cached an hour)."""
+  season = request.args.get('season', type=int) or nfl_api._get_nfl_season()
+  return render_template('matchups_record.html', r=_ouija_record(season), subnav_sport='NFL')
+
+
+@app.route('/api/stats/matchups/record')
+def api_matchups_record():
+  season = request.args.get('season', type=int) or nfl_api._get_nfl_season()
+  return jsonify(_ouija_record(season))
 
 
 @app.route('/api/stats/matchups')

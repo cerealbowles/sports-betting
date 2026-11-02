@@ -13,6 +13,8 @@ Usage:
     python3 espn_odds_backfill.py                       # all sports, all rows missing data
     python3 espn_odds_backfill.py --sport NFL MLB
     python3 espn_odds_backfill.py --dry-run
+    python3 espn_odds_backfill.py --pick-totals [--sport NFL] [--since 2026-10-20] [--dry-run]
+        # only total_pick_line, for completed games in the Totals-removal capture gap
 
 Walks each sport's distinct game_date values in game_predictions, pulls
 that date's ESPN scoreboard once, matches events to rows by exact
@@ -49,6 +51,97 @@ import espn_pickcenter as espn
 
 ALL_SPORTS = ['NFL', 'CFB', 'MLB', 'NBA', 'NHL', 'WNBA']
 RETENTION_FLOOR_DAYS = 290  # conservative margin under ESPN's observed ~300-day cutoff
+TOTALS_CAPTURE_GAP_START = '2026-10-20'  # a few days before the 10-23 Totals removal, to be safe
+
+
+def _event_matcher(sport):
+    """find(row) -> ESPN scoreboard event for a GamePrediction row, or None.
+    game_date is stored ET but ESPN's `dates` param buckets by UTC day, so a
+    night game can sit in the next day's bucket — probe +/-1 day lazily."""
+    events_cache = {}
+
+    def _events_for(date_str):
+        if date_str not in events_cache:
+            events_cache[date_str] = espn.fetch_scoreboard_events(sport, date_str.replace('-', ''))
+        return events_cache[date_str]
+
+    def find(r):
+        key = (_norm(r.home_team), _norm(r.away_team))
+        for offset in (0, 1, -1):
+            probe_date = r.game_date if offset == 0 else _shift(r.game_date, offset)
+            ev = {(_norm(e['home_name']), _norm(e['away_name'])): e for e in _events_for(probe_date)}.get(key)
+            if ev:
+                return ev
+        return None
+    return find
+
+
+def run_pick_totals(sports=None, dry_run=False, since=TOTALS_CAPTURE_GAP_START):
+    """Fill total_pick_line (the market total as of kickoff) on completed
+    games that are missing it. _upsert_predictions stopped saving it when
+    Totals were removed on 2026-10-23 and only started again 2026-11-02;
+    for a game that's already final, the pickcenter closing total IS the
+    last pregame total. Rows that already carry total_close are copied
+    without a network call. Only total_pick_line (and an empty total_open/
+    total_close) is written — no other column is touched."""
+    sports = sports or ALL_SPORTS
+    print('─' * 58)
+    print(f'  ESPN pick-total backfill — {sports} since {since}{"  (dry run — no writes)" if dry_run else ""}')
+    print('─' * 58)
+    os.environ['DISABLE_STARTUP_TASKS'] = '1'
+    from app import app as flask_app, db, GamePrediction
+
+    totals = {'copied': 0, 'fetched': 0, 'unmatched': 0, 'no_odds': 0}
+    with flask_app.app_context():
+        for sport in sports:
+            rows = GamePrediction.query.filter(
+                GamePrediction.sport == sport,
+                GamePrediction.total_pick_line.is_(None),
+                GamePrediction.home_won.isnot(None),
+                GamePrediction.game_date >= since,
+            ).order_by(GamePrediction.game_date).all()
+            if not rows:
+                print(f'\n{sport}: nothing missing.')
+                continue
+            print(f'\n{sport}: {len(rows)} completed game(s) missing a pick total.')
+            find = _event_matcher(sport)
+            for r in rows:
+                if r.total_close is not None:
+                    totals['copied'] += 1
+                    print(f'  = {r.away_team} @ {r.home_team} ({r.game_date}): {r.total_close} (already stored)')
+                    if not dry_run:
+                        r.total_pick_line = r.total_close
+                    continue
+                ev = find(r)
+                if not ev:
+                    totals['unmatched'] += 1
+                    print(f'  ✗ no ESPN match: {r.away_team} @ {r.home_team} ({r.game_date})')
+                    continue
+                pc = espn.fetch_pickcenter(sport, ev['event_id'])
+                time.sleep(0.2)
+                total = pc and (pc['total_close'] if pc['total_close'] is not None else pc['total_open'])
+                if total is None:
+                    totals['no_odds'] += 1
+                    print(f'  – no total posted: {r.away_team} @ {r.home_team} ({r.game_date})')
+                    continue
+                totals['fetched'] += 1
+                print(f'  ✓ {r.away_team} @ {r.home_team} ({r.game_date}): {pc["total_open"]} → {pc["total_close"]}')
+                if not dry_run:
+                    r.total_pick_line = total
+                    if r.total_open is None:
+                        r.total_open = pc['total_open']
+                    if r.total_close is None:
+                        r.total_close = pc['total_close']
+            if not dry_run:
+                db.session.commit()
+
+    print('\n' + '─' * 58)
+    print(f'  Filled from stored total_close: {totals["copied"]}')
+    print(f'  Filled from ESPN pickcenter:    {totals["fetched"]}')
+    print(f'  No total on ESPN:               {totals["no_odds"]}')
+    print(f'  No ESPN event match:            {totals["unmatched"]}')
+    if dry_run:
+        print('\n  Dry run — no writes made. Run without --dry-run to persist.')
 
 
 def run(sports=None, dry_run=False, since=None):
@@ -94,24 +187,9 @@ def run(sports=None, dry_run=False, since=None):
             # from the ET-dated bucket. Fetch +/-1 day lazily, only for rows
             # that don't match on the first pass, rather than tripling every
             # sport's scoreboard calls up front.
-            events_cache = {}
-            def _events_for(date_str):
-                if date_str not in events_cache:
-                    events_cache[date_str] = espn.fetch_scoreboard_events(sport, date_str.replace('-', ''))
-                return events_cache[date_str]
-
-            for game_date in dates:
-                _events_for(game_date)
-
+            find = _event_matcher(sport)
             for r in rows:
-                ev = None
-                key = (_norm(r.home_team), _norm(r.away_team))
-                for offset in (0, 1, -1):
-                    probe_date = r.game_date if offset == 0 else _shift(r.game_date, offset)
-                    by_teams = {(_norm(e['home_name']), _norm(e['away_name'])): e for e in _events_for(probe_date)}
-                    ev = by_teams.get(key)
-                    if ev:
-                        break
+                ev = find(r)
                 if not ev:
                     totals['unmatched'] += 1
                     print(f'  ✗ no ESPN match: {r.away_team} @ {r.home_team} ({r.game_date})')
@@ -162,4 +240,7 @@ if __name__ == '__main__':
         sports = [s.upper() for s in sys.argv[idx + 1:] if not s.startswith('--')]
     if '--since' in sys.argv:
         since = sys.argv[sys.argv.index('--since') + 1]
-    run(sports=sports, dry_run=dry_run, since=since)
+    if '--pick-totals' in sys.argv:
+        run_pick_totals(sports=sports, dry_run=dry_run, since=since or TOTALS_CAPTURE_GAP_START)
+    else:
+        run(sports=sports, dry_run=dry_run, since=since)

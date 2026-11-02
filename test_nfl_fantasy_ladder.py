@@ -28,5 +28,42 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(ladder[1]['players'][0]['move'], -1)
 
 
+class CalibrateDrawsTests(unittest.TestCase):
+    def test_stretches_around_median_and_clamps(self):
+        d = nf.calibrate_draws([2, 6, 10, 14, 18], 'WR', median=10)
+        self.assertEqual(d[2], 10)                      # median unchanged
+        self.assertAlmostEqual(d[1], 10 - 1.75 * 4)     # below stretched by 1.75
+        self.assertAlmostEqual(d[3], 10 + 1.15 * 4)     # above stretched by 1.15
+        self.assertEqual(d[0], 0.0)                     # 10 - 1.75*8 = -4 -> clamped to 0
+
+    def test_unknown_position_untouched(self):
+        self.assertEqual(nf.calibrate_draws([3, 1, 2], 'DST'), [1, 2, 3])
+
+
+class CombinedProjectionTests(unittest.TestCase):
+    def test_implied_points(self):
+        self.assertEqual(nf.implied_team_points(-3.0, 47.0, True), 25.0)
+        self.assertEqual(nf.implied_team_points(-3.0, 47.0, False), 22.0)
+        self.assertIsNone(nf.implied_team_points(None, 47.0, True))
+
+    def test_qb_uses_market(self):
+        c = nf.combined_projection('QB', 20.0, 27.0)
+        self.assertTrue(c['uses_market'])
+        self.assertAlmostEqual(c['point'], round(-4.771 + 0.528 * 20 + 0.578 * 27, 1))
+        self.assertLess(c['floor'], c['point'])
+        self.assertGreater(c['ceiling'], c['point'])
+
+    def test_qb_without_line_falls_back(self):
+        c = nf.combined_projection('QB', 18.0, None)
+        self.assertFalse(c['uses_market'])
+        self.assertEqual(c['point'], 18.0)
+
+    def test_rec_is_projection_and_floor_clamped(self):
+        c = nf.combined_projection('TE', 2.0, 30.0)
+        self.assertEqual(c['point'], 2.0)
+        self.assertEqual(c['floor'], 0.0)
+        self.assertIsNone(nf.combined_projection('DST', 8.0, 20.0))
+
+
 if __name__ == '__main__':
     unittest.main()

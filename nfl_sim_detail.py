@@ -86,9 +86,11 @@ def _agreement_rows(detail, summary, margins):
     return rows
 
 
-def _fantasy_range(sim_draws, sim_median):
+def _fantasy_range(sim_draws, sim_median, position=None):
     if not sim_draws:
         return None
+    import nfl_fantasy
+    sim_draws = nfl_fantasy.calibrate_draws(sim_draws, position, sim_median)
     return {
         'floor': round(sm.percentile(sim_draws, FANTASY_FLOOR_PCT), 1),
         'median': round(sim_median, 1),
@@ -108,7 +110,7 @@ def _player_rows(rows, team_abbr):
             'player_id': r['player_id'], 'name': r['player_name'] or r['player_id'],
             'team': team_abbr, 'position': r['position'] or '?',
             'stat_chips': [c for c in (r.get('stat_compare') or []) if c['pred']],  # hide zero stats
-            'fantasy': _fantasy_range(r['sim'], r['sim_median']),
+            'fantasy': _fantasy_range(r['sim'], r['sim_median'], r['position']),
             'actual': r.get('actual'),
             'sim_draws': r['sim'],
         })

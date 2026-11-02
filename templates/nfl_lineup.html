@@ -226,7 +226,7 @@
     <div class="lab-head">
         <div>
             <h2 id="p-h" class="gy-h2"><span class="mono lab-step">2</span>Read the player points</h2>
-            <p class="set-sub" style="margin-bottom:0;">Each curve is that player's simulated points. Boom = 20+ (TE 15+, DST 10+). Bust = under 5 (DST under 2).</p>
+            <p class="set-sub" style="margin-bottom:0;">Proj is the combined projection (◆ = uses the market's team total, QBs only), with the range past projections actually landed in. Each curve is that player's simulated points. Boom = 20+ (TE 15+, DST 10+). Bust = under 5 (DST under 2).</p>
         </div>
         <div class="lab-tools">
             <div class="lab-pos" role="group" aria-label="Position" id="lab-pos">
@@ -234,7 +234,7 @@
             </div>
             <label class="gy-field">Sort
                 <select id="lab-sort">
-                    <option value="med">Median</option><option value="adj">Matchup-adjusted</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
+                    <option value="med">Sim median</option><option value="comb">Projection</option><option value="adj">Matchup-adjusted</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
                 </select>
             </label>
         </div>
@@ -252,13 +252,14 @@
                 <th scope="col">Player</th>
                 <th scope="col" class="curve-h">Sim points <span>(−5 → 45)</span></th>
                 <th scope="col" class="r">Floor</th><th scope="col" class="r">Median</th><th scope="col" class="r">Ceiling</th>
+                <th scope="col" class="r" title="Combined projection: the fitted projection, plus the market's implied team total for QBs (◆). Range from how past projections missed.">Proj</th>
                 <th scope="col" class="r">Boom</th><th scope="col" class="r">Bust</th><th scope="col" class="r">Salary</th>
                 <th scope="col" class="r">Lock / ban</th>
             </tr></thead>
             <tbody>
             {% for p in pool %}
             {% set L = p.id in locks %}{% set B = p.id in bans %}
-            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-adj="{{ p.adj_median if p.adj_median is defined else p.sim_median }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
+            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-adj="{{ p.adj_median if p.adj_median is defined else p.sim_median }}" data-comb="{{ p.combined if p.combined is not none else -1 }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
                 <th scope="row">
                     <span class="lab-pl">{{ p.name }}{% if p.likely_out %}<span class="gy-tag bad">Out?</span>{% endif %}{% if p.id in in_balanced %}<span class="lab-in">● in lineup</span>{% endif %}</span>
                     <span class="lab-pl-sub">{{ p.position }} · {{ p.team }} vs {{ p.opponent }}{% if p.mgrade %} · <span class="lab-mg {{ p.mtone }}" title="{{ p.opponent }} defense vs {{ p.position }}s">{{ p.mgrade }} {{ '+' if p.mpct > 0 }}{{ p.mpct }}%</span>{% endif %}</span>
@@ -267,6 +268,7 @@
                 <td class="r mono muted">{{ p.sim_floor | round(1) if p.game_id else '—' }}</td>
                 <td class="r mono">{{ p.sim_median | round(1) }}</td>
                 <td class="r mono">{{ p.sim_ceiling | round(1) }}</td>
+                <td class="r mono lab-proj"{% if p.combined is not none %} title="{{ p.comb_floor }}–{{ p.comb_ceiling }} likely range{% if p.comb_market %} · uses the market's {{ p.implied_pts }}-point team total{% endif %}"{% endif %}>{% if p.combined is not none %}{{ p.combined }}{% if p.comb_market %}<span class="lab-mk" aria-label="uses market total">◆</span>{% endif %}<span class="lab-proj-r">{{ p.comb_floor | round | int }}–{{ p.comb_ceiling | round | int }}</span>{% else %}—{% endif %}</td>
                 <td class="r mono" style="color:{{ 'var(--win)' if p.boom_pct and p.boom_pct >= 30 else 'var(--silver)' }};">{{ p.boom_pct ~ '%' if p.boom_pct is not none else '—' }}</td>
                 <td class="r mono" style="color:{{ '#ff8a8a' if p.bust_pct and p.bust_pct >= 40 else 'var(--silver)' }};">{{ p.bust_pct ~ '%' if p.bust_pct is not none else '—' }}</td>
                 <td class="r"><span class="mono">${{ '{:,}'.format(p.salary) }}</span>{% if p.value_per_k %}<span class="lab-vk mono">{{ p.value_per_k }}/k</span>{% endif %}</td>

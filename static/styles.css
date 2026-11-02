@@ -4177,3 +4177,29 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .lab-move { font-size: 0.7rem; }
 .lab-move.up { color: var(--win); } .lab-move.down { color: var(--loss); }
 .lab-tier-empty { padding: 6px 0; color: #6B5D70; }
+
+/* ── Séance Log (/stats/matchups/record) ── */
+.ob-crumbs { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.ob-rec-table { min-width: 0; font-size: 0.82rem; }
+.ob-rec-table td, .ob-rec-table th { white-space: nowrap; }
+.ob-uo { display: block; font-size: 0.66rem; color: var(--muted-2); }
+.gy-table-wrap { scrollbar-color: var(--line) transparent; }
+@media (max-width: 560px) { .ob-hide-sm { display: none; } .ob-rec-table td, .ob-rec-table th { padding-left: 6px; padding-right: 6px; } }
+.ob-rec-table .muted { color: var(--muted-2); }
+.ob-tones { display: flex; flex-direction: column; gap: 6px; }
+.ob-tone-row { display: grid; grid-template-columns: 76px 64px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 0.82rem; }
+.ob-tone-row .ob-chip { justify-content: center; }
+.ob-calls { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 16px; }
+.ob-call { display: grid; grid-template-columns: minmax(0, 1fr) 46px 14px 46px 14px; gap: 6px; align-items: center; padding: 4px 0; border-top: 1px solid var(--line-2); font-size: 0.8rem; }
+.ob-call .mono { text-align: right; }
+.ob-rec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.ob-rec-grid .ob-k { margin-bottom: 6px; }
+.ob-rec-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line-2); font-size: 0.82rem; }
+.ob-badge-inline { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 4px; background: var(--line); color: var(--silver); }
+.ob-badge-inline.ob-v-target { background: var(--win-bg); color: var(--win); }
+.ob-badge-inline.ob-v-lean { background: #3A2E14; color: var(--gold); }
+.ob-badge-inline.ob-v-avoid { background: var(--loss-bg); color: var(--loss); }
+.lab-proj { color: var(--text); }
+.lab-proj-r { display: block; font-size: 0.66rem; color: var(--muted-2); }
+.lab-mk { font-size: 0.6rem; color: var(--orange); margin-left: 2px; }
+.ob-proj { font-size: 0.62rem; color: var(--silver); font-weight: 500; }
