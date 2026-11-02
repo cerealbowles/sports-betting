@@ -8570,11 +8570,12 @@ def _nfl_implied_points_by_team(games, live_odds=None):
 _nfl_snapshot_last = {}
 
 
-def _snapshot_nfl_projections(pool, games, season, week):
-  """Upsert NflProjectionSnapshot for players whose game hasn't started
-  (at most every 20 minutes per week). Never fails the page."""
+def _snapshot_nfl_projections(pool, games, season, week, force=False):
+  """Upsert NflProjectionSnapshot for players whose game hasn't started.
+  Page loads call this at most every 20 minutes per week; the scheduled
+  _snapshot_nfl_projections_job passes force=True. Never raises."""
   key = (season, week)
-  if time.time() - _nfl_snapshot_last.get(key, 0) < 1200:
+  if not force and time.time() - _nfl_snapshot_last.get(key, 0) < 1200:
     return
   _nfl_snapshot_last[key] = time.time()
   try:
@@ -11675,6 +11676,43 @@ def _simulate_nfl_week():
         pass
 
 
+SNAPSHOT_LOOKAHEAD_HOURS = 6
+
+
+def _snapshot_nfl_projections_job():
+  """Every 15 minutes: refresh pregame projection snapshots while any NFL
+  game kicks off within SNAPSHOT_LOOKAHEAD_HOURS, so the snapshot graded on
+  /stats/matchups/record is from <=15 minutes before kickoff whether or not
+  anyone opened the board or the Lab. Market lines come from GamePrediction,
+  which the 5-minute cache warmer keeps current. No-op on non-game days."""
+  try:
+    with app.app_context():
+      light = nfl_api.build_week_games_light(None)
+      games = light['games']
+      now = datetime.now(timezone.utc)
+      soon = False
+      for g in games:
+        if g.get('status') != 'Preview' or not g.get('game_time_utc'):
+          continue
+        try:
+          kick = datetime.fromisoformat(g['game_time_utc'].replace('Z', '+00:00'))
+        except ValueError:
+          continue
+        if now <= kick <= now + timedelta(hours=SNAPSHOT_LOOKAHEAD_HOURS):
+          soon = True
+          break
+      if not soon:
+        return
+      pool = nfl_fantasy.build_player_pool(games)
+      if not pool:
+        return
+      nfl_fantasy.attach_sim_data(pool, light['season'], light['week'])
+      nfl_fantasy.attach_combined(pool, _nfl_implied_points_by_team(games))
+      _snapshot_nfl_projections(pool, games, light['season'], light['week'], force=True)
+  except Exception:
+    app.logger.exception('projection snapshot job failed')
+
+
 def _simulate_nba_slate():
     """Daily background job: runs nba_game_simulator.simulate_slate() for
     today's NBA slate and persists results to NbaSimResult/NbaSimGame —
@@ -11864,6 +11902,10 @@ def _start_cache_warmer():
     # _warm_all_caches cron tick.
     scheduler.add_job(_check_finalized_games, 'interval',
                       minutes=20, id='check_finalized_games')
+    # Pregame projection snapshots for grading the combined projection —
+    # every 15 min, but a no-op unless an NFL game kicks off within 6 hours.
+    scheduler.add_job(_snapshot_nfl_projections_job, 'interval',
+                      minutes=15, id='nfl_projection_snapshot')
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
 
