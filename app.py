@@ -8,6 +8,7 @@ warnings.filterwarnings('ignore', message='.*timezone.*')
 from dotenv import load_dotenv
 load_dotenv()
 
+from urllib.parse import urlencode
 from flask import Flask, request, redirect, url_for, render_template, abort, jsonify, make_response, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect, text, event
@@ -34,6 +35,7 @@ import nhl_game_detail
 import nfl_api
 import nfl_model
 import nfl_fantasy
+import nfl_fd_salaries
 import nfl_recap
 import nfl_stats_db
 import nfl_game_detail
@@ -791,6 +793,36 @@ class NflRecapWeek(db.Model):
                                         default=lambda: datetime.now(timezone.utc))
 
   __table_args__ = (db.UniqueConstraint('season', 'week', name='uq_nfl_recap_week'),)
+
+
+class NflFdSalary(db.Model):
+  """Real FanDuel prices from an uploaded players-list CSV (see
+  nfl_fd_salaries.py). One row per player per FanDuel slate; a slate is one
+  contest's player pool (a main slate, or a single game). season/week are
+  the Lab week the file was uploaded from. Feeds the Lab's value column and
+  real-price builds, and nfl_value_backtest.py's grading once games finish."""
+  __tablename__ = 'nfl_fd_salaries'
+  __table_args__ = (db.UniqueConstraint('slate_id', 'position', 'team', 'norm_name', name='uq_fd_slate_player'),)
+  id              = db.Column(db.Integer, primary_key=True)
+  season          = db.Column(db.Integer, nullable=False, index=True)
+  week            = db.Column(db.Integer, nullable=False, index=True)
+  slate_id        = db.Column(db.String(40), nullable=False, index=True)
+  fd_id           = db.Column(db.String(40))
+  name            = db.Column(db.String(80), nullable=False)
+  norm_name       = db.Column(db.String(80), nullable=False)
+  position        = db.Column(db.String(4), nullable=False)
+  team            = db.Column(db.String(5), nullable=False)
+  game            = db.Column(db.String(12), nullable=False)
+  salary          = db.Column(db.Integer, nullable=False)
+  fppg            = db.Column(db.Float)
+  roster_position = db.Column(db.String(40))
+  injury          = db.Column(db.String(8))
+  uploaded_at     = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+  def as_row(self):
+    return {'fd_id': self.fd_id, 'name': self.name, 'norm': self.norm_name, 'position': self.position,
+            'team': self.team, 'game': self.game, 'salary': self.salary, 'fppg': self.fppg,
+            'roster_position': self.roster_position, 'injury': self.injury or ''}
 
 
 class NflSimResult(db.Model):
@@ -8738,10 +8770,23 @@ def nfl_lineup():
   week_ctx = nfl_api.build_week_games_light(week)
 
   all_games = week_ctx['games']
+  # `fmt`: 'standard' (classic 9-man roster) or 'single' (one game, MVP at
+  # 1.5x + 5 AnyFLEX — see nfl_fantasy.optimize_single_game()).
+  fmt = 'single' if request.args.get('fmt') == 'single' else 'standard'
+  single = fmt == 'single'
   if 'filtered' in request.args:
     selected_ids = set(request.args.getlist('games'))
   else:
     selected_ids = {g['game_id'] for g in all_games}
+  if single:
+    # Exactly one game. Keep the first picked one (in kickoff order) if any,
+    # else default to the next game that hasn't started, else the last one.
+    picked = [g for g in all_games if g['game_id'] in selected_ids] if 'filtered' in request.args else []
+    if not picked and all_games:
+      now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M')
+      upcoming = [g for g in all_games if (g.get('game_time_utc') or '') >= now_iso]
+      picked = upcoming or all_games[-1:]
+    selected_ids = {picked[0]['game_id']} if picked else set()
   selected_games = [g for g in all_games if g['game_id'] in selected_ids]
 
   # Group games into DFS slate windows (Thursday, international, Sunday
@@ -8759,27 +8804,61 @@ def nfl_lineup():
   def _clamp(val, lo, hi, default):
     return default if val is None else max(lo, min(hi, val))
 
-  salary_cap = _clamp(request.args.get('cap', type=int), 20000, 200000, nfl_fantasy.SALARY_CAP)
+  salary_cap = _clamp(request.args.get('cap', type=int), 20000, 200000,
+                      nfl_fantasy.SINGLE_GAME_CAP if single else nfl_fantasy.SALARY_CAP)
   salary_cap = int(round(salary_cap / nfl_fantasy.SALARY_STEP)) * nfl_fantasy.SALARY_STEP
   roster_requirements = {
     pos: _clamp(request.args.get(f'req_{pos.lower()}', type=int), 0, 6, nfl_fantasy.ROSTER_REQUIREMENTS[pos])
     for pos in ('QB', 'RB', 'WR', 'TE', 'FLEX', 'DST')
   }
-  stack_min = _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
-  target = _clamp(request.args.get('target', type=int), 60, 250, 150)
+  stack_min = 0 if single else _clamp(request.args.get('stack_min', type=int), 0, 2, 0)
+  target = _clamp(request.args.get('target', type=int), 30, 250, 100 if single else 150)
+  mvp_salary_mult = nfl_fantasy.SINGLE_GAME_MVP_SALARY_MULT
+  if request.args.get('mvp_sal') in ('1', '1.0'):
+    mvp_salary_mult = 1.0
   locks = [pid for pid in request.args.getlist('lock') if pid]
   bans = set(pid for pid in request.args.getlist('ban') if pid)
 
   season, wk = week_ctx['season'], week_ctx['week']
   pool = nfl_fantasy.build_player_pool(selected_games) if selected_games else []
-  nfl_fantasy.assign_salaries(pool)
+  if single:
+    pool = [p for p in pool if p['position'] in nfl_fantasy.SINGLE_GAME_POSITIONS]
+    nfl_fantasy.assign_single_game_salaries(pool)
+  else:
+    nfl_fantasy.assign_salaries(pool)
   draws_by_id = {}
   if pool:
     nfl_fantasy.attach_sim_data(pool, season, wk)
     draws_by_id = {pid: r['sim'] for pid, r in nfl_fantasy._sim_rows_by_player(season, wk).items() if r.get('sim')}
     nfl_fantasy.attach_combined(pool, _nfl_implied_points_by_team(selected_games))
-    if len(selected_games) == len(all_games):
+    if not single and len(selected_games) == len(all_games):
       _snapshot_nfl_projections(pool, all_games, season, wk)
+
+  # Real FanDuel prices (uploaded players-list CSV, see nfl_fd_salaries.py).
+  # When a stored slate covers the games on screen, its prices replace the
+  # synthetic ones for builds (unless ?prices=model) and players FanDuel
+  # doesn't list are left out of builds. 'model_salary' keeps our own price
+  # either way, so the value column can compare the two.
+  fd_slates = _nfl_fd_slates(season, wk) if all_games else {}
+  fd_slate_id = nfl_fd_salaries.pick_slate(fd_slates, selected_games, single)
+  use_fd = bool(fd_slate_id) and request.args.get('prices') != 'model'
+  fd_info = None
+  if fd_slate_id:
+    matched = nfl_fd_salaries.match_pool(pool, fd_slates[fd_slate_id])
+    for p in pool:
+      r = matched.get(p['id'])
+      p['model_salary'] = p['salary']
+      p['fd_salary'] = r['salary'] if r else None
+      p['fd_fppg'] = r['fppg'] if r else None
+      p['price_gap'] = p['model_salary'] - r['salary'] if r else None
+      p['fd_injury'] = r['injury'] if r else ''
+      p['fd_out'] = bool(r) and r['injury'] in nfl_fd_salaries.FD_OUT
+      if use_fd and r:
+        p['salary'] = r['salary']
+    fd_info = {'slate_id': fd_slate_id, 'use': use_fd, 'matched': len(matched), 'pool': len(pool),
+               'games': len({r['game'] for r in fd_slates[fd_slate_id]}),
+               'unmatched': [p['name'] for p in pool if p.get('fd_salary') is None][:8],
+               'out': [f"{p['name']} ({p['fd_injury']})" for p in pool if p.get('fd_out')]}
 
   # Likely out: projected for real volume but the simulator (which reads the
   # current depth chart) barely plays them — the Week 7 zeros all looked like
@@ -8807,16 +8886,24 @@ def nfl_lineup():
       p['adj_median'] = round(p['sim_median'] * k, 2)
       p['adj_ceiling'] = round(p['sim_ceiling'] * k, 2)
 
-  usable = [p for p in pool if not p['likely_out']]
+  usable = [p for p in pool if not p['likely_out'] and not p.get('fd_out')
+            and (not use_fd or p.get('fd_salary') is not None)]
   build_pool = [p for p in usable if p['id'] not in bans]
   lock_ids = [pid for pid in locks if pid not in bans]
   ladder = {pos: nfl_fantasy.start_sit_ladder(usable, pos) for pos in ('QB', 'RB', 'WR', 'TE')}
 
   def _build(objective, with_locks=True):
     pool_ = build_pool if with_locks else usable
-    res = nfl_fantasy.optimize_lineup(pool_, cap=salary_cap, roster_requirements=roster_requirements,
-                                      objective=objective, stack_min=stack_min,
-                                      locks=lock_ids if with_locks else None) if pool_ else None
+    if not pool_:
+      return None
+    if single:
+      res = nfl_fantasy.optimize_single_game(pool_, cap=salary_cap, objective=objective,
+                                             locks=lock_ids if with_locks else None,
+                                             mvp_salary_mult=mvp_salary_mult)
+    else:
+      res = nfl_fantasy.optimize_lineup(pool_, cap=salary_cap, roster_requirements=roster_requirements,
+                                        objective=objective, stack_min=stack_min,
+                                        locks=lock_ids if with_locks else None)
     if not res:
       return None
     dist = nfl_fantasy.evaluate_lineup_distribution(res['lineup'], season, wk)
@@ -8826,7 +8913,7 @@ def nfl_lineup():
       dist['p_target'] = round(sum(1 for v in d if v >= target) / len(d) * 100)
       res['draws'] = [round(v, 1) for v in d]
     res['dist'] = dist
-    res['total_objective'] = round(sum(p[objective] for p in res['lineup']), 1)
+    res['total_objective'] = round(sum(p[objective] * p.get('mult', 1.0) for p in res['lineup']), 1)
     return res
 
   build_defs = [
@@ -8863,6 +8950,16 @@ def nfl_lineup():
     p['curve'] = _curve(nfl_fantasy.calibrate_draws(d, p['position'], p.get('sim_median'))) if d else None
     p['median_x'] = round(max(0, min(100, (p['sim_median'] + 5) / 50 * 100)), 1)
     p['value_per_k'] = round(p['sim_median'] / (p['salary'] / 1000), 2) if p['salary'] else None
+  # Value tag (context, not a pick — nfl_value_backtest.py grades it): FanDuel
+  # charges at least $500 less than our model would, and the sim's points per
+  # real $1k are at or above the pool median. Only with real prices loaded.
+  if use_fd:
+    vals = sorted(p['value_per_k'] for p in usable if p.get('value_per_k') is not None)
+    med_val = vals[len(vals) // 2] if vals else None
+    for p in pool:
+      p['fd_value'] = bool(med_val is not None and p.get('price_gap') is not None and p['price_gap'] >= 500
+                           and p.get('value_per_k') is not None and p['value_per_k'] >= med_val
+                           and not p['likely_out'] and not p.get('fd_out'))
 
   # Stacks: QB + his own WR/TE, judged on PAIRED draws (same simulated game),
   # so "both boom" is the joint rate, not two marginals multiplied.
@@ -8926,18 +9023,83 @@ def nfl_lineup():
   roster_requirements_summary = (', '.join(req_parts[:-1]) + ' and ' + req_parts[-1]) if len(req_parts) > 1 else (req_parts[0] if req_parts else 'no players')
   if stack_min:
     roster_requirements_summary += f", with at least {stack_min} WR/TE from the QB's own team"
+  if single:
+    roster_requirements_summary = (f"1 MVP ({nfl_fantasy.SINGLE_GAME_MVP_POINTS_MULT:g}x points, "
+                                   f"{mvp_salary_mult:g}x salary) and {nfl_fantasy.SINGLE_GAME_FLEX} AnyFLEX "
+                                   f"(QB/RB/WR/TE/DST), from both teams")
 
+  methodology = nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min, None,
+                                                sim_enabled=True, objective='sim_median')
+  if single:
+    methodology['single_game'] = {'mvp_points': nfl_fantasy.SINGLE_GAME_MVP_POINTS_MULT, 'mvp_salary': mvp_salary_mult,
+                                  'flex': nfl_fantasy.SINGLE_GAME_FLEX, 'band': nfl_fantasy.SINGLE_GAME_SALARY_BAND,
+                                  'exponent': nfl_fantasy.SINGLE_GAME_SALARY_EXPONENT}
   resp = make_response(render_template('nfl_lineup.html', week_ctx=week_ctx, subnav_sport='NFL',
                          all_games=all_games, games_by_slot=games_by_slot, selected_ids=selected_ids,
                          pool=pool, usable_count=len(usable), builds=builds, in_balanced=in_balanced,
                          locks=lock_ids, bans=bans, stacks=stacks[:4], recap=recap, target=target,
                          ladder=ladder, use_adj=use_adj, damping=damping,
+                         fmt=fmt, single=single, mvp_salary_mult=mvp_salary_mult,
+                         fd_info=fd_info, fdmsg=request.args.get('fdmsg'),
+                         fd_slates=[{'id': sid, 'players': len(rows), 'games': sorted({r['game'] for r in rows})}
+                                    for sid, rows in fd_slates.items()],
+                         single_game={'band': nfl_fantasy.SINGLE_GAME_SALARY_BAND,
+                                      'exponent': nfl_fantasy.SINGLE_GAME_SALARY_EXPONENT,
+                                      'mvp_points': nfl_fantasy.SINGLE_GAME_MVP_POINTS_MULT,
+                                      'flex': nfl_fantasy.SINGLE_GAME_FLEX},
                          salary_cap=salary_cap, roster_requirements=roster_requirements, stack_min=stack_min,
                          roster_requirements_summary=roster_requirements_summary,
-                         methodology=nfl_fantasy.methodology_context(salary_cap, roster_requirements, stack_min,
-                                                                       None, sim_enabled=True,
-                                                                       objective='sim_median')))
+                         methodology=methodology))
   return _set_last_sport_cookie(resp, 'NFL')
+
+@app.route('/nfl/lineup/fd-upload', methods=['POST'])
+def nfl_fd_upload():
+  """Stores a FanDuel players-list CSV for the Lab week it came from.
+  Re-uploading the same slate replaces it (prices can move before lock)."""
+  season = request.form.get('season', type=int)
+  week = request.form.get('week', type=int)
+  back = request.form.get('back') or ''
+  if not back.startswith('/') or back.startswith('//'):
+    back = url_for('nfl_lineup', week=week)
+
+  def _back(msg):
+    sep = '&' if '?' in back else '?'
+    return redirect(back.split('#')[0] + sep + urlencode({'fdmsg': msg}) + '#fd-prices')
+  f = request.files.get('csv')
+  if not (season and week and f):
+    return _back('Pick a FanDuel players-list CSV to upload.')
+  try:
+    slate_id, rows = nfl_fd_salaries.parse_players_list(f.read().decode('utf-8', errors='replace'))
+  except ValueError as e:
+    return _back(str(e))
+  NflFdSalary.query.filter_by(slate_id=slate_id).delete()
+  for r in rows:
+    db.session.add(NflFdSalary(season=season, week=week, slate_id=slate_id, fd_id=r['fd_id'], name=r['name'],
+                               norm_name=r['norm'], position=r['position'], team=r['team'], game=r['game'],
+                               salary=r['salary'], fppg=r['fppg'], roster_position=r['roster_position'][:40],
+                               injury=r['injury']))
+  db.session.commit()
+  games = sorted({r['game'] for r in rows})
+  return _back(f"Loaded FanDuel prices: {len(rows)} players, {len(games)} game{'s' if len(games) != 1 else ''} "
+               f"({', '.join(games[:4])}{'…' if len(games) > 4 else ''}).")
+
+
+@app.route('/nfl/lineup/fd-delete', methods=['POST'])
+def nfl_fd_delete():
+  slate_id = request.form.get('slate_id', '')
+  NflFdSalary.query.filter_by(slate_id=slate_id).delete()
+  db.session.commit()
+  back = request.form.get('back') or ''
+  return redirect(back if back.startswith('/') and not back.startswith('//') else url_for('nfl_lineup'))
+
+
+def _nfl_fd_slates(season, week):
+  """{slate_id: [rows]} of every FanDuel upload for this Lab week."""
+  slates = defaultdict(list)
+  for r in NflFdSalary.query.filter_by(season=season, week=week).all():
+    slates[r.slate_id].append(r.as_row())
+  return dict(slates)
+
 
 NFL_SIM_CARD_SLOTS = [('QB', 'QB'), ('RB', 'RB1'), ('RB', 'RB2'), ('WR', 'WR1'), ('WR', 'WR2'), ('WR', 'WR3'), ('TE', 'TE'),
                        ('DST', 'DST')]

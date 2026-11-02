@@ -90,6 +90,23 @@
 .dfs-sort-th:hover { color: var(--text); }
 .dfs-sort-arrow { font-size: 0.7rem; }
 .dfs-pool-empty { color: var(--text-muted); font-size: 0.85rem; padding: 14px 0; text-align: center; }
+
+/* ── FanDuel prices panel + value tag ── */
+.lab-fd { margin-bottom: 16px; padding: 12px 14px; }
+.lab-fd summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.lab-fd-body { margin-top: 10px; }
+.lab-fd-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.lab-fd-form label { display: flex; flex-direction: column; gap: 4px; }
+.lab-fd-msg { margin: 8px 0 0; font-size: 0.85rem; color: var(--text); }
+.lab-fd-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.lab-fd-list li { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+.lab-val { margin-left: 6px; color: var(--win); border-color: var(--win); }
+
+/* ── Contest format toggle + single-game MVP row ── */
+.lab-fmt { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.lab-fmt .gy-seg { flex: 0 0 auto; }
+.lab-build-list li.lab-mvp .slot { color: var(--orange); font-weight: 800; }
+.lab-build-list li.lab-mvp { background: color-mix(in srgb, var(--orange) 8%, transparent); }
 </style>
 {% endblock %}
 
@@ -101,7 +118,7 @@
 
 <div class="hub-greeting">
     <div>
-        <span class="hub-kicker">NFL · Week {{ week_ctx.week }} · ${{ '{:,}'.format(salary_cap) }} cap · sims rerun daily</span>
+        <span class="hub-kicker">NFL · Week {{ week_ctx.week }} · {{ 'Single game · MVP + 5 AnyFLEX' if single else 'Standard' }} · ${{ '{:,}'.format(salary_cap) }} cap · sims rerun daily</span>
         <h1 class="hub-title">The Lab</h1>
     </div>
     <ol class="lab-flow" aria-label="Workflow">
@@ -121,9 +138,9 @@
         <a href="{{ url_for('nfl_recap_page') }}" class="gy-seg-a">Recap</a>
     </div>
     <div class="lab-weeknav">
-        {% if week_ctx.prev_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.prev_week) }}" class="gy-btn">◂ Week {{ week_ctx.prev_week }}</a>{% endif %}
+        {% if week_ctx.prev_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.prev_week, fmt=fmt if single else None) }}" class="gy-btn">◂ Week {{ week_ctx.prev_week }}</a>{% endif %}
         <span class="mono">Week {{ week_ctx.week }}{% if week_ctx.is_current_week %} · current{% endif %}</span>
-        {% if week_ctx.next_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.next_week) }}" class="gy-btn">Week {{ week_ctx.next_week }} ▸</a>{% endif %}
+        {% if week_ctx.next_week %}<a href="{{ url_for('nfl_lineup', week=week_ctx.next_week, fmt=fmt if single else None) }}" class="gy-btn">Week {{ week_ctx.next_week }} ▸</a>{% endif %}
     </div>
 </div>
 
@@ -134,6 +151,57 @@
 
 <div id="dfs-view-builder-panel" class="lab">
 
+<div class="lab-fmt">
+    <div class="gy-seg" role="group" aria-label="Contest format">
+        <a href="{{ url_for('nfl_lineup', week=week_ctx.week) }}" class="gy-seg-a{{ ' on' if not single }}"{% if not single %} aria-current="page"{% endif %}>Standard</a>
+        <a href="{{ url_for('nfl_lineup', week=week_ctx.week, fmt='single') }}" class="gy-seg-a{{ ' on' if single }}"{% if single %} aria-current="page"{% endif %}>Single game · MVP</a>
+    </div>
+    {% set _bq = request.args.to_dict(flat=False) %}{% set _ = _bq.pop('fdmsg', None) %}
+    {% set back_url = url_for('nfl_lineup', **_bq) %}
+    <span class="small">{% if single %}One game. MVP scores {{ single_game.mvp_points }}x and costs {{ mvp_salary_mult }}x, plus {{ single_game.flex }} AnyFLEX (QB/RB/WR/TE/DST; kickers aren't modeled). Both teams must be used.{% else %}QB, 2 RB, 3 WR, TE, FLEX, DST across the games you pick.{% endif %}</span>
+</div>
+
+<details class="card lab-fd" id="fd-prices"{% if fdmsg or not fd_info %} open{% endif %}>
+    <summary>
+        <strong>FanDuel prices</strong>
+        <span class="small">{% if fd_info %}{{ 'Using' if fd_info.use else 'Loaded, not used:' }} real prices for {{ fd_info.matched }} of {{ fd_info.pool }} players ({{ fd_info.games }} game{{ 's' if fd_info.games != 1 }}){% else %}Not loaded for these games. Builds use synthetic prices.{% endif %}</span>
+    </summary>
+    {% if fdmsg %}<p class="lab-fd-msg">{{ fdmsg }}</p>{% endif %}
+    <div class="lab-fd-body">
+        <form method="post" action="{{ url_for('nfl_fd_upload') }}" enctype="multipart/form-data" class="lab-fd-form">
+            <input type="hidden" name="season" value="{{ week_ctx.season }}">
+            <input type="hidden" name="week" value="{{ week_ctx.week }}">
+            <input type="hidden" name="back" value="{{ back_url }}">
+            <label class="small">FanDuel players list (.csv) for {{ 'this game' if single else 'this slate' }}
+                <input type="file" name="csv" accept=".csv,text/csv" required>
+            </label>
+            <button type="submit" class="gy-btn">Upload</button>
+        </form>
+        <p class="small" style="margin:6px 0 0;">On fanduel.com, open the contest and choose <em>Download players list</em>. Single-game files price the single-game view, multi-game files the standard view.</p>
+        {% if fd_info %}
+        {% set _pq = request.args.to_dict(flat=False) %}{% set _ = _pq.pop('fdmsg', None) %}{% set _ = _pq.update({'prices': [] if not fd_info.use else ['model']}) %}
+        <p class="small" style="margin:8px 0 0;">
+            <a href="{{ url_for('nfl_lineup', **_pq) }}#fd-prices">{{ 'Build with synthetic prices instead' if fd_info.use else 'Build with FanDuel prices' }}</a>
+            {% if fd_info.out %} · Marked out by FanDuel (left out of builds): {{ fd_info.out | join(', ') }}{% endif %}
+            {% if fd_info.unmatched %} · Not on FanDuel's list (left out of builds): {{ fd_info.unmatched | join(', ') }}{% endif %}
+        </p>
+        {% endif %}
+        {% if fd_slates %}
+        <ul class="lab-fd-list small">
+            {% for sl in fd_slates %}
+            <li>
+                <span>Slate {{ sl.id }} · {{ sl.players }} players · {{ sl.games | join(', ') if sl.games | length <= 3 else (sl.games | length) ~ ' games' }}{% if fd_info and fd_info.slate_id == sl.id %} · <strong>in use</strong>{% endif %}</span>
+                <form method="post" action="{{ url_for('nfl_fd_delete') }}" style="display:inline;">
+                    <input type="hidden" name="slate_id" value="{{ sl.id }}"><input type="hidden" name="back" value="{{ back_url }}">
+                    <button type="submit" class="gy-link-btn">Remove</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</details>
+
 {% if not all_games %}
 <div class="card mp-empty">No games found for Week {{ week_ctx.week }}.</div>
 {% else %}
@@ -142,6 +210,8 @@
 {% if use_adj %}<input type="hidden" name="adj" value="1">{% endif %}
 <input type="hidden" name="week" value="{{ week_ctx.week }}">
 <input type="hidden" name="filtered" value="1">
+{% if single %}<input type="hidden" name="fmt" value="single">{% endif %}
+{% if request.args.get('prices') == 'model' %}<input type="hidden" name="prices" value="model">{% endif %}
 {% for pid in locks %}<input type="hidden" name="lock" value="{{ pid }}">{% endfor %}
 {% for pid in bans %}<input type="hidden" name="ban" value="{{ pid }}">{% endfor %}
 
@@ -150,21 +220,23 @@
     <div class="lab-head">
         <div>
             <h2 id="g-h" class="gy-h2"><span class="mono lab-step">1</span>Simulate the slate</h2>
-            <p class="set-sub" style="margin-bottom:0;">150 drive-by-drive sims per game. Tick a game to include or drop it; open it for the sim.</p>
+            <p class="set-sub" style="margin-bottom:0;">150 drive-by-drive sims per game. {% if single %}Pick the one game this contest covers; open it for the sim.{% else %}Tick a game to include or drop it; open it for the sim.{% endif %}</p>
         </div>
+        {% if not single %}
         <div class="gy-seg lab-presets" role="group" aria-label="Slate preset">
             <button type="button" onclick="dfsToggleGroup(true)">All <span class="mono">{{ all_games | length }}</span></button>
             {% for group in games_by_slot %}
             <button type="button" onclick="dfsToggleGroup(false); dfsToggleGroup(true, '{{ group.key }}')">{{ group.label }} <span class="mono">{{ group.games | length }}</span></button>
             {% endfor %}
         </div>
+        {% endif %}
     </div>
     <div class="lab-games">
         {% for g in all_games %}
         {% set on = g.game_id in selected_ids %}
         <div class="lab-game{{ ' on' if on }}" data-game="{{ g.game_id }}">
             <label class="lab-game-pick">
-                <span class="lab-game-top"><span class="game-time" data-utc="{{ g.game_time_utc }}">—</span><span class="lab-check"><input type="checkbox" name="games" value="{{ g.game_id }}" data-slot="{{ g.slot_key }}"{% if on %} checked{% endif %} onchange="this.closest('.lab-game').classList.toggle('on', this.checked)"> <span class="lbl-in">In</span><span class="lbl-out">Out</span></span></span>
+                <span class="lab-game-top"><span class="game-time" data-utc="{{ g.game_time_utc }}">—</span><span class="lab-check"><input type="{{ 'radio' if single else 'checkbox' }}" name="games" value="{{ g.game_id }}" data-slot="{{ g.slot_key }}"{% if on %} checked{% endif %} onchange="{% if single %}document.querySelectorAll('.lab-game.on').forEach(function (el) { el.classList.remove('on'); }); {% endif %}this.closest('.lab-game').classList.toggle('on', this.checked)"> <span class="lbl-in">In</span><span class="lbl-out">Out</span></span></span>
                 <span class="lab-game-row"><span>{{ g.away.abbrev }}</span><span class="mono">{{ g.sim.away_avg_score | round | int if g.sim else '' }}</span></span>
                 <span class="lab-game-row"><span>{{ g.home.abbrev }}</span><span class="mono">{{ g.sim.home_avg_score | round | int if g.sim else '' }}</span></span>
                 {% if g.sim %}<span class="lab-wp" title="{{ g.away.abbrev }} {{ g.sim.away_win_pct }}% · {{ g.home.abbrev }} {{ g.sim.home_win_pct }}%"><span style="width:{{ g.sim.away_win_pct }}%;"></span><span class="h"></span></span>{% else %}<span class="lab-wp none"></span>{% endif %}
@@ -201,12 +273,16 @@
     <details class="lab-settings">
         <summary>Roster &amp; cap · <span class="small">{{ roster_requirements_summary }} · ${{ '{:,}'.format(salary_cap) }} cap · target {{ target }}</span></summary>
         <div class="lab-settings-row">
+            {% if single %}
+            <label class="lab-num wide" title="What the MVP slot costs relative to the player's listed salary.">MVP salary<select name="mvp_sal"><option value="1.5"{% if mvp_salary_mult != 1 %} selected{% endif %}>1.5x</option><option value="1"{% if mvp_salary_mult == 1 %} selected{% endif %}>1x (same)</option></select></label>
+            {% else %}
             {% for pos in ['QB', 'RB', 'WR', 'TE', 'FLEX', 'DST'] %}
             <label class="lab-num">{{ pos }}<input type="number" name="req_{{ pos | lower }}" min="0" max="6" value="{{ roster_requirements[pos] }}"></label>
             {% endfor %}
+            {% endif %}
             <label class="lab-num wide">Salary cap<input type="number" name="cap" step="100" min="20000" max="200000" value="{{ salary_cap }}"></label>
-            <label class="lab-num" title="Require this many WR/TE from the QB's own team when that team's top catcher already makes the lineup. 0 = off.">Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}"></label>
-            <label class="lab-num wide" title="The lineup score the overlay chart and the 'clears' column measure against.">Score target<input type="number" name="target" min="60" max="250" value="{{ target }}"></label>
+            {% if not single %}<label class="lab-num" title="Require this many WR/TE from the QB's own team when that team's top catcher already makes the lineup. 0 = off.">Stack<input type="number" name="stack_min" min="0" max="2" value="{{ stack_min }}"></label>{% endif %}
+            <label class="lab-num wide" title="The lineup score the overlay chart and the 'clears' column measure against.">Score target<input type="number" name="target" min="30" max="250" value="{{ target }}"></label>
         </div>
     </details>
     <div class="lab-foot">
@@ -234,7 +310,7 @@
             </div>
             <label class="gy-field">Sort
                 <select id="lab-sort">
-                    <option value="med">Sim median</option><option value="comb">Projection</option><option value="adj">Matchup-adjusted</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>
+                    <option value="med">Sim median</option><option value="comb">Projection</option><option value="adj">Matchup-adjusted</option><option value="ceil">Ceiling</option><option value="boom">Boom %</option><option value="bust">Safest</option><option value="value">Value/$1k</option>{% if fd_info %}<option value="gap">FD price gap</option>{% endif %}
                 </select>
             </label>
         </div>
@@ -259,9 +335,9 @@
             <tbody>
             {% for p in pool %}
             {% set L = p.id in locks %}{% set B = p.id in bans %}
-            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-adj="{{ p.adj_median if p.adj_median is defined else p.sim_median }}" data-comb="{{ p.combined if p.combined is not none else -1 }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
+            <tr data-pos="{{ p.position }}" data-med="{{ p.sim_median }}" data-adj="{{ p.adj_median if p.adj_median is defined else p.sim_median }}" data-comb="{{ p.combined if p.combined is not none else -1 }}" data-ceil="{{ p.sim_ceiling }}" data-boom="{{ p.boom_pct if p.boom_pct is not none else -1 }}" data-bust="{{ p.bust_pct if p.bust_pct is not none else 101 }}" data-value="{{ p.value_per_k or 0 }}" data-gap="{{ p.price_gap if p.price_gap is defined and p.price_gap is not none else -99999 }}" data-out="{{ '1' if p.likely_out }}" class="{{ 'locked' if L }}{{ ' banned' if B }}{{ ' out' if p.likely_out }}">
                 <th scope="row">
-                    <span class="lab-pl">{{ p.name }}{% if p.likely_out %}<span class="gy-tag bad">Out?</span>{% endif %}{% if p.id in in_balanced %}<span class="lab-in">● in lineup</span>{% endif %}</span>
+                    <span class="lab-pl">{{ p.name }}{% if p.likely_out %}<span class="gy-tag bad">Out?</span>{% endif %}{% if p.fd_injury %}<span class="gy-tag{{ ' bad' if p.fd_out }}" title="FanDuel injury status">{{ p.fd_injury }}</span>{% endif %}{% if p.fd_value %}<span class="gy-tag lab-val" title="FanDuel charges ${{ '{:,}'.format(p.price_gap) }} less than our model's price, and sim points per $1k are above the pool median. Context, not a pick: not yet validated.">Value</span>{% endif %}{% if p.id in in_balanced %}<span class="lab-in">● in lineup</span>{% endif %}</span>
                     <span class="lab-pl-sub">{{ p.position }} · {{ p.team }} vs {{ p.opponent }}{% if p.mgrade %} · <span class="lab-mg {{ p.mtone }}" title="{{ p.opponent }} defense vs {{ p.position }}s">{{ p.mgrade }} {{ '+' if p.mpct > 0 }}{{ p.mpct }}%</span>{% endif %}</span>
                 </th>
                 <td class="curve">{% if p.curve %}<svg role="img" aria-label="{{ p.name }}: floor {{ p.sim_floor }}, median {{ p.sim_median }}, ceiling {{ p.sim_ceiling }}" viewBox="0 0 100 26" preserveAspectRatio="none"><line x1="10" y1="26" x2="10" y2="0" class="g"/><line x1="50" y1="26" x2="50" y2="0" class="g"/><polygon points="{{ p.curve }}" class="{{ 'out' if p.likely_out else ('in' if p.id in in_balanced else '') }}"/><line x1="{{ p.median_x }}" y1="26" x2="{{ p.median_x }}" y2="2" class="m"/></svg>{% else %}<span class="small">projection only</span>{% endif %}</td>
@@ -271,9 +347,9 @@
                 <td class="r mono lab-proj"{% if p.combined is not none %} title="{{ p.comb_floor }}–{{ p.comb_ceiling }} likely range{% if p.comb_market %} · uses the market's {{ p.implied_pts }}-point team total{% endif %}"{% endif %}>{% if p.combined is not none %}{{ p.combined }}{% if p.comb_market %}<span class="lab-mk" aria-label="uses market total">◆</span>{% endif %}<span class="lab-proj-r">{{ p.comb_floor | round | int }}–{{ p.comb_ceiling | round | int }}</span>{% else %}—{% endif %}</td>
                 <td class="r mono" style="color:{{ 'var(--win)' if p.boom_pct and p.boom_pct >= 30 else 'var(--silver)' }};">{{ p.boom_pct ~ '%' if p.boom_pct is not none else '—' }}</td>
                 <td class="r mono" style="color:{{ '#ff8a8a' if p.bust_pct and p.bust_pct >= 40 else 'var(--silver)' }};">{{ p.bust_pct ~ '%' if p.bust_pct is not none else '—' }}</td>
-                <td class="r"><span class="mono">${{ '{:,}'.format(p.salary) }}</span>{% if p.value_per_k %}<span class="lab-vk mono">{{ p.value_per_k }}/k</span>{% endif %}</td>
+                <td class="r"><span class="mono">${{ '{:,}'.format(p.salary) }}</span>{% if p.value_per_k %}<span class="lab-vk mono">{{ p.value_per_k }}/k</span>{% endif %}{% if p.fd_salary is defined and p.fd_salary is not none %}<span class="lab-vk mono" title="FanDuel ${{ '{:,}'.format(p.fd_salary) }} vs our model ${{ '{:,}'.format(p.model_salary) }}">{% if fd_info.use %}ours {{ k(p.model_salary) }}{% else %}FD {{ k(p.fd_salary) }}{% endif %} <span style="color:{{ 'var(--win)' if p.price_gap >= 500 else ('#ff8a8a' if p.price_gap <= -500 else 'inherit') }};">{{ '+' if p.price_gap > 0 else ('−' if p.price_gap < 0) }}{{ k(p.price_gap | abs) }}</span></span>{% elif fd_info %}<span class="lab-vk">not on FD</span>{% endif %}</td>
                 <td class="r nowrap">
-                    <button type="button" class="lab-lb lock{{ ' on' if L }}" aria-pressed="{{ 'true' if L else 'false' }}" aria-label="Lock {{ p.name }}" data-act="lock" data-id="{{ p.id }}"{% if p.likely_out %} disabled{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></button>
+                    <button type="button" class="lab-lb lock{{ ' on' if L }}" aria-pressed="{{ 'true' if L else 'false' }}" aria-label="Lock {{ p.name }}" data-act="lock" data-id="{{ p.id }}"{% if p.likely_out or p.fd_out %} disabled{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></button>
                     <button type="button" class="lab-lb ban{{ ' on' if B }}" aria-pressed="{{ 'true' if B else 'false' }}" aria-label="Ban {{ p.name }}" data-act="ban" data-id="{{ p.id }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M6.5 6.5l11 11"></path></svg></button>
                 </td>
             </tr>
@@ -281,7 +357,7 @@
             </tbody>
         </table>
     </div>
-    <div class="lab-table-foot small"><span id="lab-shown"></span> Salaries are synthetic, so value per $1k is a tiebreaker only. Curves are each player's 150 simulated outcomes. <button type="button" class="gy-link-btn" id="lab-more">Show all</button></div>
+    <div class="lab-table-foot small"><span id="lab-shown"></span> Salaries are synthetic{% if single %} (single-game ladder, ${{ '{:,}'.format(single_game.band[0]) }}–${{ '{:,}'.format(single_game.band[1]) }} across all positions; MVP costs {{ mvp_salary_mult }}x this){% endif %}, so value per $1k is a tiebreaker only. Curves are each player's 150 simulated outcomes. <button type="button" class="gy-link-btn" id="lab-more">Show all</button></div>
 </section>
 
 {# ── Start / sit ladder ── #}
@@ -328,7 +404,7 @@
             <a class="lab-adj{{ ' on' if use_adj }}" aria-pressed="{{ 'true' if use_adj else 'false' }}" href="{{ url_for('nfl_lineup', **_qa) }}#lineups">{{ 'Builds use matchup-adjusted points ✓' if use_adj else 'Use matchup-adjusted points in builds' }}</a>
         </div>
         {% if locks or bans %}
-        <div class="lab-note on">{% for b in builds %}{{ b.label }} {% if b.delta is not none %}<span class="mono">{{ '+' if b.delta >= 0 }}{{ b.delta }}</span>{% else %}—{% endif %}{{ ' · ' if not loop.last }}{% endfor %} median vs no locks/bans · <a href="{{ url_for('nfl_lineup', week=week_ctx.week, filtered=1, games=selected_ids | list, cap=salary_cap, target=target) }}">Clear {{ locks | length + bans | length }}</a></div>
+        <div class="lab-note on">{% for b in builds %}{{ b.label }} {% if b.delta is not none %}<span class="mono">{{ '+' if b.delta >= 0 }}{{ b.delta }}</span>{% else %}—{% endif %}{{ ' · ' if not loop.last }}{% endfor %} median vs no locks/bans · <a href="{{ url_for('nfl_lineup', week=week_ctx.week, filtered=1, games=selected_ids | list, cap=salary_cap, target=target, fmt=fmt if single else None, mvp_sal=request.args.get('mvp_sal')) }}">Clear {{ locks | length + bans | length }}</a></div>
         {% else %}
         <div class="lab-note">No locks or bans. Lock or ban players in step 2 and the three builds update with the cost shown here.</div>
         {% endif %}
@@ -363,7 +439,7 @@
             {% if b.res %}
             <ul class="lab-build-list">
                 {% for pl in b.res.lineup %}
-                <li><span class="slot">{{ pl.slot }}</span><span class="nm{{ ' locked' if pl.id in locks }}">{{ '● ' if pl.id in locks }}{{ pl.name }}</span><span class="mono sal">{{ k(pl.salary) }}</span><span class="mono">{{ pl[b.objective] | round(1) }}</span></li>
+                <li{% if pl.slot == 'MVP' %} class="lab-mvp"{% endif %}><span class="slot">{{ pl.slot }}</span><span class="nm{{ ' locked' if pl.id in locks }}">{{ '● ' if pl.id in locks }}{{ pl.name }}{% if single %} <span class="small">{{ pl.position }} · {{ pl.team }}</span>{% endif %}</span><span class="mono sal">{{ k(pl.salary) }}</span><span class="mono">{{ (pl[b.objective] * pl.get('mult', 1)) | round(1) }}</span></li>
                 {% endfor %}
             </ul>
             <div class="lab-build-foot"><span>Salary <span class="mono" style="color:var(--text);">${{ '{:,}'.format(b.res.total_salary) }}</span></span><span>${{ '{:,}'.format(salary_cap - b.res.total_salary) }} left</span></div>

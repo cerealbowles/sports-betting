@@ -707,10 +707,11 @@ def evaluate_lineup_distribution(lineup, season, week):
     constant = 0.0
     for p in lineup:
         row = by_player.get(p['id'])
+        mult = p.get('mult', 1.0)  # single-game MVP counts 1.5x
         if row is None or not row.get('sim'):
-            constant += p['projection']
+            constant += p['projection'] * mult
             continue
-        by_game[row['game_id']].append(row['sim'])
+        by_game[row['game_id']].append([v * mult for v in row['sim']] if mult != 1.0 else row['sim'])
 
     if not by_game:
         return None
@@ -1310,6 +1311,115 @@ def _label_slots(lineup, roster_requirements=None):
         ordered.append({**p, 'slot': 'DST'})
     return ordered
 
+
+
+# ── Single game: MVP + AnyFLEX ──────────────────────────────────────────
+#
+# FanDuel's single-game NFL contests (e.g. "$425K NFL Monday Night..."):
+# one game, $60,000 cap, six roster spots: an MVP who scores 1.5x points and
+# costs 1.5x salary (FanDuel's own players list has an "MVP 1.5x Salary"
+# column), plus five AnyFLEX spots. QB/RB/WR/TE/DST and K can all fill any
+# spot, MVP included; this app doesn't model kickers, so they're left out.
+# The lineup has to use players from both teams.
+#
+# Salaries: the classic SALARY_BANDS are priced within each position for a
+# nine-player roster, so on a two-team pool they leave the $60K cap almost
+# slack. Single-game pricing is one ladder across all positions, ranked by
+# projection within the selected game. Fit against FanDuel's real players
+# list for CHI @ SEA (2026-11-02 MNF, slate 136135): every one of the 17
+# players in our pool for that game, grid-searched on their rank in our
+# pool -> RMSE ~$1,170 (the earlier six-price fit, $5,000-$12,900 k=1.6,
+# scored ~$1,630 on the full list; its $5,000 floor was the main miss).
+# FanDuel's real floor is $1,000, but those are fringe players our pool's
+# usage gate never includes, so the floor of OUR pool sits near $3,200.
+# Most of what's left is ranking disagreement, not curve shape (FanDuel
+# prices Kupp/Odunze on name and role well above our projections). One
+# game is still a thin sample; refit as more single-game files come in.
+SINGLE_GAME_CAP = 60000
+SINGLE_GAME_FLEX = 5
+SINGLE_GAME_POSITIONS = {'QB', 'RB', 'WR', 'TE', 'DST'}
+SINGLE_GAME_MVP_POINTS_MULT = 1.5
+SINGLE_GAME_MVP_SALARY_MULT = 1.5
+SINGLE_GAME_SALARY_BAND = (3200, 12800)
+SINGLE_GAME_SALARY_EXPONENT = 1.5
+
+
+def assign_single_game_salaries(pool):
+    """Mutates pool entries in place, setting 'salary' from one cross-
+    position ladder (see SINGLE_GAME_SALARY_BAND). Same tie behavior as
+    assign_salaries(): equal projections price the same."""
+    lo, hi = SINGLE_GAME_SALARY_BAND
+    n = len(pool)
+    if n == 1:
+        pool[0]['salary'] = int(round((lo + hi) / 2 / SALARY_STEP)) * SALARY_STEP
+        return pool
+    projections = sorted(p['projection'] for p in pool)
+    for p in pool:
+        rank = sum(1 for v in projections if v < p['projection'])  # ties share the lowest rank
+        pct = rank / (n - 1)
+        p['salary'] = int(round((lo + (hi - lo) * pct ** SINGLE_GAME_SALARY_EXPONENT) / SALARY_STEP)) * SALARY_STEP
+    return pool
+
+
+def optimize_single_game(pool, cap=SINGLE_GAME_CAP, objective='projection', locks=None,
+                         mvp_salary_mult=SINGLE_GAME_MVP_SALARY_MULT,
+                         mvp_points_mult=SINGLE_GAME_MVP_POINTS_MULT, flex_count=SINGLE_GAME_FLEX):
+    """Exact ILP for the MVP + AnyFLEX format. Each player gets two binary
+    variables (as MVP, as FLEX) with at most one of them on; exactly one MVP
+    and `flex_count` FLEX. MVP contributes mvp_points_mult x `objective` and
+    costs mvp_salary_mult x salary. Locked ids must be in the lineup (either
+    slot). Requires both teams to be represented when the pool has two.
+
+    Returns optimize_lineup()'s shape: lineup entries carry 'slot' ('MVP' or
+    'FLEX'), 'mult' (the points multiplier), 'salary' (the effective,
+    multiplied cost) and 'base_salary'. 'total_projection' includes the MVP
+    multiplier. None when infeasible."""
+    import pulp
+
+    pool = [p for p in pool if p['position'] in SINGLE_GAME_POSITIONS]
+    if len(pool) < flex_count + 1:
+        return None
+
+    prob = pulp.LpProblem('nfl_single_game', pulp.LpMaximize)
+    m = {p['id']: pulp.LpVariable(f"m_{p['id']}", cat='Binary') for p in pool}
+    f = {p['id']: pulp.LpVariable(f"f_{p['id']}", cat='Binary') for p in pool}
+
+    prob += pulp.lpSum(p[objective] * (mvp_points_mult * m[p['id']] + f[p['id']]) for p in pool)
+    prob += pulp.lpSum(p['salary'] * (mvp_salary_mult * m[p['id']] + f[p['id']]) for p in pool) <= cap
+    prob += pulp.lpSum(m.values()) == 1
+    prob += pulp.lpSum(f.values()) == flex_count
+    for p in pool:
+        prob += m[p['id']] + f[p['id']] <= 1
+    for pid in (locks or ()):
+        if pid in m:
+            prob += m[pid] + f[pid] == 1
+    teams = {p['team'] for p in pool}
+    if len(teams) > 1:
+        for team in teams:
+            prob += pulp.lpSum(m[p['id']] + f[p['id']] for p in pool if p['team'] == team) >= 1
+
+    status = prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    if pulp.LpStatus[status] != 'Optimal':
+        return None
+
+    mvp, flex = [], []
+    for p in pool:
+        if m[p['id']].value() == 1:
+            mvp.append({**p, 'slot': 'MVP', 'mult': mvp_points_mult, 'base_salary': p['salary'],
+                        'salary': int(round(p['salary'] * mvp_salary_mult))})
+        elif f[p['id']].value() == 1:
+            flex.append({**p, 'slot': 'FLEX', 'mult': 1.0, 'base_salary': p['salary']})
+    flex.sort(key=lambda p: p[objective], reverse=True)
+    lineup = mvp + flex
+    result = {
+        'lineup': lineup,
+        'total_salary': sum(p['salary'] for p in lineup),
+        'total_projection': round(sum(p['projection'] * p['mult'] for p in lineup), 2),
+        'cap': cap,
+    }
+    if all('actual' in p for p in pool):
+        result['total_actual'] = round(sum(p.get('actual', 0.0) * p['mult'] for p in lineup), 2)
+    return result
 
 # ── Matchup adjustment + start/sit ladder (The Lab) ─────────────────────
 # adj = value x (1 + matchup pct / 100 x damping). The matchup pct is the
