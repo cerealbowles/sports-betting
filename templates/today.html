@@ -309,6 +309,22 @@ function hubFormatGameTimes() {
 }
 hubFormatGameTimes();
 
+// "Last seen alive" for the loader (static/loader.js): the open-bets rail as
+// last rendered, so a slow load still shows where your money stands.
+function hubSaveLastSeen() {
+    var bets = [];
+    document.querySelectorAll('.hub-bets li').forEach(function (li) {
+        var name = li.querySelector('.hub-bets-l strong'), odds = li.querySelector('.hub-bets-r .mono');
+        var state = li.querySelector('.hub-bet-state');
+        if (!name || !state) return;
+        bets.push({bet: name.textContent.trim() + (odds ? ' ' + odds.textContent.trim() : ''),
+                   state: state.textContent.trim(),
+                   tone: state.classList.contains('good') ? 'good' : state.classList.contains('bad') ? 'bad' : ''});
+    });
+    try { localStorage.setItem('dm.lastSeen', JSON.stringify({ts: Date.now(), bets: bets})); } catch (e) {}
+}
+hubSaveLastSeen();
+
 // Auto-update for leaving the page open on a phone/iPad: every 30s re-fetch
 // this page and swap .schedule-body in place — scores, live/final status,
 // featured game, board, open-bet states and whispers all move together, with
@@ -340,6 +356,7 @@ hubFormatGameTimes();
                 var stripScroll = strip ? strip.scrollLeft : 0;
                 cur.innerHTML = fresh.innerHTML;
                 hubFormatGameTimes();
+                hubSaveLastSeen();
                 var btn = document.querySelector('#hub-sport-filter .sport-chip[data-filter-sport="' + sport + '"]');
                 if (btn && sport !== 'ALL') hubFilterBySport(sport, btn);
                 var newStrip = cur.querySelector('.live-strip');

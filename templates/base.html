@@ -163,6 +163,11 @@
 
 <div id="bmToast" class="bm-toast" role="status" aria-live="polite"></div>
 
+{% if not _embed %}
+{% block loader %}{% from "_loader.html" import loader %}{{ loader(mode='nav') }}{% endblock %}
+<script src="{{ url_for('static', filename='loader.js') }}?v={{ loader_version }}"></script>
+{% endif %}
+
 {% block scripts %}{% endblock %}
 <script>
 // Unread dot on the Whispers bell: lit when a whisper with a real event time

@@ -55,6 +55,7 @@ import spread_proxy
 import spread_model
 import team_venues
 import slate_overview
+import loader_state
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
@@ -136,6 +137,7 @@ app.jinja_env.globals['season_phase'] = _get_season_phase
 # Defaults to ./instance/bets.db for local dev (matches Flask's default instance folder).
 _DB_PATH = os.environ.get('DB_PATH', os.path.join(app.instance_path, 'bets.db'))
 os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+loader_state.init(os.path.join(os.path.dirname(_DB_PATH), '.loader'))
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # sqlite3's own default busy timeout (5s) is too short once more than one
@@ -165,12 +167,14 @@ def _sqlite_wal_mode(dbapi_conn, _record):
     cur.close()
 
 _STYLES_MTIME = str(int(os.path.getmtime(os.path.join(app.static_folder, 'styles.css'))))
+_LOADER_MTIME = str(int(os.path.getmtime(os.path.join(app.static_folder, 'loader.js'))))
 
 
 @app.context_processor
 def _inject_asset_version():
-    """Cache-bust styles.css so browsers pick up CSS changes without a hard refresh."""
-    return {'styles_version': _STYLES_MTIME}
+    """Cache-bust styles.css and loader.js so browsers (and the service
+    worker's cache-first /static/ handling) pick up changes without a hard refresh."""
+    return {'styles_version': _STYLES_MTIME, 'loader_version': _LOADER_MTIME}
 
 # Models
 class Setting(db.Model):
@@ -4735,6 +4739,8 @@ _hub_refresh_lock = threading.Lock()
 _hub_refreshing = False  # guarded by _hub_refresh_lock — collapses concurrent
                          # stale-cache hits into a single background rebuild
                          # instead of one per request.
+_HUB_SLICE_MAX_AGE = 15 * 60  # how old another worker's slice can be and still
+                              # stand in for a cold rebuild (see _hub_from_slices)
 
 
 def _rebuild_hub_cache(live=False):
@@ -4768,6 +4774,42 @@ def _do_rebuild_hub_cache(live):
                for sport, icon, endpoint in _HUB_SPORTS]
     results = [f.result() for f in futures]
 
+  for summary, picks in results:
+    _put_hub_slice(summary['sport'], today_str, summary, picks)
+  _assemble_hub(results, today, time.time())
+
+
+def _put_hub_slice(sport, today_str, summary, picks):
+  loader_state.put_slice(f'hub-{sport}', {'day': today_str, 'summary': summary, 'picks': picks})
+
+
+def _hub_from_slices(skip=()):
+  """Assemble this worker's hub from slices any worker wrote (see
+  loader_state) instead of rebuilding it. Sports in `skip` come in as empty
+  cards — the loader's "Open without <sport>". Returns False, leaving the
+  cache cold, while any other sport is missing or older than
+  _HUB_SLICE_MAX_AGE. The cache's ts is the oldest slice's, so a stale
+  assembly triggers the normal background live refresh on the next visit."""
+  today = datetime.now(_ET).date()
+  today_str = today.strftime('%Y-%m-%d')
+  results, oldest = [], time.time()
+  for sport, icon, endpoint in _HUB_SPORTS:
+    hit = loader_state.get_slice(f'hub-{sport}', _HUB_SLICE_MAX_AGE)
+    if hit and hit[1]['day'] == today_str and sport not in skip:
+      oldest = min(oldest, hit[0])
+      results.append((hit[1]['summary'], hit[1]['picks']))
+    elif sport in skip:
+      with app.test_request_context():
+        href = url_for(endpoint)
+      results.append(({'sport': sport, 'icon': icon, 'href': href, 'games_today': 0,
+                       'top_picks': [], 'all_games': []}, []))
+    else:
+      return False
+  _assemble_hub(results, today, oldest - _HUB_CACHE_TTL if skip else oldest)
+  return True
+
+
+def _assemble_hub(results, today, ts):
   sport_summaries = [summary for summary, _picks in results]
   unified_picks = [p for _summary, picks in results for p in picks]
   unified_picks = [p for p in unified_picks if p['edge'] > 0]
@@ -4794,7 +4836,7 @@ def _do_rebuild_hub_cache(live):
   today_display = _fmt(today, '%A, %B %-d')
 
   _hub_cache['data'] = (sport_summaries, unified_picks, today_display, all_games_today, live_games_today)
-  _hub_cache['ts'] = time.time()
+  _hub_cache['ts'] = ts
 
 
 @app.route('/')
@@ -4817,8 +4859,14 @@ def index():
   past _HUB_CACHE_TTL still gets served that stale copy immediately — a
   background thread refreshes it for next time instead of making the
   request itself pay the full per-sport rebuild cost (measured up to ~17s
-  cold, dwarfing the TTL). Only the very first request after a cold start,
-  with nothing cached yet, blocks on the synchronous rebuild."""
+  cold, dwarfing the TTL). A cold worker first tries the slices other
+  workers already built (_hub_from_slices); failing that it serves the
+  loader, which builds each sport with its own request (/api/hub/sport/…)
+  and comes back here once they're in."""
+  if _hub_cache['data'] is None:
+    skip = tuple(s for s in (request.args.get('without') or '').upper().split(',') if s)
+    if not _hub_from_slices(skip):
+      return _hub_loader_page()
   sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _ensure_hub_cache()
   games = _attach_bets(all_games_today, _open_bets_by_game())
   live_games_today = [g for g in games if g['status'] == 'Live']
@@ -4870,15 +4918,53 @@ def _ensure_hub_cache():
   global _hub_refreshing
   now = time.time()
   if _hub_cache['data'] is None:
-    _rebuild_hub_cache()
+    if not _hub_from_slices():
+      _rebuild_hub_cache()
   elif (now - _hub_cache['ts']) >= _HUB_CACHE_TTL:
     with _hub_refresh_lock:
       already_refreshing = _hub_refreshing
       _hub_refreshing = True
     if not already_refreshing:
-      threading.Thread(target=_rebuild_hub_cache, kwargs={'live': True},
+      threading.Thread(target=loader_state.job('Today hub refresh')(_rebuild_hub_cache), kwargs={'live': True},
                        daemon=True, name='hub-refresh').start()
   return _hub_cache['data']
+
+
+def _hub_loader_page():
+  """Cold-start page for Today: the shared loader with one row per sport,
+  each fetched from /api/hub/sport/<sport>. Marked so the service worker
+  never keeps it as the page's "last saved" copy."""
+  sources = [{'key': sport, 'label': f'{icon} {sport}', 'detail': 'Scores, odds and the model',
+              'url': url_for('api_hub_sport', sport=sport)}
+             for sport, icon, _endpoint in _HUB_SPORTS]
+  resp = make_response(render_template('hub_loading.html', sources=sources))
+  resp.headers['Cache-Control'] = 'no-store'
+  resp.headers['X-DM-Loader'] = '1'
+  return resp
+
+
+@app.route('/api/hub/sport/<sport>')
+def api_hub_sport(sport):
+  """Build one sport's slice of the Today hub and share it with every
+  worker (loader_state). The cold-start loader calls this once per sport,
+  so each séance row is its own real request with its own timing."""
+  entry = next((e for e in _HUB_SPORTS if e[0] == sport.upper()), None)
+  if entry is None:
+    abort(404)
+  sport, icon, endpoint = entry
+  today_str = datetime.now(_ET).date().strftime('%Y-%m-%d')
+  summary, picks = _hub_sport_data(sport, icon, url_for(endpoint), today_str)
+  _put_hub_slice(sport, today_str, summary, picks)
+  return jsonify({'sport': sport, 'games': summary['games_today'], 'picks': len(picks)})
+
+
+@app.route('/api/loader/jobs')
+def api_loader_jobs():
+  """Background jobs running right now in any worker — the loader's "The
+  crypt is busy" state names these."""
+  now = time.time()
+  return jsonify({'jobs': [{'label': j['label'], 'running_s': int(now - j['started'])}
+                           for j in loader_state.running_jobs()]})
 
 
 @app.route('/stats')
@@ -11825,34 +11911,34 @@ def _start_cache_warmer():
     # scoreboard API (DraftKings) instead of the quota-limited Odds API, so
     # there's no budget to pace around — this can run as often as the data
     # is worth refreshing.
-    scheduler.add_job(_warm_all_caches, 'cron',
+    scheduler.add_job(loader_state.job('Odds and schedule refresh')(_warm_all_caches), 'cron',
                       hour='7-23', minute='*/5',
                       timezone='America/New_York', id='warm_caches')
     # Noon run: TS alerts + daily picks message
-    scheduler.add_job(_warm_all_caches_noon, 'cron',
+    scheduler.add_job(loader_state.job('Noon refresh and daily picks')(_warm_all_caches_noon), 'cron',
                       hour=12, minute=0,
                       timezone='America/New_York', id='warm_caches_noon')
     # Outcome resolver — 5 am ET daily (after all West Coast games are Final)
-    scheduler.add_job(_resolve_pending_outcomes, 'cron',
+    scheduler.add_job(loader_state.job('Grading last night’s picks')(_resolve_pending_outcomes), 'cron',
                       hour=5, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='resolve_outcomes')
     # NBA stats warehouse self-heal — 5:15 am ET daily, right after the
     # outcome resolver above (same "after last night's games are all
     # Final" reasoning).
-    scheduler.add_job(_nba_stats_self_heal, 'cron',
+    scheduler.add_job(loader_state.job('NBA stats catch-up')(_nba_stats_self_heal), 'cron',
                       hour=5, minute=15,
                       timezone=ZoneInfo('America/New_York'),
                       id='nba_stats_self_heal')
-    scheduler.add_job(_nfl_stats_self_heal, 'cron',
+    scheduler.add_job(loader_state.job('NFL stats catch-up')(_nfl_stats_self_heal), 'cron',
                       hour=5, minute=20,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_stats_self_heal')
-    scheduler.add_job(_wnba_stats_self_heal, 'cron',
+    scheduler.add_job(loader_state.job('WNBA stats catch-up')(_wnba_stats_self_heal), 'cron',
                       hour=5, minute=25,
                       timezone=ZoneInfo('America/New_York'),
                       id='wnba_stats_self_heal')
-    scheduler.add_job(_nhl_stats_self_heal, 'cron',
+    scheduler.add_job(loader_state.job('NHL stats catch-up')(_nhl_stats_self_heal), 'cron',
                       hour=5, minute=30,
                       timezone=ZoneInfo('America/New_York'),
                       id='nhl_stats_self_heal')
@@ -11861,7 +11947,7 @@ def _start_cache_warmer():
     # stats) is already caught up for the morning. No retroactive history
     # exists for this one (nfl_news_backtest.py's own message says so) —
     # this is what actually starts that history accumulating.
-    scheduler.add_job(_ingest_nfl_news, 'cron',
+    scheduler.add_job(loader_state.job('NFL news ingest')(_ingest_nfl_news), 'cron',
                       hour=7, minute=0,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_news_ingest')
@@ -11871,23 +11957,23 @@ def _start_cache_warmer():
     # it has one, is already caught up). CFB goes first and gets the
     # widest gap since its FBS-wide roster fan-out is the slowest of the
     # six (~50s cold-cache, confirmed in testing) — see _ingest_cfb_news.
-    scheduler.add_job(_ingest_cfb_news, 'cron',
+    scheduler.add_job(loader_state.job('CFB news ingest')(_ingest_cfb_news), 'cron',
                       hour=7, minute=4,
                       timezone=ZoneInfo('America/New_York'),
                       id='cfb_news_ingest')
-    scheduler.add_job(_ingest_nhl_news, 'cron',
+    scheduler.add_job(loader_state.job('NHL news ingest')(_ingest_nhl_news), 'cron',
                       hour=7, minute=10,
                       timezone=ZoneInfo('America/New_York'),
                       id='nhl_news_ingest')
-    scheduler.add_job(_ingest_nba_news, 'cron',
+    scheduler.add_job(loader_state.job('NBA news ingest')(_ingest_nba_news), 'cron',
                       hour=7, minute=14,
                       timezone=ZoneInfo('America/New_York'),
                       id='nba_news_ingest')
-    scheduler.add_job(_ingest_wnba_news, 'cron',
+    scheduler.add_job(loader_state.job('WNBA news ingest')(_ingest_wnba_news), 'cron',
                       hour=7, minute=18,
                       timezone=ZoneInfo('America/New_York'),
                       id='wnba_news_ingest')
-    scheduler.add_job(_ingest_mlb_news, 'cron',
+    scheduler.add_job(loader_state.job('MLB news ingest')(_ingest_mlb_news), 'cron',
                       hour=7, minute=22,
                       timezone=ZoneInfo('America/New_York'),
                       id='mlb_news_ingest')
@@ -11897,14 +11983,14 @@ def _start_cache_warmer():
     # class docstring) by design: this is exactly why it's a daily batch
     # job writing to a table instead of something /nfl/simulations computes
     # live.
-    scheduler.add_job(_simulate_nfl_week, 'cron',
+    scheduler.add_job(loader_state.job('NFL week sim rerun')(_simulate_nfl_week), 'cron',
                       hour=7, minute=30,
                       timezone=ZoneInfo('America/New_York'),
                       id='nfl_simulate_week')
     # NBA game-outcome simulation — 7:45 am ET daily, same reasoning/
     # placement as the NFL job above (after stats self-heal + news
     # ingestion, before the cheap pace pre-warm below).
-    scheduler.add_job(_simulate_nba_slate, 'cron',
+    scheduler.add_job(loader_state.job('NBA slate sim rerun')(_simulate_nba_slate), 'cron',
                       hour=7, minute=45,
                       timezone=ZoneInfo('America/New_York'),
                       id='nba_simulate_slate')
@@ -11914,11 +12000,11 @@ def _start_cache_warmer():
     # App-wide finalized-game check — every 20 min across all 6 sports, so a
     # game that goes Final gets recorded well before the next 2-hourly
     # _warm_all_caches cron tick.
-    scheduler.add_job(_check_finalized_games, 'interval',
+    scheduler.add_job(loader_state.job('Checking for finals')(_check_finalized_games), 'interval',
                       minutes=20, id='check_finalized_games')
     # Pregame projection snapshots for grading the combined projection —
     # every 15 min, but a no-op unless an NFL game kicks off within 6 hours.
-    scheduler.add_job(_snapshot_nfl_projections_job, 'interval',
+    scheduler.add_job(loader_state.job('NFL projection snapshot')(_snapshot_nfl_projections_job), 'interval',
                       minutes=15, id='nfl_projection_snapshot')
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
@@ -11945,7 +12031,7 @@ def _start_cache_warmer():
         _refit_mlb_platt()
         for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
             _recompute_all_calibration(_sport)
-    threading.Thread(target=_startup, daemon=True, name='warm-startup').start()
+    threading.Thread(target=loader_state.job('Startup warm-up')(_startup), daemon=True, name='warm-startup').start()
 
 
 _scheduler_lock_fh = None  # module-level so the held flock survives for the process's life

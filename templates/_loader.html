@@ -1,0 +1,116 @@
+{# The Dead Money loader — one shared component for every page (design:
+   dead-money-loading/HANDOFF.md). Behavior lives in static/loader.js, styles
+   in styles.css (.dm-loader*).
+
+   loader(sources, mode, then):
+     sources — [{key, label, detail, url}], one séance row per real request.
+               loader.js fetches each url itself and times it.
+     mode    — 'nav': base.html's copy, hidden until a same-site navigation
+               is still pending after 400 ms; its one row is that page
+               request. 'run': fetch `sources` now, then go to `then`.
+     then    — where 'run' goes once every source is in. #}
+{% macro loader(sources=none, mode='nav', then='') %}
+<div class="dm-loader" id="dmLoader" data-mode="{{ mode }}" data-then="{{ then }}" data-sources="{{ (sources or []) | tojson | forceescape }}" hidden>
+    <div class="dm-loader-skel" aria-hidden="true">
+        <div class="dm-loader-skel-top"><div class="dm-skel" style="width:170px;height:26px;"></div><div class="dm-loader-skel-links"><div class="dm-skel"></div><div class="dm-skel"></div><div class="dm-skel"></div><div class="dm-skel"></div></div></div>
+        <div class="dm-loader-skel-chips">{% for _ in range(7) %}<div class="dm-skel"></div>{% endfor %}</div>
+        <div class="dm-loader-skel-grid"><div class="dm-skel"></div><div class="dm-skel"></div><div class="dm-skel"></div><div class="dm-skel"></div></div>
+    </div>
+    <div class="dm-loader-veil" aria-hidden="true"></div>
+
+    <div class="dm-loader-main" role="status" aria-live="polite" aria-label="Raising the dead">
+        <section class="dm-loader-scene">
+            <svg class="dm-loader-art" aria-hidden="true" viewBox="0 0 320 220">
+                <defs>
+                    <radialGradient id="dmMoon" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#FFD9B0"></stop><stop offset="70%" stop-color="#F2B47A"></stop><stop offset="100%" stop-color="#F2B47A" stop-opacity="0"></stop></radialGradient>
+                    <radialGradient id="dmHalo" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#FF7A1A" stop-opacity="0.35"></stop><stop offset="100%" stop-color="#FF7A1A" stop-opacity="0"></stop></radialGradient>
+                    <filter id="dmBlur" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="5"></feGaussianBlur></filter>
+                </defs>
+                <circle class="dm-glow" cx="250" cy="52" r="58" fill="url(#dmHalo)"></circle>
+                <circle cx="250" cy="52" r="26" fill="url(#dmMoon)"></circle>
+                <circle cx="241" cy="46" r="4" fill="#E6A56C" opacity="0.5"></circle><circle cx="258" cy="60" r="3" fill="#E6A56C" opacity="0.45"></circle>
+                <path d="M28 168v-26a10 10 0 0 1 20 0v26z" fill="#1C1620"></path>
+                <path d="M268 170v-20a8 8 0 0 1 16 0v20z" fill="#1C1620"></path>
+                <path d="M56 170v-12h4v-8h4v8h4v12z" fill="#1C1620"></path>
+                <path d="M172 178V92a34 34 0 0 1 68 0v86z" fill="#2A2230" stroke="#3A2F40" stroke-width="2"></path>
+                <text x="206" y="110" text-anchor="middle" fill="#8A808C" class="dm-loader-art-mono" style="font-size:10px;letter-spacing:2px">R.I.P.</text>
+                <text x="206" y="134" text-anchor="middle" fill="#C9BFC6" class="dm-loader-art-display" style="font-size:17px">My</text>
+                <text x="206" y="152" text-anchor="middle" fill="#C9BFC6" class="dm-loader-art-display" style="font-size:17px">Parlay</text>
+                <text x="206" y="167" text-anchor="middle" fill="#6B5F6E" class="dm-loader-art-mono" style="font-size:7px;letter-spacing:1px">1 LEG SHORT</text>
+                <g class="dm-rise">
+                    <g class="dm-cycle">
+                        <g><ellipse cx="118" cy="150" rx="19" ry="11.5" fill="#8B4A2B" transform="rotate(-24 118 150)"></ellipse><path d="M110 152l16-7M114 146.5l2 3.2M118 145l2 3.2M122 143.5l2 3.2" stroke="#F4EEE8" stroke-width="1.6" stroke-linecap="round"></path></g>
+                        <g><circle cx="118" cy="148" r="14" fill="#E2692A"></circle><path d="M104 148h28M118 134v28M108 138c5 4 5 16 0 20M128 138c-5 4-5 16 0 20" stroke="#5A2A10" stroke-width="1.4" fill="none"></path></g>
+                        <g><circle cx="118" cy="148" r="13" fill="#F4EEE8"></circle><path d="M110 138c4 6 4 14 0 20M126 138c-4 6-4 14 0 20" stroke="#E0303A" stroke-width="1.4" fill="none" stroke-dasharray="2 2"></path></g>
+                        <g><ellipse cx="118" cy="154" rx="16" ry="6" fill="#1A1A1A"></ellipse><rect x="102" y="146" width="32" height="8" fill="#1A1A1A"></rect><ellipse cx="118" cy="146" rx="16" ry="6" fill="#333"></ellipse></g>
+                    </g>
+                </g>
+                <path d="M0 220V176c30-6 52-8 76-6 10-12 74-12 84 0 40-4 100-6 160 4v46z" fill="#120E15"></path>
+                <path d="M78 172c12-10 68-10 80 0" stroke="#3A2F40" stroke-width="2" fill="none"></path>
+                <circle cx="92" cy="176" r="2" fill="#2C2330"></circle><circle cx="140" cy="178" r="2.5" fill="#2C2330"></circle>
+                <circle class="dm-wisp" cx="96" cy="168" r="2.2" fill="#FF7A1A"></circle>
+                <circle class="dm-wisp2" cx="136" cy="168" r="1.8" fill="#FFB27A"></circle>
+                <circle class="dm-wisp3" cx="116" cy="170" r="1.6" fill="#FF7A1A"></circle>
+                <g filter="url(#dmBlur)" opacity="0.55">
+                    <ellipse class="dm-fog" cx="110" cy="190" rx="110" ry="10" fill="#3A2F40"></ellipse>
+                    <ellipse class="dm-fog2" cx="230" cy="196" rx="100" ry="9" fill="#2C2330"></ellipse>
+                </g>
+            </svg>
+
+            <div class="dm-loader-eyebrow" data-dm="eyebrow">GRABBING TONIGHT’S DATA</div>
+            <h1 class="dm-loader-title" data-dm="title">Raising the dead</h1>
+            <div class="dm-quips" aria-hidden="true" data-dm="quips">
+                <span>Digging up box scores…</span>
+                <span>Bribing the oddsmaker at DraftKings…</span>
+                <span>Consulting the Ouija board…</span>
+                <span>Re-running tonight’s games in the afterlife…</span>
+                <span>Counting the bodies on your parlay…</span>
+            </div>
+            <p class="dm-loader-sub" data-dm="subtitle" hidden></p>
+
+            <div class="dm-loader-progress">
+                <div class="dm-loader-progress-meta"><span data-dm="count"></span><span data-dm="elapsed">0s</span></div>
+                <div class="dm-loader-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading progress" data-dm="bar">
+                    <div class="dm-loader-bar-fill" data-dm="fill"><div class="dm-crawl"></div></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="dm-loader-side">
+            <div class="dm-loader-card">
+                <div class="dm-loader-card-head">
+                    <h2>The séance</h2>
+                    <span class="dm-loader-label">WHAT WE’RE FETCHING</span>
+                </div>
+                <ul class="dm-loader-rows" data-dm="rows"></ul>
+            </div>
+
+            <div class="dm-loader-notice dm-loader-notice--slow" data-dm="slow" hidden>
+                <div class="dm-loader-notice-title" data-dm="slow-title"></div>
+                <p data-dm="slow-text"></p>
+                <div class="dm-loader-actions">
+                    <button type="button" class="dm-loader-btn primary" data-dm="saved" hidden></button>
+                    <button type="button" class="dm-loader-btn" data-dm="wait">Keep waiting</button>
+                </div>
+            </div>
+
+            <div class="dm-loader-notice dm-loader-notice--fail" data-dm="fail" hidden>
+                <div class="dm-loader-notice-title" data-dm="fail-title"></div>
+                <p data-dm="fail-text"></p>
+                <div class="dm-loader-actions">
+                    <button type="button" class="dm-loader-btn primary" data-dm="retry">Try again</button>
+                    <button type="button" class="dm-loader-btn" data-dm="without"></button>
+                </div>
+            </div>
+
+            <div class="dm-loader-cached" data-dm="cached" hidden>
+                <div class="dm-loader-cached-head">
+                    <span class="dm-loader-label" data-dm="cached-when">LAST SEEN ALIVE</span>
+                    <span class="dm-loader-cached-tag">cached</span>
+                </div>
+                <ul data-dm="cached-rows"></ul>
+            </div>
+        </section>
+    </div>
+</div>
+{% endmacro %}

@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{# Today on a cold worker (see index()): the shared loader fetches each
+   sport's slice, then comes back to the real page. #}
+{% block loader %}{% from "_loader.html" import loader %}{{ loader(sources, mode='run', then=url_for('index')) }}{% endblock %}
