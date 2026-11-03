@@ -32,7 +32,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 ASSUMED_PRICE = -110
-ALL_SPORTS = ['NFL', 'CFB', 'MLB', 'NBA', 'NHL', 'WNBA']
+ALL_SPORTS = ['NFL', 'CFB', 'MLB', 'NBA', 'NHL', 'WNBA', 'CBB']
 
 
 def run(sports=None, dry_run=False, force=False):

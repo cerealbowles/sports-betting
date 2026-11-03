@@ -9,7 +9,7 @@
    Expects `current_sport` (e.g. 'NBA') and, on pages with tools, `active_tool`
    set by the including page. #}
 {% import "_season_badge.html" as sb %}
-{% set _sp_list = [('MLB','mlb_schedule'), ('NHL','nhl_schedule'), ('NFL','nfl_schedule'), ('CFB','cfb_schedule'), ('NBA','nba_schedule'), ('WNBA','wnba_schedule')] %}
+{% set _sp_list = [('MLB','mlb_schedule'), ('NHL','nhl_schedule'), ('NFL','nfl_schedule'), ('CFB','cfb_schedule'), ('NBA','nba_schedule'), ('WNBA','wnba_schedule'), ('CBB','cbb_schedule')] %}
 {% set _sport_tools = {
     'NFL': [
         ('schedule', '🏈 Schedule', 'nfl_schedule'),
@@ -20,6 +20,10 @@
     'NBA': [
         ('schedule', '🏀 Schedule', 'nba_schedule'),
         ('simulations', '🎲 Simulations', 'nba_simulations_page'),
+    ],
+    'CBB': [
+        ('schedule', '🏀 Schedule', 'cbb_schedule'),
+        ('ratings', '📈 Ratings', 'cbb_ratings_page'),
     ],
 } %}
 {% set _tools = _sport_tools.get(current_sport, []) %}

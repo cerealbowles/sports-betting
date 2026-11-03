@@ -138,6 +138,20 @@ COEFFS = {
         },
         "sigma": 12.955,
     },
+    # CBB is not a regression fit: cbb_model's three logit factors are its
+    # rating margin divided by MARGIN_SCALE, so weighting each by that scale
+    # reproduces the rating's margin exactly (tracking rows have no weight
+    # and are skipped). sigma = walk-forward residual SD on 2025-26 (5,751
+    # games); 50.4% ATS vs the DraftKings close — not validated.
+    "CBB": {
+        "intercept": 0.0,
+        "weights": {
+            "Home court": 6.10,
+            "Adj. offense": 6.10,
+            "Adj. defense": 6.10,
+        },
+        "sigma": 11.65,
+    },
 }
 
 # Out-of-sample ATS accuracy per sport, from the fit run documented above.
@@ -283,6 +297,7 @@ _ATS_PCT = {
     'NFL':  {'model': 46.2, 'proxy': 43.8},
     'NBA':  {'model': 46.5, 'proxy': 43.3},
     'WNBA': {'model': 51.9, 'proxy': 46.4},
+    'CBB':  {'model': 50.4, 'proxy': 50.4},   # identical margins by construction
 }
 
 

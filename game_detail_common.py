@@ -94,7 +94,7 @@ def recommendation_gate_note(sport, market, tag, amer_odds=None, edge_pts=None):
 # rank-bucket blend in app.py's /mlb route, not this chain, and can't be
 # reproduced for a single isolated game without re-deriving that day's full
 # candidate ranking.
-STAMPABLE_SPORTS = {'NHL', 'NBA', 'WNBA', 'NFL', 'CFB'}
+STAMPABLE_SPORTS = {'NHL', 'NBA', 'WNBA', 'NFL', 'CFB', 'CBB'}
 
 
 def apply_schedule_corrections(sport, game, date_str):

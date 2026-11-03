@@ -32,8 +32,9 @@ _cache = {}
 _ESPN = 'https://site.api.espn.com/apis/v2/sports/{path}/standings'
 _ESPN_PATHS = {'NFL': 'football/nfl', 'NBA': 'basketball/nba',
                'WNBA': 'basketball/wnba', 'CFB': 'football/college-football',
-               'NHL': 'hockey/nhl'}  # NHL here is only the fallback — see _nhl_rows
-SPORTS = ('NFL', 'NBA', 'NHL', 'MLB', 'CFB', 'WNBA')
+               'NHL': 'hockey/nhl',  # NHL here is only the fallback — see _nhl_rows
+               'CBB': 'basketball/mens-college-basketball'}
+SPORTS = ('NFL', 'NBA', 'NHL', 'MLB', 'CFB', 'WNBA', 'CBB')
 
 
 def _get_json(url, params=None):
@@ -125,6 +126,9 @@ def _espn_form(sport):
         elif sport == 'WNBA':
             import wnba_api as m
             season = m._get_wnba_season()
+        elif sport == 'CBB':
+            import cbb_api as m
+            season = m._get_cbb_season()
         elif sport == 'NHL':
             import nhl_api
             form_map, _last = nhl_api._get_recent_form_map()  # chronological, by abbr

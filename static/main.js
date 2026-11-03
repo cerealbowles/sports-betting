@@ -29,7 +29,7 @@ showToast(msg);
    inline schedule-card sheet (MLB/CFB — already the current page, so this
    is just where a reload would land anyway). */
 var _SPORT_SCHEDULE_URL = {
-MLB: '/mlb', NHL: '/nhl', NBA: '/nba', WNBA: '/wnba', NFL: '/nfl', CFB: '/cfb',
+MLB: '/mlb', NHL: '/nhl', NBA: '/nba', WNBA: '/wnba', CBB: '/cbb', NFL: '/nfl', CFB: '/cfb',
 };
 function scheduleUrlForSport(sport) {
 return _SPORT_SCHEDULE_URL[(sport || '').toUpperCase()] || '/';

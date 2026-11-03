@@ -23,10 +23,12 @@ SPORT_SLUGS = {
     'NBA':  'basketball/nba',
     'NHL':  'hockey/nhl',
     'WNBA': 'basketball/wnba',
+    'CBB':  'basketball/mens-college-basketball',
 }
 
 _BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 _FBS_GROUP = 80  # matches cfb_api.py — without it ESPN drops most FBS games
+_D1_GROUP = 50   # matches cbb_api.py — without it ESPN lists only featured CBB games
 
 
 def _get(url, params, label, retries=3):
@@ -52,6 +54,9 @@ def fetch_scoreboard_events(sport, date_str):
     params = {'dates': date_str, 'limit': 400}
     if sport == 'CFB':
         params['groups'] = _FBS_GROUP
+    elif sport == 'CBB':
+        params['groups'] = _D1_GROUP
+        params['limit'] = 500
     data = _get(f'{_BASE}/{slug}/scoreboard', params, f'{sport} scoreboard {date_str}')
     if not data:
         return []

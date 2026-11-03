@@ -49,7 +49,7 @@ sys.path.insert(0, _HERE)
 
 import espn_pickcenter as espn
 
-ALL_SPORTS = ['NFL', 'CFB', 'MLB', 'NBA', 'NHL', 'WNBA']
+ALL_SPORTS = ['NFL', 'CFB', 'MLB', 'NBA', 'NHL', 'WNBA', 'CBB']
 RETENTION_FLOOR_DAYS = 290  # conservative margin under ESPN's observed ~300-day cutoff
 TOTALS_CAPTURE_GAP_START = '2026-10-20'  # a few days before the 10-23 Totals removal, to be safe
 

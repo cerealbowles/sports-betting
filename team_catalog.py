@@ -7,6 +7,7 @@ _SOURCES = {
     'CFB': (f'{_ESPN}/football/college-football/teams', {'groups': 80, 'limit': 300}),
     'NBA': (f'{_ESPN}/basketball/nba/teams', {'limit': 100}),
     'WNBA': (f'{_ESPN}/basketball/wnba/teams', {'limit': 100}),
+    'CBB': (f'{_ESPN}/basketball/mens-college-basketball/teams', {'groups': 50, 'limit': 500}),
     'NHL': (f'{_ESPN}/hockey/nhl/teams', {'limit': 100}),
 }
 _TTL = 24 * 3600

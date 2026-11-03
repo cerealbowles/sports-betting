@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}College Hoops Today — Dead Money{% endblock %}
+
+{% block content %}
+{% from "_edge_star.html" import edge_star, edge_pick %}
+<div class="schedule-body">
+
+{% set current_sport = 'CBB' %}
+{% set active_tool = 'schedule' %}
+{% include "_sport_pills.html" %}
+<h1>College hoops</h1>
+<p style="margin:-8px 0 16px; color:var(--text-muted);">{{ schedule[0].games|length if schedule else 0 }} game{{ 's' if not schedule or schedule[0].games|length != 1 }}{% if recommended is defined %} · {{ recommended|length }} pick{{ 's' if recommended|length != 1 }}{% endif %}</p>
+
+{% set nav_endpoint = 'cbb_schedule' %}
+{% include "_day_nav.html" %}
+
+<p class="cbb-tracking-note">Men's D1 · model is <b>tracking only</b> — predictions are recorded and graded on the Model page, but no ★ picks until it beats the closing line live. <a href="{{ url_for('cbb_ratings_page') }}">Power ratings →</a></p>
+
+{% if not schedule %}
+<div class="card" style="padding:24px; text-align:center;">
+    <p style="color:var(--text-muted);">No college basketball games {{ 'that day' if not day_nav.is_today else 'today' }}, or unable to reach ESPN. Try refreshing.</p>
+</div>
+{% else %}
+
+{% include "_sport_recommendations.html" %}
+
+
+{% for day in schedule %}
+<div class="day-header">
+    <h2>{{ day.date_display }}</h2>
+    <span class="game-count">{{ day.games|length }} game{{ 's' if day.games|length != 1 }}</span>
+    <span class="refresh-info"><a href="{{ url_for('cbb_schedule', offset=day_nav.offset) }}" class="refresh-link">↻ Refresh</a></span>
+</div>
+
+<div class="cbb-filters" role="group" aria-label="Filter games">
+    <button type="button" class="cbb-filter is-active" data-filter="all">All</button>
+    <button type="button" class="cbb-filter" data-filter="ranked">Top 25</button>
+    <button type="button" class="cbb-filter" data-filter="lined">Has line</button>
+    <select class="cbb-conf-select" aria-label="Conference">
+        <option value="">All conferences</option>
+        {% for c in conferences %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+    <span class="cbb-filter-count" data-cbb-count></span>
+</div>
+
+{% set _live     = day.games | selectattr('status', 'equalto', 'Live')  | list %}
+{% set _final    = day.games | selectattr('status', 'equalto', 'Final') | list %}
+{% set _upcoming = day.games | rejectattr('status', 'equalto', 'Live') | rejectattr('status', 'equalto', 'Final') | list %}
+{% set _favs = (_live + _upcoming + _final) | selectattr('is_favorite') | list %}
+{% set _rest = (_live + _upcoming + _final) | rejectattr('is_favorite') | list %}
+{% set _rest_final_n = _final | rejectattr('is_favorite') | list | length %}
+{% set _rest_live_n = _live | rejectattr('is_favorite') | list | length %}
+{% set _rest_up_n = _upcoming | rejectattr('is_favorite') | list | length %}
+{% set ns = namespace(final_hdr=False, rest_hdr=False, up_hdr=False) %}
+<div class="games-grid">
+{% for game in _favs + _rest %}
+{% if loop.first and game.is_favorite %}<div class="games-section-hdr games-section-hdr-fav">★ Favorites</div>{% endif %}
+{% if not game.is_favorite and not ns.rest_hdr %}{% set ns.rest_hdr = True %}{% if _favs %}<div class="games-section-hdr games-section-hdr-rest">All games</div>{% endif %}{% endif %}
+{% if not game.is_favorite and game.status not in ('Live', 'Final') and not ns.up_hdr %}{% set ns.up_hdr = True %}<div class="games-section-hdr games-section-hdr-upcoming" data-upcoming-hdr-inline{% if not _rest_live_n %} hidden{% endif %}>Upcoming (<span data-upcoming-count>{{ _rest_up_n }}</span>)</div>{% endif %}
+{% if game.status == 'Final' and not game.is_favorite and not ns.final_hdr %}{% set ns.final_hdr = True %}
+<div class="games-section-hdr games-section-hdr-completed">Completed · {{ _rest_final_n }} game{{ 's' if _rest_final_n != 1 }}</div>
+{% endif %}
+
+
+<div class="card game-card" id="gc-{{ game.game_key }}" style="scroll-margin-top:12px;" data-detail-href="/cbb/game/{{ game.game_id }}"
+     data-ranked="{{ 1 if game.home.rank_display or game.away.rank_display else 0 }}"
+     data-lined="{{ 1 if game.odds else 0 }}"
+     data-confs="|{{ game.away.conference }}|{{ game.home.conference }}|">
+
+    <!-- ── Simplified, always-visible summary — tap to open full stats ── -->
+    <div class="game-card-summary" role="button" tabindex="0" aria-label="View stats and bet on {{ game.away.abbrev }} at {{ game.home.abbrev }}">
+
+        <!-- ── Header bar ── -->
+        <div class="game-header">
+            {% if game.status == 'Live' %}
+                <span class="status-live">● Live</span>
+            {% elif game.status == 'Final' %}
+                <span class="status-final">Final</span>
+            {% else %}
+                <span class="game-time" data-utc="{{ game.game_time_utc }}">—</span>
+            {% endif %}
+            <div class="game-header-right">
+                {% if game.is_preseason %}<span class="preseason-badge">Preseason</span>{% endif %}
+                {% if game.is_playoffs %}<span class="playoffs-badge" title="{{ game.game_type_label or 'Postseason' }}">{{ (game.game_type_label or 'Postseason') | truncate(32, True, '…') }}</span>
+                {% elif game.game_type_label %}<span class="cbb-note-badge" title="{{ game.game_type_label }}">{{ game.game_type_label | truncate(28, True, '…') }}</span>{% endif %}
+                {% if game.neutral %}<span class="cbb-neutral-badge" title="Neutral site — no home court in the model">Neutral</span>{% endif %}
+                {% for bet in game.open_bets or [] %}<span class="open-bet-pill" title="Open bet: {{ bet.name }}">{{ bet.name | bet_pill_label }} · ${{ '%.2f' % bet.stake }} → ${{ '%.2f' % (bet | bet_return) }}</span>{% endfor %}
+                {{ edge_star(game) }}
+            </div>
+        </div>
+
+        <!-- ── Scoreboard ── -->
+        <div class="scoreboard">
+
+            <!-- Away -->
+            <div class="sb-team sb-away">
+                <img class="team-logo" src="{{ game.away.logo_url }}" alt="{{ game.away.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.away.rank_display %}<span class="rank-badge">#{{ game.away.rank_display }}</span>{% endif %}{{ game.away.name }}</div>
+                    <div class="sb-record">{{ game.away.wins }}–{{ game.away.losses }}{% if game.away.conf_w or game.away.conf_l %} <span class="cbb-conf-rec">({{ game.away.conf_w }}–{{ game.away.conf_l }})</span>{% endif %} <span class="cbb-conf-name">{{ game.away.conference }}</span></div>
+                </div>
+            </div>
+
+            <!-- Center: score -->
+            <div class="sb-center">
+                {% if game.status in ('Live', 'Final') %}
+                <div class="sb-score">
+                    <span class="sb-score-away {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.away.score > game.home.score }}">{{ game.away.score if game.away.score is not none else '–' }}</span>
+                    <span class="sb-score-sep">–</span>
+                    <span class="sb-score-home {{ 'sb-score-win' if game.away.score is not none and game.home.score is not none and game.home.score > game.away.score }}">{{ game.home.score if game.home.score is not none else '–' }}</span>
+                </div>
+{% endif %}
+            </div>
+
+            <!-- Home -->
+            <div class="sb-team sb-home">
+                <div class="sb-team-info">
+                    <div class="sb-name">{% if game.home.rank_display %}<span class="rank-badge">#{{ game.home.rank_display }}</span>{% endif %}{{ game.home.name }}</div>
+                    <div class="sb-record">{{ game.home.wins }}–{{ game.home.losses }}{% if game.home.conf_w or game.home.conf_l %} <span class="cbb-conf-rec">({{ game.home.conf_w }}–{{ game.home.conf_l }})</span>{% endif %} <span class="cbb-conf-name">{{ game.home.conference }}</span></div>
+                </div>
+                <img class="team-logo" src="{{ game.home.logo_url }}" alt="{{ game.home.abbrev }}" loading="lazy" onerror="this.style.visibility='hidden'">
+            </div>
+
+        </div><!-- /.scoreboard -->
+
+        {% include "_market_chips.html" %}
+
+    </div><!-- /.game-card-summary -->
+
+</div><!-- /.game-card -->
+{% endfor %}
+</div><!-- /.games-grid -->
+{% endfor %}
+{% endif %}
+
+</div>
+<style>
+.cbb-tracking-note { margin:-6px 0 14px; font-size:13px; color:var(--text-muted); }
+.cbb-filters { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+.cbb-filter { border:1px solid var(--border, #333); background:transparent; color:inherit; border-radius:999px; padding:4px 12px; font-size:13px; cursor:pointer; }
+.cbb-filter.is-active { background:var(--accent, #6E9BFF); border-color:var(--accent, #6E9BFF); color:#fff; }
+.cbb-conf-select { border:1px solid var(--border, #333); background:transparent; color:inherit; border-radius:999px; padding:4px 10px; font-size:13px; }
+.cbb-filter-count { font-size:12px; color:var(--text-muted); }
+.cbb-conf-rec, .cbb-conf-name { color:var(--text-muted); font-size:0.9em; }
+.cbb-neutral-badge, .cbb-note-badge { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--border, #444); color:var(--text-muted); white-space:nowrap; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.game-time[data-utc]').forEach(function(el) {
+    var utc = el.getAttribute('data-utc');
+    if (!utc) return;
+    try {
+        var d = new Date(utc);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+    } catch(e) {}
+});
+</script>
+<script>
+(function () {
+    var state = {filter: 'all', conf: ''};
+    var cards = Array.prototype.slice.call(document.querySelectorAll('.game-card[data-confs]'));
+    var countEl = document.querySelector('[data-cbb-count]');
+    function apply() {
+        var shown = 0;
+        cards.forEach(function (c) {
+            var ok = (state.filter === 'all' || c.getAttribute('data-' + state.filter) === '1') &&
+                     (!state.conf || c.getAttribute('data-confs').indexOf('|' + state.conf + '|') !== -1);
+            c.style.display = ok ? '' : 'none';
+            if (ok) shown++;
+        });
+        if (countEl) countEl.textContent = shown === cards.length ? '' : shown + ' of ' + cards.length;
+    }
+    document.querySelectorAll('.cbb-filter').forEach(function (b) {
+        b.addEventListener('click', function () {
+            document.querySelectorAll('.cbb-filter').forEach(function (x) { x.classList.remove('is-active'); });
+            b.classList.add('is-active');
+            state.filter = b.getAttribute('data-filter');
+            apply();
+        });
+    });
+    var sel = document.querySelector('.cbb-conf-select');
+    if (sel) sel.addEventListener('change', function () { state.conf = sel.value; apply(); });
+})();
+</script>
+{% set live_scores_endpoint = url_for('api_cbb_live_scores') %}
+{% include "_schedule_live_poll.html" %}
+{% endblock %}

@@ -44,6 +44,7 @@ SPORT_KEYS = {
     'cfb': 'americanfootball_ncaaf',
     'nba': 'basketball_nba',
     'wnba': 'basketball_wnba',
+    'cbb': 'basketball_ncaab',
 }
 
 # ESPN scoreboard URL slug + whether the CFB-only FBS-group filter applies
@@ -54,8 +55,10 @@ _ESPN_SLUGS = {
     'cfb':  'football/college-football',
     'nba':  'basketball/nba',
     'wnba': 'basketball/wnba',
+    'cbb':  'basketball/mens-college-basketball',
 }
 _FBS_GROUP = 80  # matches cfb_api.py — without it ESPN drops most FBS games
+_D1_GROUP = 50   # matches cbb_api.py — without it ESPN lists only featured CBB games
 
 
 def _normalize(name):
@@ -201,6 +204,9 @@ def _fetch_espn_events(sport, date_str=None):
         params['dates'] = date_str
     if sport == 'cfb':
         params['groups'] = _FBS_GROUP
+    elif sport == 'cbb':
+        params['groups'] = _D1_GROUP
+        params['limit'] = 500
     try:
         r = requests.get(f"{ESPN_BASE}/{slug}/scoreboard", params=params, timeout=15)
         r.raise_for_status()

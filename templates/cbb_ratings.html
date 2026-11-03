@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}College Hoops Ratings — Dead Money{% endblock %}
+
+{% block content %}
+<div class="schedule-body">
+{% set current_sport = 'CBB' %}
+{% set active_tool = 'ratings' %}
+{% include "_sport_pills.html" %}
+<h1>College hoops power ratings</h1>
+<p class="cbbr-note">
+  Opponent-adjusted efficiency (cbb_rating.py): points scored and allowed per 100 possessions against an
+  average D1 opponent on a neutral floor, and possessions per 40 minutes. Fit on every D1 game so far plus the
+  two prior seasons at reduced weight — early-season numbers lean heavily on last year and don't know about
+  roster turnover. <a href="{{ url_for('cbb_schedule') }}">← Today's games</a>
+</p>
+
+<form method="get" class="cbbr-filter">
+  <select name="conf" onchange="this.form.submit()" aria-label="Conference">
+    <option value="">All conferences</option>
+    {% for c in conferences %}<option value="{{ c }}" {{ 'selected' if c == conf }}>{{ c }}</option>{% endfor %}
+  </select>
+</form>
+
+{% if not rows %}
+<div class="card" style="padding:24px;text-align:center;color:var(--text-muted);">Ratings unavailable — couldn't load game data from ESPN.</div>
+{% else %}
+<div class="card cbbr-card">
+<table class="cbbr-table">
+  <thead><tr>
+    <th class="num">Rk</th><th>Team</th><th>Conf</th>
+    <th class="num" title="Adjusted efficiency margin: AdjO − AdjD">AdjEM</th>
+    <th class="num" title="Points scored per 100 possessions vs average defense">AdjO</th>
+    <th class="num" title="Points allowed per 100 possessions vs average offense (lower is better)">AdjD</th>
+    <th class="num" title="Possessions per 40 minutes vs average opponent">Tempo</th>
+  </tr></thead>
+  <tbody>
+  {% for team, r in rows %}
+  <tr>
+    <td class="num">{{ r.rank }}</td>
+    <td>{{ team }}</td>
+    <td class="muted">{{ r.conference }}</td>
+    <td class="num strong">{{ '%+.1f' % r.adj_em }}</td>
+    <td class="num">{{ '%.1f' % r.adj_o }}</td>
+    <td class="num">{{ '%.1f' % r.adj_d }}</td>
+    <td class="num muted">{{ '%.1f' % r.adj_t }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+</div>
+<style>
+.cbbr-note { margin:-6px 0 12px; font-size:13px; color:var(--text-muted); max-width:760px; }
+.cbbr-filter select { border:1px solid var(--border, #333); background:transparent; color:inherit; border-radius:999px; padding:4px 10px; font-size:13px; margin-bottom:12px; }
+.cbbr-card { padding:0; overflow-x:auto; }
+.cbbr-table { width:100%; border-collapse:collapse; font-size:13px; }
+.cbbr-table th, .cbbr-table td { padding:6px 10px; border-bottom:1px solid var(--border, #2a2a2a); text-align:left; white-space:nowrap; }
+.cbbr-table th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); position:sticky; top:0; background:var(--card-bg, #111); }
+.cbbr-table .num { text-align:right; font-variant-numeric:tabular-nums; }
+.cbbr-table .muted { color:var(--text-muted); }
+.cbbr-table .strong { font-weight:700; }
+</style>
+{% endblock %}

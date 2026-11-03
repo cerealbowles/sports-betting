@@ -3,7 +3,7 @@
 
 {% macro amer(v) %}{% if v is not none %}{{ '+' if v > 0 }}{{ v }}{% else %}—{% endif %}{% endmacro %}
 {% macro sched_url(b) -%}
-{%- set ep = {'MLB': 'mlb_schedule', 'NBA': 'nba_schedule', 'NFL': 'nfl_schedule', 'NHL': 'nhl_schedule', 'WNBA': 'wnba_schedule', 'CFB': 'cfb_schedule'}.get((b.sport or '') | upper) -%}
+{%- set ep = {'MLB': 'mlb_schedule', 'NBA': 'nba_schedule', 'NFL': 'nfl_schedule', 'NHL': 'nhl_schedule', 'WNBA': 'wnba_schedule', 'CBB': 'cbb_schedule', 'CFB': 'cfb_schedule'}.get((b.sport or '') | upper) -%}
 {%- if ep and b.game_key %}{{ url_for(ep) }}#gc-{{ b.game_key }}{% endif -%}
 {%- endmacro %}
 {% macro bet_line(b) -%}

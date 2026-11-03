@@ -1,0 +1,30 @@
+{# CBB-only game-detail extras (cbb_game_detail.build_game_detail's
+   detail.cbb): the rating's projected score/tempo and ESPN's BPI win
+   probability as an outside reference. Rendered via extra_panels. #}
+{% set cbb = detail.cbb if detail and detail.cbb else None %}
+{% if cbb %}
+<div class="gdp-card">
+  <div class="gdp-section-head"><span>RATING PROJECTION</span><span>{{ 'Neutral site' if cbb.neutral else 'Home court applied' }}</span></div>
+  {% set pr = cbb.projection %}
+  {% if pr.proj_home_pts is not none %}
+  <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:15px;margin-bottom:6px;">
+    <span><span style="color:#6E9BFF;font-weight:700">{{ detail.teams.away.abbr }}</span> {{ pr.proj_away_pts }}</span>
+    <span style="color:var(--gdp-muted);font-size:12px">{{ pr.proj_poss }} possessions</span>
+    <span>{{ pr.proj_home_pts }} <span style="color:#FF8A3D;font-weight:700">{{ detail.teams.home.abbr }}</span></span>
+  </div>
+  {% endif %}
+  <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--gdp-muted);">
+    {% for side in ('away', 'home') %}
+    {% set r = cbb.ratings[side] %}
+    <span>{% if r %}#{{ r.rank }} of {{ r.n_teams }} · tempo {{ r.adj_t }}{% endif %}</span>
+    {% endfor %}
+  </div>
+  {% if cbb.bpi %}
+  <div style="margin-top:10px;font-size:12px;color:var(--gdp-muted);">
+    ESPN BPI: {{ detail.teams.away.abbr }} {{ cbb.bpi.away | round(1) }}% · {{ detail.teams.home.abbr }} {{ cbb.bpi.home | round(1) }}%
+    <span title="Outside reference only — not an input to this model.">(reference)</span>
+  </div>
+  {% endif %}
+  {% if cbb.game_type_label %}<div style="margin-top:6px;font-size:12px;color:var(--gdp-dim);">{{ cbb.game_type_label }}</div>{% endif %}
+</div>
+{% endif %}

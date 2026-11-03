@@ -36,6 +36,9 @@ COEFFS = {
     'NHL':  ( 0.0702, 1.0996, 2.581),
     'NBA':  (-0.5258, 5.3636, 14.734),
     'WNBA': ( 0.2765, 6.1636, 12.967),
+    # CBB: home_prob = sigmoid(rating margin / cbb_model.MARGIN_SCALE), so
+    # this returns the rating margin exactly (same construction as CFB).
+    'CBB':  ( 0.0,    6.10,   11.65),
 }
 
 # Coefficients that applied to a sport's game_predictions rows before its

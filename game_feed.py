@@ -27,6 +27,7 @@ _TTL = 20            # seconds — short enough to feel live on a 30s poll
 _cache = {}
 _ESPN = 'https://site.api.espn.com/apis/site/v2/sports/{path}/summary'
 _ESPN_PATHS = {'NBA': 'basketball/nba', 'WNBA': 'basketball/wnba',
+               'CBB': 'basketball/mens-college-basketball',
                'NFL': 'football/nfl', 'CFB': 'football/college-football'}
 _NHL = 'https://api-web.nhle.com/v1/gamecenter/{id}/{kind}'
 _MLB = 'https://statsapi.mlb.com/api'
@@ -57,8 +58,10 @@ def _score(a, h):
 def _espn_period_label(sport, n):
     if not n:
         return ''
-    reg = 4
+    reg = 2 if sport == 'CBB' else 4   # college hoops plays two 20-minute halves
     if n <= reg:
+        if sport == 'CBB':
+            return f"H{n}"
         return f"Q{n}" if sport in ('NBA', 'WNBA', 'NFL', 'CFB') else str(n)
     return 'OT' if n == reg + 1 else f"{n - reg}OT"
 

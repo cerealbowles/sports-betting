@@ -51,6 +51,9 @@ import nba_game_detail
 import wnba_api
 import wnba_model
 import wnba_game_detail
+import cbb_api
+import cbb_model
+import cbb_game_detail
 import injuries_api
 import market_edge_calibration
 import spread_proxy
@@ -90,6 +93,7 @@ _SEASON_PHASE_FNS = {
     'CFB':  cfb_api.get_season_phase,
     'NBA':  nba_api.get_season_phase,
     'WNBA': wnba_api.get_season_phase,
+    'CBB':  cbb_api.get_season_phase,
 }
 _SEASON_PHASE_CACHE = {}
 _SEASON_PHASE_LOCK = threading.Lock()
@@ -1945,7 +1949,7 @@ def _recompute_team_bias(sport='MLB'):
 
 _MARKET_EDGE_MODEL_MODULE = {
     'MLB': mlb_model, 'NFL': nfl_model, 'NBA': nba_model, 'WNBA': wnba_model,
-    'NHL': nhl_model, 'CFB': cfb_model,
+    'NHL': nhl_model, 'CFB': cfb_model, 'CBB': cbb_model,
 }
 
 
@@ -3290,7 +3294,7 @@ def _build_day_nav(offset):
     }
 
 
-FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'WNBA', 'NHL', 'MLB')
+FAVORITE_SPORTS = ('NFL', 'CFB', 'NBA', 'WNBA', 'CBB', 'NHL', 'MLB')
 
 
 def _load_favorites():
@@ -3804,12 +3808,13 @@ def compute_chart_data(closed_bets):
 
 
 # Routes
-_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba'}
+_SPORT_ODDS_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba', 'CBB': 'basketball_ncaab'}
 
 _LIVE_SCORE_FETCHERS = {
     'MLB': mlb_api.get_live_scores, 'NHL': nhl_api.get_live_scores,
     'NFL': nfl_api.get_live_scores, 'CFB': cfb_api.get_live_scores,
     'NBA': nba_api.get_live_scores, 'WNBA': wnba_api.get_live_scores,
+    'CBB': cbb_api.get_live_scores,
 }
 
 _GAME_KEY_TS_STRIP = re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
@@ -4375,6 +4380,7 @@ _SPORT_SCHEDULE_ENDPOINTS = {
     'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule',
     'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule',
     'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule',
+    'CBB': 'cbb_schedule',
 }
 
 
@@ -4431,6 +4437,7 @@ _HUB_SPORTS = [
     ('CFB', '🎓', 'cfb_schedule'),
     ('NBA', '🏀', 'nba_schedule'),
     ('WNBA', '🏀', 'wnba_schedule'),
+    ('CBB', '🏀', 'cbb_schedule'),
     ('NHL', '🏒', 'nhl_schedule'),
 ]
 
@@ -4724,6 +4731,10 @@ def _hub_sport_data(sport, icon, href, today_str, live=False):
           day_nav = _build_day_nav(0)
           schedule = _hub_fetch_with_fallback(
               [wnba_api], lambda: wnba_api.build_schedule_context(target_date=day_nav['date']), live=live)
+        elif sport == 'CBB':
+          day_nav = _build_day_nav(0)
+          schedule = _hub_fetch_with_fallback(
+              [cbb_api], lambda: cbb_api.build_schedule_context(target_date=day_nav['date']), live=live)
         elif sport == 'NFL':
           week_ctx = _hub_fetch_with_fallback([nfl_api], nfl_api.build_week_schedule_context,
                                                is_empty=lambda r: not r.get('days'), live=live)
@@ -4739,6 +4750,14 @@ def _hub_sport_data(sport, icon, href, today_str, live=False):
         _stamp_dow(schedule, sport)
         _attach_graded_results(schedule, sport)
         games_today = sum(len(day.get('games', [])) for day in (schedule or []))
+        if sport == 'CBB':
+          # 50-180 college games a night would swamp the hub's unified list;
+          # keep the ones with a market line or a Top-25 team. The count
+          # above still reports the full slate, and /cbb has every game.
+          schedule = [{**day, 'games': [g for g in day.get('games', [])
+                                        if g.get('odds') or g['home'].get('rank_display')
+                                        or g['away'].get('rank_display')]}
+                      for day in (schedule or [])]
         all_games = _schedule_matchups(schedule, sport=sport)
         recommended = _edge_recommendations(schedule, sport, limit=5)
         for r in recommended:
@@ -5749,6 +5768,7 @@ def api_send_daily_picks():
             'CFB':  (cfb_api.build_week_schedule_context().get('days') or []),
             'NBA':  nba_api.build_schedule_context(),
             'WNBA': wnba_api.build_schedule_context(),
+            'CBB':  cbb_api.build_schedule_context(),
         }
         _send_daily_recommendations(schedules_by_sport, webhook)
         return jsonify({'ok': True})
@@ -6101,7 +6121,7 @@ def close_open(bet_id):
   if closing_line is None and b.game_key and b.bet_side and b.eventstart:
     try:
       import odds_history as _oh
-      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba'}
+      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba', 'CBB': 'basketball_ncaab'}
       sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
       es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
       market = 'spread' if (b.bet_type or '').strip().lower() == 'spread' else 'moneyline'
@@ -6200,6 +6220,15 @@ def _market_qualifies(pick_prob, mkt_implied, amer_odds):
   return edge, kelly, b
 
 
+# Sports whose model is recorded and graded (game_predictions, Model page)
+# but never earns a ★ / Recommendations-list pick. CBB (added 2026-11-02):
+# on 2,982 lined 2025-26 games, walk-forward, its moneyline edges of 4-10
+# pts ran -12% / -6% ROI against DraftKings closing prices and 10+ pts was
+# +1.6% on 290 — no validated edge, so picks stay off until live-graded
+# history says otherwise (see cbb_model.py).
+_TRACKING_ONLY_SPORTS = {'CBB'}
+
+
 def _best_market_pick(game):
   """Single source of truth for the site's ★ recommendation, across all three
   markets (ML/Spread/Total) instead of ML alone. A game can only earn a star
@@ -6217,9 +6246,11 @@ def _best_market_pick(game):
   pick_rank}."""
   if not game or game.get('status') in ('Final', 'Live'):
     return None
+  sport = game.get('sport')
+  if sport in _TRACKING_ONLY_SPORTS:
+    return None
   model = game.get('model') or {}
   odds  = game.get('odds') or {}
-  sport = game.get('sport')
   home  = game.get('home') or {}
   away  = game.get('away') or {}
   home_abbr = home.get('abbrev') or home.get('abbr') or ''
@@ -6909,6 +6940,7 @@ _SPORT_META = {
   'CFB': {'emoji': '🎓', 'schedule_endpoint': 'cfb_schedule', 'baseline': '~59% (home field)'},
   'NBA': {'emoji': '🏀', 'schedule_endpoint': 'nba_schedule', 'baseline': '~58-60% (home court)'},
   'WNBA': {'emoji': '🏀', 'schedule_endpoint': 'wnba_schedule', 'baseline': '~53-54% (home court)'},
+  'CBB': {'emoji': '🏀', 'schedule_endpoint': 'cbb_schedule', 'baseline': '~65% (home court, non-neutral D1 games)'},
 
 }
 _MODEL_SPORTS = list(_SPORT_META.keys())
@@ -8600,6 +8632,57 @@ def wnba_game_detail_page(game_id):
                           subnav_sport='WNBA', bankroll=bankroll,
                           schedule_endpoint='wnba_schedule', bet_panel_template='_wnba_bet_panel.html',
                           extra_panels=extra,
+                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          odds_last_fetch=_oa.get_last_fetch_time(),
+                          ml_panel=panel, splits=_similar_games_splits(detail))
+
+@app.route('/cbb')
+def cbb_schedule():
+  day_nav = _build_day_nav(request.args.get('offset', default=0, type=int))
+  schedule = cbb_api.build_schedule_context(target_date=day_nav['date'])
+  _upsert_predictions(schedule, 'CBB')
+  _stamp_confidence_blend(schedule, 'CBB')
+  _stamp_movement(schedule, 'CBB')
+  _stamp_dow(schedule, 'CBB')
+  _attach_graded_results(schedule, 'CBB')
+  _mark_favorites(schedule, 'CBB')
+  _match_open_bets_to_games(schedule, sport='CBB')
+  recommended = _edge_recommendations(schedule, 'CBB')
+  slate = None   # slate_overview's arena map has no college venues
+  conferences = sorted({t['conference'] for d in schedule for g in d['games']
+                        for t in (g['home'], g['away']) if t.get('conference')})
+  resp = make_response(render_template('cbb_schedule.html', schedule=schedule, subnav_sport='CBB',
+                         recommended=recommended, day_nav=day_nav, slate=slate,
+                         conferences=conferences))
+  return _set_last_sport_cookie(resp, 'CBB')
+
+@app.route('/cbb/ratings')
+def cbb_ratings_page():
+  rows = cbb_api.get_power_ratings()
+  conf = request.args.get('conf') or ''
+  all_confs = sorted({r[1].get('conference') for r in rows if r[1].get('conference')})
+  if conf:
+    rows = [r for r in rows if r[1].get('conference') == conf]
+  return render_template('cbb_ratings.html', rows=rows, conf=conf, conferences=all_confs,
+                         subnav_sport='CBB')
+
+@app.route('/cbb/game/<game_id>')
+def cbb_game_detail_page(game_id):
+  detail = cbb_game_detail.build_game_detail(game_id)
+  if not detail:
+    return redirect(url_for('cbb_schedule'))
+
+  game, _date_str = cbb_game_detail.find_game(game_id)
+
+  settings = Setting.query.first()
+  bankroll = settings.bankroll if settings else 0.0
+
+  import odds_api as _oa
+  panel = ml_factors_panel(game) if game else None
+  return render_template('game_detail.html', detail=detail, game=game,
+                          subnav_sport='CBB', bankroll=bankroll,
+                          schedule_endpoint='cbb_schedule', bet_panel_template='_cbb_bet_panel.html',
+                          extra_panels=['_cbb_ratings_panel.html'] if game else [],
                           percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
@@ -10845,6 +10928,11 @@ def api_nba_game_boxscore(event_id):
     return jsonify(box)
 
 
+@app.route('/api/cbb/live-scores')
+def api_cbb_live_scores():
+    """Powers the auto-updating score/clock on the /cbb schedule page."""
+    return jsonify(cbb_api.get_live_game_states())
+
 @app.route('/api/wnba/live-scores')
 def api_wnba_live_scores():
     """Powers the auto-updating score/clock on the /wnba schedule page's
@@ -11287,8 +11375,8 @@ def _check_unified_score_alerts(schedule, webhook_url: str) -> None:
 # Runs in a daemon thread — won't block shutdown.
 # NOTE: works correctly with a single Gunicorn worker (1 process = 1 shared cache).
 
-_SPORT_EMOJI = {'MLB': '⚾', 'NFL': '🏈', 'CFB': '🏈', 'NHL': '🏒', 'NBA': '🏀', 'WNBA': '🏀'}
-_SPORT_URL_PREFIX = {'MLB': 'mlb', 'NHL': 'nhl', 'NBA': 'nba', 'WNBA': 'wnba', 'NFL': 'nfl', 'CFB': 'cfb'}
+_SPORT_EMOJI = {'MLB': '⚾', 'NFL': '🏈', 'CFB': '🏈', 'NHL': '🏒', 'NBA': '🏀', 'WNBA': '🏀', 'CBB': '🏀'}
+_SPORT_URL_PREFIX = {'MLB': 'mlb', 'NHL': 'nhl', 'NBA': 'nba', 'WNBA': 'wnba', 'CBB': 'cbb', 'NFL': 'nfl', 'CFB': 'cfb'}
 # LAN/Tailscale address — set SITE_BASE_URL to override (e.g. a public domain)
 # if one ever gets put in front of this. No trailing slash.
 _SITE_BASE_URL = os.environ.get('SITE_BASE_URL', 'http://192.168.1.23:5034').rstrip('/')
@@ -11584,7 +11672,8 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
                                ('NFL', nfl_api.build_week_schedule_context, True),
                                ('CFB', cfb_api.build_week_schedule_context, True),
                                ('NBA', nba_api.build_schedule_context, False),
-                               ('WNBA', wnba_api.build_schedule_context, False)]:
+                               ('WNBA', wnba_api.build_schedule_context, False),
+                               ('CBB', cbb_api.build_schedule_context, False)]:
         try:
             result = fn()
             schedule = result.get('days') if is_week else result
@@ -11629,7 +11718,8 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
     from datetime import timedelta as _timedelta
     for name, fn in [('NHL', nhl_api.build_schedule_context),
                       ('NBA', nba_api.build_schedule_context),
-                      ('WNBA', wnba_api.build_schedule_context)]:
+                      ('WNBA', wnba_api.build_schedule_context),
+                      ('CBB', cbb_api.build_schedule_context)]:
         with app.app_context():
             has_pending = db.session.query(GamePrediction.id).filter_by(
                 sport=name, home_won=None).first() is not None
@@ -11655,7 +11745,7 @@ def _warm_all_caches(send_daily: bool = False, send_alerts: bool = True):
 
     # NFL/CFB/NHL/NBA/WNBA resolve outcomes inline above via _upsert_predictions, so
     # recalibrate them here instead.
-    for name in ('NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
+    for name in ('NFL', 'CFB', 'NHL', 'NBA', 'WNBA', 'CBB'):
         try:
             _recompute_all_calibration(name)
         except Exception:
@@ -11678,6 +11768,7 @@ def _check_finalized_games():
                                ('NHL',  nhl_api.build_schedule_context, False),
                                ('NBA',  nba_api.build_schedule_context, False),
                                ('WNBA', wnba_api.build_schedule_context, False),
+                               ('CBB',  cbb_api.build_schedule_context, False),
                                ('NFL',  nfl_api.build_week_schedule_context, True),
                                ('CFB',  cfb_api.build_week_schedule_context, True)]:
         try:
@@ -11908,6 +11999,19 @@ def _nfl_stats_self_heal():
         pass
 
 
+def _cbb_stats_self_heal():
+    """Men's college basketball: refreshes the last few days of cbb_rating's
+    season cache (the rating fit's input) and re-ingests those finals into
+    TeamGameStat — same downtime-gap insurance as the other sports' self-heal
+    jobs, and it keeps the overnight rating fit current before anyone loads
+    /cbb in the morning."""
+    try:
+        import cbb_stats_backfill
+        cbb_stats_backfill.backfill_recent(days=3)
+    except Exception:
+        pass
+
+
 def _wnba_stats_self_heal():
     """Same idea as _nba_stats_self_heal() above, WNBA side — re-walks the
     last few days (wnba_stats_backfill.backfill_recent()) and re-ingests
@@ -12111,6 +12215,10 @@ def _start_cache_warmer():
                       hour=5, minute=25,
                       timezone=ZoneInfo('America/New_York'),
                       id='wnba_stats_self_heal')
+    scheduler.add_job(loader_state.job('CBB stats catch-up')(_cbb_stats_self_heal), 'cron',
+                      hour=5, minute=40,
+                      timezone=ZoneInfo('America/New_York'),
+                      id='cbb_stats_self_heal')
     scheduler.add_job(loader_state.job('NHL stats catch-up')(_nhl_stats_self_heal), 'cron',
                       hour=5, minute=30,
                       timezone=ZoneInfo('America/New_York'),
@@ -12200,9 +12308,10 @@ def _start_cache_warmer():
         _nba_stats_self_heal()
         _nfl_stats_self_heal()
         _wnba_stats_self_heal()
+        _cbb_stats_self_heal()
         _nhl_stats_self_heal()
         _refit_mlb_platt()
-        for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA'):
+        for _sport in ('MLB', 'NFL', 'CFB', 'NHL', 'NBA', 'WNBA', 'CBB'):
             _recompute_all_calibration(_sport)
     threading.Thread(target=loader_state.job('Startup warm-up')(_startup), daemon=True, name='warm-startup').start()
 

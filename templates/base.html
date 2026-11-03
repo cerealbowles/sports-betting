@@ -18,8 +18,8 @@
 </head>
 {% set _embed = request.args.get('embed') == '1' %}
 <body class="{{ 'embed-mode' if _embed }}{{ ' hide-lines' if not show_lines }}">
-{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule'} %}
-{% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀', 'WNBA': '🏀'} %}
+{% set _nav_schedule_endpoints = {'MLB': 'mlb_schedule', 'NHL': 'nhl_schedule', 'NFL': 'nfl_schedule', 'CFB': 'cfb_schedule', 'NBA': 'nba_schedule', 'WNBA': 'wnba_schedule', 'CBB': 'cbb_schedule'} %}
+{% set _sport_icons = {'MLB': '⚾', 'NHL': '🏒', 'NFL': '🏈', 'CFB': '🎓', 'NBA': '🏀', 'WNBA': '🏀', 'CBB': '🏀'} %}
 {% import "_season_badge.html" as sb %}
 {# The header sport switcher is global (every page), driven by the last-visited-sport
    cookie (nav_last_sport) rather than a per-page var, since child templates can't set
@@ -92,7 +92,7 @@
             {# Pages that render _sport_pills.html already carry a full,
                always-visible sport switcher inline — the header's icon
                dropdown would just be a second way to do the same tap. #}
-            {% set _pills_endpoints = ('mlb_schedule', 'nhl_schedule', 'nba_schedule', 'wnba_schedule', 'nfl_schedule', 'cfb_schedule', 'nfl_defense_page', 'nba_simulations_page', 'nfl_lineup', 'nfl_compare', 'nfl_recap_page', 'nfl_simulations_page', 'nfl_players', 'stats_page', 'whispers_page') %}
+            {% set _pills_endpoints = ('mlb_schedule', 'nhl_schedule', 'nba_schedule', 'wnba_schedule', 'cbb_schedule', 'cbb_ratings_page', 'nfl_schedule', 'cfb_schedule', 'nfl_defense_page', 'nba_simulations_page', 'nfl_lineup', 'nfl_compare', 'nfl_recap_page', 'nfl_simulations_page', 'nfl_players', 'stats_page', 'whispers_page') %}
             {% if request.endpoint != 'bets_page' and request.endpoint not in _pills_endpoints %}
             <div class="sport-switch">
                 <button type="button" class="sport-switch-trigger" onclick="toggleSportSwitch(event)" aria-haspopup="true" aria-expanded="false" aria-label="Switch sport">

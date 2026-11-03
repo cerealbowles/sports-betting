@@ -70,7 +70,7 @@
 <div class="bet-cards-grid">
 {% for b in open_bets %}
     {% set eb_sport = (b.sport or '') | upper %}
-    {% set eb_schedule_endpoint = 'mlb_schedule' if eb_sport == 'MLB' else ('nba_schedule' if eb_sport == 'NBA' else ('nfl_schedule' if eb_sport == 'NFL' else ('nhl_schedule' if eb_sport == 'NHL' else ('wnba_schedule' if eb_sport == 'WNBA' else ('cfb_schedule' if eb_sport == 'CFB' else none))))) %}
+    {% set eb_schedule_endpoint = 'mlb_schedule' if eb_sport == 'MLB' else ('nba_schedule' if eb_sport == 'NBA' else ('nfl_schedule' if eb_sport == 'NFL' else ('nhl_schedule' if eb_sport == 'NHL' else ('wnba_schedule' if eb_sport == 'WNBA' else ('cfb_schedule' if eb_sport == 'CFB' else ('cbb_schedule' if eb_sport == 'CBB' else none)))))) %}
     {% set eb_game_url = (url_for(eb_schedule_endpoint) ~ '#gc-' ~ b.game_key) if eb_schedule_endpoint and b.game_key else none %}
     {% set eb_type = (b.bet_type or 'Moneyline') | lower %}
     {% set eb_type_class = 'ml' if 'money' in eb_type else ('spread' if 'spread' in eb_type else 'other') %}
