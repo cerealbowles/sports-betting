@@ -1048,6 +1048,15 @@ class NflRosterSnapshot(db.Model):
   __table_args__ = (db.UniqueConstraint('team_id', 'player_id', name='uq_nfl_roster_snapshot'),)
 
 
+# Schema setup (create_all, the ALTER TABLE migrations and the Setting seed
+# below) runs at import in every gunicorn worker at once. Unserialized, a new
+# table or column makes the losers fail with "already exists" / "duplicate
+# column" and gunicorn exits. Hold an exclusive lock next to the DB until the
+# seed is done so each worker sees the previous one's finished schema.
+import fcntl
+_schema_lock_fh = open(os.path.join(os.path.dirname(_DB_PATH), '.schema.lock'), 'w')
+fcntl.flock(_schema_lock_fh.fileno(), fcntl.LOCK_EX)
+
 # Create tables for any new models on first run
 with app.app_context():
   db.create_all()
@@ -1178,6 +1187,8 @@ with app.app_context():
   if not Setting.query.first():
     db.session.add(Setting(bankroll=50, percent_bankroll=0.25))
     db.session.commit()
+
+_schema_lock_fh.close()  # releases the schema lock
 
 
 def _vig_free_implied(home_odds, away_odds):
