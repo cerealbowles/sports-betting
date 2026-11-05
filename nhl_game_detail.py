@@ -296,7 +296,7 @@ def build_game_detail(game_id):
             'away': {**away, 'abbr': away_abbrev},
             'home': {**home, 'abbr': home_abbrev},
         },
-        'fanduel': {
+        'draftkings': {
             'moneyline': {'away': {'price': odds.get('away_best'), 'open': odds.get('opening_away')},
                            'home': {'price': odds.get('home_best'), 'open': odds.get('opening_home')}},
             'spread': {'away': {'line': -home_spread_line if home_spread_line is not None else None,

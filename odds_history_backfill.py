@@ -115,7 +115,7 @@ def _historical_call(sport_key, iso_ts, stats):
 
 
 def _totals_point(event):
-    """Prefer FanDuel's totals point (matches how the rest of the app sources
+    """Prefer DraftKings' totals point (matches how the rest of the app sources
     lines); fall back to the average across whatever books are present."""
     pts = []
     fd = None
@@ -127,7 +127,7 @@ def _totals_point(event):
                 if o.get('point') is None:
                     continue
                 pts.append(o['point'])
-                if bm.get('key') == 'fanduel':
+                if bm.get('key') == 'draftkings':
                     fd = o['point']
     if fd is not None:
         return fd

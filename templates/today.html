@@ -24,8 +24,7 @@
   {%- else %}<span class="hub-status later">TBD</span>{% endif -%}
 {%- endmacro %}
 {# Board "line" column: the favorite's spread when there is one, else the
-   moneyline favorite — mirrors what the design's FANDUEL column showed,
-   from the DraftKings odds the schedule builders already attach. #}
+   moneyline favorite — the design's sportsbook column, from the DraftKings odds the schedule builders already attach. #}
 {% macro board_line(g) -%}
   {%- if g.home_spread is not none -%}
     {%- if g.home_spread <= 0 %}{{ g.home_abbr }} {{ g.home_spread }}{% else %}{{ g.away_abbr }} -{{ g.home_spread }}{% endif -%}
@@ -58,7 +57,7 @@
         <span class="live-strip-lead-count">{% if live_games_today %}<span style="color:var(--orange);">{{ live_games_today | length }} live</span> · {% endif %}{{ _games_tonight }} today</span>
     </div>
 {% for g in all_games_today %}
-<a class="live-strip-card{% if g.my_bets %} has-bet{% elif g.edge_pick %} has-edge{% endif %}" href="{{ g.href or '#' }}" data-sport="{{ g.sport }}">
+<a class="live-strip-card{% if g.edge_pick %} has-edge{% endif %}" href="{{ g.href or '#' }}" data-sport="{{ g.sport }}">
     <div class="live-strip-head">
         <span class="live-strip-league">{{ g.sport }}</span>
         {{ status_cell(g) }}
@@ -80,9 +79,7 @@
         <span class="live-strip-base b1{{ ' on' if g.bases.first }}"></span>
     </div>
     {% endif %}
-    {% if g.my_bets %}
-    <span class="live-strip-edge">● Your bet: {{ g.my_bets[0].label }}</span>
-    {% elif g.edge_pick %}
+    {% if g.edge_pick %}
     <span class="live-strip-model">◆ Model: {{ g.edge_pick.pick_label }}</span>
     {% endif %}
 </a>
@@ -155,12 +152,7 @@
     {% endif %}
 
     <div class="hub-featured-foot">
-        {% if f.my_bets %}{% set b = f.my_bets[0] %}
-        <span class="hub-bet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}"><span class="dot"></span>Your bet · {{ b.state }}</span>
-        <span><span class="muted">Pick</span> <strong>{{ b.label }}</strong></span>
-        {% if b.odds is not none %}<span><span class="muted">Placed at</span> <span class="mono">{{ ml(b.odds) }}</span></span>{% endif %}
-        {% if b.edge is not none %}<span><span class="muted">Edge</span> <span class="mono" style="color:{{ 'var(--win)' if b.edge > 0 else 'var(--loss)' }};">{{ '+' if b.edge > 0 }}{{ b.edge }}%</span></span>{% endif %}
-        {% elif f.edge_pick %}{% set p = f.edge_pick %}
+        {% if f.edge_pick %}{% set p = f.edge_pick %}
         <span class="hub-bet-state model"><span class="dot"></span>Model pick</span>
         <span><span class="muted">Pick</span> <strong>{{ p.pick_label }}</strong></span>
         <span><span class="muted">DraftKings</span> <span class="mono">{{ ml(p.amer_odds) }}</span></span>
@@ -256,31 +248,6 @@
         {% endif %}
     </section>
 
-    <section class="card hub-rail-card" aria-labelledby="bets-h">
-        <div class="hub-rail-head">
-            <h2 id="bets-h">Open bets <span style="color:var(--text-muted);">{{ open_bets | length }}</span></h2>
-            <a href="{{ url_for('bets_page') }}">Bet log</a>
-        </div>
-        {% if open_bets %}
-        <ul class="hub-bets">
-        {% for b in open_bets %}
-            <li>
-                <span class="hub-bets-l">
-                    <strong>{{ b.label }}</strong>
-                    <span class="small">{% if b.href %}<a href="{{ b.href }}">{{ b.game }}</a>{% else %}{{ b.game }}{% endif %}{% if b.game_time_utc %} · <span class="game-time" data-utc="{{ b.game_time_utc }}">—</span>{% endif %}</span>
-                </span>
-                <span class="hub-bets-r">
-                    <span class="mono">{{ ml(b.odds) }}</span>
-                    <span class="hub-bet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}">{{ b.state }}</span>
-                </span>
-            </li>
-        {% endfor %}
-        </ul>
-        {% else %}
-        <p class="hub-sport-empty" style="padding:0 20px 16px;">Nothing riding right now.</p>
-        {% endif %}
-    </section>
-
     <section class="card hub-rail-card hub-model" aria-labelledby="num-h">
         <h2 id="num-h">The model tonight</h2>
         <div class="hub-model-grid">
@@ -309,25 +276,9 @@ function hubFormatGameTimes() {
 }
 hubFormatGameTimes();
 
-// "Last seen alive" for the loader (static/loader.js): the open-bets rail as
-// last rendered, so a slow load still shows where your money stands.
-function hubSaveLastSeen() {
-    var bets = [];
-    document.querySelectorAll('.hub-bets li').forEach(function (li) {
-        var name = li.querySelector('.hub-bets-l strong'), odds = li.querySelector('.hub-bets-r .mono');
-        var state = li.querySelector('.hub-bet-state');
-        if (!name || !state) return;
-        bets.push({bet: name.textContent.trim() + (odds ? ' ' + odds.textContent.trim() : ''),
-                   state: state.textContent.trim(),
-                   tone: state.classList.contains('good') ? 'good' : state.classList.contains('bad') ? 'bad' : ''});
-    });
-    try { localStorage.setItem('dm.lastSeen', JSON.stringify({ts: Date.now(), bets: bets})); } catch (e) {}
-}
-hubSaveLastSeen();
-
 // Auto-update for leaving the page open on a phone/iPad: every 30s re-fetch
 // this page and swap .schedule-body in place — scores, live/final status,
-// featured game, board, open-bet states and whispers all move together, with
+// featured game, board and whispers all move together, with
 // no per-section patching to keep in sync with the markup above. Paused while
 // the tab is hidden (the browser throttles it anyway); on return it refreshes
 // at once, then again shortly after, since the first hit may only kick off
@@ -356,7 +307,6 @@ hubSaveLastSeen();
                 var stripScroll = strip ? strip.scrollLeft : 0;
                 cur.innerHTML = fresh.innerHTML;
                 hubFormatGameTimes();
-                hubSaveLastSeen();
                 var btn = document.querySelector('#hub-sport-filter .sport-chip[data-filter-sport="' + sport + '"]');
                 if (btn && sport !== 'ALL') hubFilterBySport(sport, btn);
                 var newStrip = cur.querySelector('.live-strip');

@@ -84,7 +84,6 @@
                 {% if game.is_playoffs %}<span class="playoffs-badge" title="{{ game.game_type_label or 'Postseason' }}">{{ (game.game_type_label or 'Postseason') | truncate(32, True, '…') }}</span>
                 {% elif game.game_type_label %}<span class="cbb-note-badge" title="{{ game.game_type_label }}">{{ game.game_type_label | truncate(28, True, '…') }}</span>{% endif %}
                 {% if game.neutral %}<span class="cbb-neutral-badge" title="Neutral site — no home court in the model">Neutral</span>{% endif %}
-                {% for bet in game.open_bets or [] %}<span class="open-bet-pill" title="Open bet: {{ bet.name }}">{{ bet.name | bet_pill_label }} · ${{ '%.2f' % bet.stake }} → ${{ '%.2f' % (bet | bet_return) }}</span>{% endfor %}
                 {{ edge_star(game) }}
             </div>
         </div>

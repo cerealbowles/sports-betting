@@ -15,7 +15,6 @@
     var SHOW_AFTER = 400, SLOW_AFTER = 8000, FAIL_AFTER = 30000;
     var MAX_PARALLEL = 4;          // leaves the browser's per-host slots for the page itself
     var PAGE_CACHE = 'dm-pages-v1'; // see service-worker.js
-    var SEEN_KEY = 'dm.lastSeen';  // written by today.html's open-bets rail
 
     var el = document.getElementById('dmLoader');
     if (!el) return;
@@ -210,26 +209,6 @@
         });
     }
 
-    // ---- "Last seen alive" ---------------------------------------------
-    function renderCached() {
-        var seen = null;
-        try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); } catch (e) {}
-        var box = q('cached');
-        if (!seen || !seen.bets || !seen.bets.length) { box.hidden = true; return; }
-        q('cached-when').textContent = 'LAST SEEN ALIVE · ' + fmtTime(seen.ts);
-        var ul = q('cached-rows');
-        ul.innerHTML = '';
-        seen.bets.slice(0, 3).forEach(function (b) {
-            var li = document.createElement('li');
-            li.innerHTML = '<span class="dm-loader-cached-bet"></span><span class="dm-loader-cached-state"></span>';
-            li.firstChild.textContent = b.bet;
-            li.lastChild.textContent = b.state;
-            if (b.tone) li.lastChild.classList.add(b.tone);
-            ul.appendChild(li);
-        });
-        box.hidden = false;
-    }
-
     // ---- lifecycle ------------------------------------------------------
     function begin(sourceRows, url) {
         rows = sourceRows;
@@ -238,7 +217,6 @@
         running = true;
         slowDismissed = false;
         offerSaved(url);
-        renderCached();
         render();
         clearTimeout(showTimer);
         showTimer = setTimeout(function () {

@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 import odds_api
 import wnba_model
+import bball_total_model
 import wnba_roster_api
 import wnba_player_model
 import wnba_ensemble_model
@@ -666,6 +667,25 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
     a_ab = away.get('abbrev', '')
     h_ab = home.get('abbrev', '')
 
+    # Game-total (O/U) projection — tracking only, never a ★ pick (totals
+    # were dropped from the UI 2026-10-23 for having no edge; restored
+    # 2026-11-05 purely so the paper ledger grades them). See
+    # bball_total_model.py. Blended PPG the same way the win model uses it.
+    home_ppg         = home.get('blend_ppg', home.get('ppg'))
+    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+    away_ppg         = away.get('blend_ppg', away.get('ppg'))
+    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
+    total_inputs = {
+        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
+        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
+    }
+    try:
+        total_model = bball_total_model.predict_total(
+            'WNBA', home.get('id'), home_ppg, home_ppg_allowed,
+            away.get('id'), away_ppg, away_ppg_allowed, allow_fetch=not _CACHE_ONLY)
+    except Exception:
+        total_model = None
+
     return {
         'game_id':       event.get('id'),
         'game_time_utc': event.get('date', ''),
@@ -678,6 +698,8 @@ def _build_game(event, team_stats, game_log, wnba_odds_map, prior_stats=None, se
         'sport':         'WNBA',
         'odds':          game_odds,
         'model':         model,
+        'total_model':   total_model,
+        'total_inputs':  total_inputs,
         'lineups':       lineups,
         'bet_name':      f"{a_ab} @ {h_ab}",
         'game_key':      f"{_normalize(home['name'])}_{_normalize(away['name'])}",

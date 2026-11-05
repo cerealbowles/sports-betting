@@ -209,7 +209,7 @@ def build(sport, short_sport, g, season, before_date, stats_db, boxscore_api, ro
             'venue': g.get('venue'), 'status': g.get('status'), 'weather': None,
         },
         'teams': {'away': away, 'home': home},
-        'fanduel': {
+        'draftkings': {
             'moneyline': {'away': {'price': odds.get('away_best'), 'open': odds.get('opening_away')},
                            'home': {'price': odds.get('home_best'), 'open': odds.get('opening_home')}},
             'spread': {'away': {'line': -home_spread_line if home_spread_line is not None else None,

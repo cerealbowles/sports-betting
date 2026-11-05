@@ -11,7 +11,9 @@
     <div>
         <span class="hub-kicker">{{ sport }}{% if season %} · {{ season }}{% if sport in ('NBA', 'NHL') %}–{{ (season + 1) % 100 }}{% endif %} season{% endif %} {{ sb.season_badge(sport) }}</span>
         <h1 class="hub-title">The Almanac</h1>
+        {% if sport == 'NFL' %}
         <a href="{{ url_for('matchups_page') }}" class="stats-ouija-link">Today's NFL matchups{% if ouija_targets is not none %} · {{ ouija_targets }} target{{ 's' if ouija_targets != 1 }}{% endif %} → The Ouija Board</a>
+        {% endif %}
     </div>
     <nav class="stats-sport-switch" aria-label="Sport">
         {% for sp in sports %}
@@ -124,16 +126,18 @@
     </section>
     {% endif %}
 
+    {% if ledger %}
     <section class="card stats-ledger" aria-labelledby="ledger-h">
-        <h2 id="ledger-h">Your {{ sport }} ledger</h2>
-        <p class="small" style="margin:0 0 14px;">Settled bets, all time</p>
+        <h2 id="ledger-h">The model's {{ sport }} paper record</h2>
+        <p class="small" style="margin:0 0 14px;">{{ ledger.pool_label }}, moneyline, at the price an hour before start, graded automatically</p>
         <div class="hub-model-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
-            <div><span class="stat-label">Record</span><span class="mono" style="font-size:1.1rem;">{{ ledger.w }}–{{ ledger.l }}</span></div>
-            <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.roi and ledger.roi > 0 else 'var(--loss)' }};">{% if ledger.roi is not none %}{{ '+' if ledger.roi > 0 }}{{ ledger.roi }}%{% else %}—{% endif %}</span></div>
-            <div><span class="stat-label">CLV</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--win)' if ledger.avg_clv and ledger.avg_clv > 0 else 'var(--text-muted)' }};">{% if ledger.avg_clv is not none %}{{ '+' if ledger.avg_clv > 0 }}{{ ledger.avg_clv }}%{% else %}—{% endif %}</span></div>
+            <div><span class="stat-label">Record</span><span class="mono" style="font-size:1.1rem;">{{ ledger.wins }}–{{ ledger.losses }}{% if ledger.pushes %}–{{ ledger.pushes }}{% endif %}</span></div>
+            <div><span class="stat-label">ROI</span><span class="mono" style="font-size:1.1rem; color:{{ 'var(--text-muted)' if ledger.roi is none else ('var(--win)' if ledger.roi > 0 else 'var(--loss)') }};">{% if ledger.roi is not none %}{{ '+' if ledger.roi > 0 }}{{ ledger.roi }}%{% else %}—{% endif %}</span></div>
+            <div><span class="stat-label">Beat close</span><span class="mono" style="font-size:1.1rem;">{% if ledger.beat_close_pct is not none %}{{ ledger.beat_close_pct }}%{% else %}—{% endif %}</span></div>
         </div>
-        <a href="{{ url_for('bets_page', sport=sport) ~ '#settled' }}" class="stats-ledger-link">Bet history →</a>
+        <a href="{{ url_for('model_performance', sport=sport) ~ '#paper-h' }}" class="stats-ledger-link">Paper ledger →</a>
     </section>
+    {% endif %}
 </aside>
 </div>
 

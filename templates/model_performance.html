@@ -218,7 +218,7 @@
         </label>
         {% set _ = _qs.update({'sport': sport}) %}
         <div class="gy-seg" role="group" aria-label="Market">
-            {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread')] %}
+            {% for code, label in [('moneyline', 'Moneyline'), ('spread', 'Spread'), ('total', 'Total')] %}
             {% set _ = _qs.update({'type': code}) %}
             <a href="{{ url_for('model_performance', **_qs) }}" class="gy-seg-a{{ ' on' if bet_type == code }}"{% if bet_type == code %} aria-current="page"{% endif %}>{{ label }}</a>
             {% endfor %}
@@ -304,10 +304,89 @@
         {% else %}
         <p class="small mp-pad" style="padding-top:0;">Nothing stands out yet — every bucket with 30+ games is within 5 points of its prediction.</p>
         {% endif %}
-        {% if not is_ml %}<p class="small mp-pad" style="padding-top:0;">Spread picks are backfilled from history where possible: home win probability + the stored ESPN opening line feed <code>spread_proxy.cover_prob()</code>, graded against the final margin. Backfilled rows assume -110; rows tracked going forward use the real price.</p>{% endif %}
+        {% if bet_type == 'total' %}<p class="small mp-pad" style="padding-top:0;">Totals are tracking only: the model's over/under side on every game with a DraftKings total, never a ★ pick. None of the total models beat a flat guess when they were dropped on Oct 23, so treat this as a watch list, not a signal.</p>{% endif %}
+        {% if bet_type == 'spread' %}<p class="small mp-pad" style="padding-top:0;">Spread picks are backfilled from history where possible: home win probability + the stored ESPN opening line feed <code>spread_proxy.cover_prob()</code>, graded against the final margin. Backfilled rows assume -110; rows tracked going forward use the real price.</p>{% endif %}
     </section>
     {% include "_recommended_bets_card.html" %}
 </div>
+
+{# ── Paper ledger: every game, fixed-time price, auto-graded ── #}
+{% if paper %}
+{% set P = paper %}{% set cur = P.rec if P.pool == 'rec' else P.all %}
+{% set clv_unit = 'pp' if P.market == 'ml' else 'pts' %}
+{% set has_rec = P.market != 'total' %}
+<section class="card mp-paper" aria-labelledby="paper-h">
+    <div class="gy-h2-row mp-pad">
+        <div>
+            <h2 id="paper-h" class="gy-h2">Paper ledger</h2>
+            <span class="small">The model's {{ {'ml': 'moneyline', 'spread': 'spread', 'total': 'over/under'}[P.market] }} side on every {{ sport }} game, priced {{ 'an hour before start' if P.snap == 't60' else 'the moment it was first recommended' }}, graded automatically. No bets placed, no selection bias.</span>
+        </div>
+        <div class="mp-paper-controls">
+            {% set _pq = request.args.to_dict() %}
+            {% if has_rec %}
+            <div class="gy-seg" role="group" aria-label="Price captured">
+                {% for code, label in [('t60', 'T−60 min'), ('first_rec', 'First rec')] %}{% set _ = _pq.update({'snap': code}) %}
+                <a href="{{ url_for('model_performance', **_pq) }}#paper-h" class="gy-seg-a{{ ' on' if P.snap == code }}"{% if P.snap == code %} aria-current="true"{% endif %}>{{ label }}</a>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% set _pq = request.args.to_dict() %}
+            {% if P.snap == 't60' and has_rec %}
+            <div class="gy-seg" role="group" aria-label="Pool">
+                {% for code, label in [('rec', 'Recommended'), ('all', 'Every game')] %}{% set _ = _pq.update({'pool': code}) %}
+                <a href="{{ url_for('model_performance', **_pq) }}#paper-h" class="gy-seg-a{{ ' on' if P.pool == code }}"{% if P.pool == code %} aria-current="true"{% endif %}>{{ label }}</a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if not P.all.logged %}
+    <p class="small mp-pad" style="padding-top:0;">Nothing logged yet. Picks are captured going forward from {{ 'an hour before each start' if P.snap == 't60' else 'each new recommendation' }} and appear here as games finish.</p>
+    {% else %}
+    <div class="gy-table-wrap mp-pad" style="padding-top:0;">
+        <table class="gy-table mp-table">
+            <thead><tr>
+                <th scope="col">Pool</th><th scope="col" class="r">Logged</th><th scope="col" class="r">Record</th>
+                <th scope="col" class="r">Win rate</th><th scope="col" class="r">ROI (flat 1u)</th><th scope="col" class="r">Avg edge</th>
+                <th scope="col" class="r">Beat close</th><th scope="col" class="r">Avg CLV</th>
+            </tr></thead>
+            <tbody>
+            {% set pools = ([('Recommended ★', P.rec), ('Every game', P.all)] if P.snap == 't60' else [('Recommended ★', P.rec)]) if has_rec else [('Every game', P.all)] %}
+            {% for name, x in pools %}
+            <tr{% if has_rec and (P.pool == 'rec') == loop.first %} class="on"{% endif %}>
+                <th scope="row">{{ name }}</th>
+                <td class="r mono muted">{{ x.logged }}{% if x.pending %} <span class="small">({{ x.pending }} pending)</span>{% endif %}</td>
+                <td class="r mono">{{ x.wins }}-{{ x.losses }}{% if x.pushes %}-{{ x.pushes }}{% endif %}</td>
+                <td class="r mono">{{ x.win_rate ~ '%' if x.win_rate is not none else '—' }}</td>
+                <td class="r mono" style="color:{{ 'var(--text-muted)' if x.roi is none else ('var(--win)' if x.roi > 0 else 'var(--loss)') }};">{% if x.roi is not none %}{{ '+' if x.roi > 0 }}{{ x.roi }}%{% else %}—{% endif %}</td>
+                <td class="r mono muted">{% if x.avg_edge is not none %}{{ x.avg_edge }} pts{% else %}—{% endif %}</td>
+                <td class="r mono">{% if x.beat_close_pct is not none %}{{ x.beat_close_pct }}% <span class="small muted">n={{ x.beat_close_n }}</span>{% else %}—{% endif %}</td>
+                <td class="r mono">{% set c = x.avg_clv_pts if P.market != 'ml' and x.avg_clv_pts is not none else x.avg_clv_prob %}{% if c is not none %}{{ '+' if c > 0 }}{{ c }} {{ clv_unit }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p class="small" style="margin-top:8px;">Beat close counts picks whose price{{ ' or line' if P.market != 'ml' }} was better than the last pregame number (unchanged closes are left out). Above 50% is the earliest sign of real edge, long before ROI settles. CLV is in {{ 'points when the line moved, else' if P.market != 'ml' }} percentage points of no-vig win probability.{% if P.tracking_only and has_rec %} {{ sport }} is tracking-only, so nothing is ever recommended here; read the Every game row.{% endif %}</p>
+    </div>
+
+    {% set sh = P.shadow %}
+    {% if sh.points | length > 1 %}
+    <div class="mp-pad" style="padding-top:0;">
+        <h3 class="mp-h3">Shadow bankroll · {{ 'recommended picks' if P.pool == 'rec' and has_rec else 'every game' }}</h3>
+        <p class="small">Starts at {{ sh.start | int }}. Full Kelly (capped at {{ (sh.kelly_cap * 100) | round | int }}% of bankroll a bet, your Settings cap), half Kelly, and flat {{ (sh.start * sh.flat_pct) | round(1) }}u stakes, replayed in start-time order on the {{ 'T−60' if P.snap == 't60' else 'first-rec' }} price. Kelly skips picks where the posted price leaves no edge.</p>
+        <div class="mp-paper-final">
+            {% for key, name, color in [('full', 'Full Kelly', '#E8650A'), ('half', 'Half Kelly', '#8F7BFF'), ('flat', 'Flat', '#1FA37E')] %}
+            <div><span class="sw" style="background:{{ color }};"></span><span class="gy-kpi-label">{{ name }}</span><span class="mono">{{ sh.final[key] }}</span><span class="small muted">max drawdown {{ sh.max_drawdown[key] }}%</span></div>
+            {% endfor %}
+        </div>
+        <div style="position:relative; height:260px;"><canvas id="chartShadow" role="img" aria-label="Shadow bankroll: full Kelly ends at {{ sh.final.full }}, half Kelly at {{ sh.final.half }}, flat at {{ sh.final.flat }}, from {{ sh.start | int }}"></canvas></div>
+        <script type="application/json" id="shadowData">{{ sh.points | tojson }}</script>
+    </div>
+    {% endif %}
+    {% endif %}
+</section>
+{% endif %}
 
 {% if n_resolved %}
 {% set tabs = [('cal', 'Calibration', cal_buckets | length ~ ' buckets'), ('pips', 'Confidence pips', (pip_rows or []) | length)] %}
@@ -506,7 +585,7 @@
     {% endif %}
 </section>
 {% else %}
-<div class="card mp-empty">No resolved {{ 'predictions' if is_ml else 'spread picks' }} yet — check back after tonight's games finish.</div>
+<div class="card mp-empty">No resolved {{ 'predictions' if is_ml else bet_type ~ ' picks' }} yet — check back after tonight's games finish.</div>
 {% endif %}
 
 {% endif %}
@@ -571,6 +650,47 @@ window.mpDrawTrend = function () {
 </script>
 {% endif %}
 
+
+<script>
+(function () {
+  var el = document.getElementById('shadowData'), ctx = document.getElementById('chartShadow');
+  if (!el || !ctx || !window.Chart) return;
+  var pts = JSON.parse(el.textContent);
+  var series = [['full', 'Full Kelly', '#E8650A'], ['half', 'Half Kelly', '#8F7BFF'], ['flat', 'Flat', '#1FA37E']];
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: pts.map(function (p, i) { return i; }),
+      datasets: series.map(function (s) {
+        return { label: s[1], data: pts.map(function (p) { return p[s[0]]; }), borderColor: s[2],
+                 backgroundColor: s[2], borderWidth: 2, pointRadius: 0, pointHoverRadius: 4,
+                 pointHoverBorderColor: '#17121A', pointHoverBorderWidth: 2, tension: 0 };
+      })
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      color: '#A89EA9',
+      font: { family: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", size: 11 },
+      plugins: {
+        legend: { position: 'top', labels: { color: '#A89EA9', padding: 10, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#17121A', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
+          titleColor: '#F4EEE8', bodyColor: '#A89EA9', padding: 10, cornerRadius: 6,
+          callbacks: {
+            title: function (items) { var p = pts[items[0].dataIndex]; return p.pick ? (p.label + ' · ' + p.pick) : 'Start'; },
+            label: function (item) { return item.dataset.label + ': ' + item.parsed.y.toFixed(1); }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#A89EA9', maxTicksLimit: 8 }, title: { display: true, text: 'picks settled', color: '#A89EA9' } },
+        y: { grid: { color: 'rgba(154,147,173,0.12)' }, ticks: { color: '#A89EA9' } }
+      }
+    }
+  });
+})();
+</script>
 
 <script>
 (function () {

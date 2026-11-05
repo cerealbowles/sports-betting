@@ -8,6 +8,7 @@ from dt_fmt import fmt as _fmt
 import odds_api
 import odds_history
 import nfl_model
+import football_total_model
 import nfl_stats_db
 import nfl_boxscore_api
 import nfl_playbyplay_api
@@ -919,6 +920,25 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         except Exception:
             pass
 
+    # Game-total (O/U) projection — tracking only, never a ★ pick (totals
+    # were dropped from the UI 2026-10-23 for having no edge; restored
+    # 2026-11-05 purely so the paper ledger grades them). See
+    # football_total_model.py. Blended PPG the same way the win model uses it.
+    home_ppg         = home.get('blend_ppg', home.get('ppg'))
+    home_ppg_allowed = home.get('blend_ppg_allowed', home.get('ppg_allowed'))
+    away_ppg         = away.get('blend_ppg', away.get('ppg'))
+    away_ppg_allowed = away.get('blend_ppg_allowed', away.get('ppg_allowed'))
+    total_inputs = {
+        'home_id': home.get('id'), 'home_ppg': home_ppg, 'home_ppg_allowed': home_ppg_allowed,
+        'away_id': away.get('id'), 'away_ppg': away_ppg, 'away_ppg_allowed': away_ppg_allowed,
+    }
+    try:
+        total_model = football_total_model.predict_total(
+            'NFL', home.get('id'), home_ppg, home_ppg_allowed,
+            away.get('id'), away_ppg, away_ppg_allowed, allow_fetch=not _CACHE_ONLY)
+    except Exception:
+        total_model = None
+
     return {
         'game_id':       event.get('id'),
         'game_time_utc': event.get('date', ''),
@@ -931,6 +951,8 @@ def _build_game(event, team_stats, game_log, nfl_odds_map, prior_stats=None):
         'sport':         'NFL',
         'odds':          game_odds,
         'model':         model,
+        'total_model':   total_model,
+        'total_inputs':  total_inputs,
         'weather':       weather,
         'team_stats':    team_stats,
         'bet_name':      f"{a_ab} @ {h_ab}",

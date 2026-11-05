@@ -38,16 +38,9 @@
    a sport's page"). #}
 {% set _today_href = url_for('index') %}
 {% set _today_active = request.endpoint == 'index' %}
-{% set _page_labels = {'bets_page': 'Bets', 'model_performance': 'Model', 'history': 'History', 'settings_page': 'Settings', 'whispers_page': 'Whispers', 'stats_page': 'Stats', 'search_page': 'Search'} %}
+{% set _page_labels = {'model_performance': 'Model', 'settings_page': 'Settings', 'whispers_page': 'Whispers', 'stats_page': 'Stats', 'search_page': 'Search'} %}
 {% set _page_label = 'Today' if _today_active else (_sport_switch_active if request.endpoint in _nav_schedule_endpoints.values() else _page_labels.get(request.endpoint, 'Dead Money')) %}
 <div class="container">
-
-{# Hidden globals for the inline bet-slip Kelly calc on CFB/NFL game cards
-   (static/main.js openBetSlip/updateReturn) — site-wide via global_exposure
-   so any page's game cards can compute a recommended stake without each
-   route having to pass bankroll/percent_bankroll into its own template. #}
-<span id="global_bankroll_value" style="display:none;">{{ global_exposure.bankroll if global_exposure else 0 }}</span>
-<span id="global_percent_cap_value" style="display:none;">{{ global_exposure.percent_bankroll if global_exposure else 0.02 }}</span>
 
     {% if not _embed %}
     <header class="topbar">
@@ -61,7 +54,6 @@
                 <a href="{{ _today_href }}"{% if _today_active %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M12 4v16M3 12h18"></path></svg>Scores</a>
                 <a href="{{ url_for('stats_page') }}"{% if request.endpoint in ('stats_page', 'matchups_page', 'matchups_record_page') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19l5-6 4 3 7-9"></path></svg>Stats</a>
                 <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}"{% if request.endpoint == 'model_performance' %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>Model</a>
-                <a href="{{ url_for('bets_page') }}"{% if request.endpoint in ('bets_page', 'history') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"></path></svg>Bets{% if nav_open_bet_count %} <span class="nav-count">{{ nav_open_bet_count }}</span>{% endif %}</a>
                 <a href="{{ url_for('nfl_lineup') }}"{% if request.endpoint in ('nfl_lineup', 'nfl_players', 'nfl_player_detail', 'nfl_recap_page') %} class="active"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg>Fantasy</a>
             </div>
         </nav>
@@ -93,7 +85,7 @@
                always-visible sport switcher inline — the header's icon
                dropdown would just be a second way to do the same tap. #}
             {% set _pills_endpoints = ('mlb_schedule', 'nhl_schedule', 'nba_schedule', 'wnba_schedule', 'cbb_schedule', 'cbb_ratings_page', 'nfl_schedule', 'cfb_schedule', 'nfl_defense_page', 'nba_simulations_page', 'nfl_lineup', 'nfl_compare', 'nfl_recap_page', 'nfl_simulations_page', 'nfl_players', 'stats_page', 'whispers_page') %}
-            {% if request.endpoint != 'bets_page' and request.endpoint not in _pills_endpoints %}
+            {% if request.endpoint not in _pills_endpoints %}
             <div class="sport-switch">
                 <button type="button" class="sport-switch-trigger" onclick="toggleSportSwitch(event)" aria-haspopup="true" aria-expanded="false" aria-label="Switch sport">
                     <span>{{ _sport_icons[_sport_switch_active] }}</span>
@@ -137,9 +129,6 @@
     </a>
     <a href="{{ url_for('model_performance', sport=_sport_switch_active) }}" class="btb-item{% if request.endpoint == 'model_performance' %} active{% endif %}">
         <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg><span class="btb-label">Model</span>
-    </a>
-    <a href="{{ url_for('bets_page') }}" class="btb-item{% if request.endpoint in ('bets_page', 'history') %} active{% endif %}">
-        <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"></path></svg><span class="btb-label">Bets{% if nav_open_bet_count %} {{ nav_open_bet_count }}{% endif %}</span>
     </a>
     <a href="{{ url_for('nfl_lineup') }}" class="btb-item{% if request.endpoint in ('nfl_lineup', 'nfl_players', 'nfl_player_detail', 'nfl_recap_page') %} active{% endif %}">
         <svg class="btb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg><span class="btb-label">Fantasy</span>

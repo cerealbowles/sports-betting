@@ -61,6 +61,11 @@ import spread_model
 import team_venues
 import slate_overview
 import loader_state
+import paper_ledger
+import bball_total_model
+import football_total_model
+import hockey_total_model
+import mlb_total_model
 from zoneinfo import ZoneInfo
 from dt_fmt import fmt as _fmt
 
@@ -199,7 +204,7 @@ class Setting(db.Model):
 
 class AlertSent(db.Model):
   """One row per Discord alert actually posted, keyed by a sender-chosen
-  dedupe_key (e.g. "bet_line_move:<game_key>:-4.5") so a restart, a
+  dedupe_key (e.g. "picks_changed:<game_key>") so a restart, a
   re-poll or two overlapping warmer runs never send the same alert twice.
   See _send_alert()."""
   __tablename__ = 'alert_sent'
@@ -209,6 +214,11 @@ class AlertSent(db.Model):
   sent_at    = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+# ── Legacy manual-bet tables ────────────────────────────────────────────────
+# OpenBet / DraftBet / ClosedBet backed the manual bet tracker, removed in
+# favor of the paper ledger (PaperPick, below). Nothing reads or writes them
+# any more; the models stay so the tables and their history are kept as-is
+# in existing databases.
 class OpenBet(db.Model):
   id = db.Column(db.Integer, primary_key=True)
   name = db.Column(db.String(200))
@@ -368,6 +378,47 @@ class GamePrediction(db.Model):
   rec_pips       = db.Column(db.Integer)
   created_at     = db.Column(db.DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))
+
+
+class PaperPick(db.Model):
+  """The model's side on one market of one game, frozen at a fixed moment
+  (snapshot 't60' or 'first_rec', see paper_ledger.py), then closed with the
+  last pregame line and graded on the final score. Logged for EVERY tracked
+  game, recommended or not, so the Model page can judge the model without
+  the selection bias of which bets were actually placed. Keyed by the same
+  (sport, game_date, home_team, away_team) tuple as GamePrediction."""
+  __tablename__ = 'paper_picks'
+  id          = db.Column(db.Integer, primary_key=True)
+  sport       = db.Column(db.String(10), nullable=False, index=True)
+  game_date   = db.Column(db.String(10), nullable=False, index=True)
+  home_team   = db.Column(db.String(80), nullable=False)
+  away_team   = db.Column(db.String(80), nullable=False)
+  game_time_utc = db.Column(db.String(30), default='')
+  market      = db.Column(db.String(10), nullable=False)    # 'ml' | 'spread' | 'total'
+  snapshot    = db.Column(db.String(10), nullable=False)    # 't60' | 'first_rec'
+  side        = db.Column(db.String(5), nullable=False)     # 'home' | 'away' | 'over' | 'under'
+  label       = db.Column(db.String(30))                    # "BOS ML" / "BOS -1.5"
+  line        = db.Column(db.Float)                         # spread from the picked side's view, or the total
+  odds        = db.Column(db.Integer)                       # American price of the picked side
+  other_odds  = db.Column(db.Integer)                       # opposite side (for vig-free prob)
+  model_prob  = db.Column(db.Float)
+  market_prob = db.Column(db.Float)                         # vig-free
+  edge        = db.Column(db.Float)                         # pts
+  kelly       = db.Column(db.Float)                         # full-Kelly fraction at the posted price
+  recommended = db.Column(db.Boolean, default=False)        # did _best_market_pick star this side then
+  captured_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  minutes_before = db.Column(db.Integer)                    # minutes to scheduled start at capture
+  close_line  = db.Column(db.Float)
+  close_odds  = db.Column(db.Integer)
+  close_other_odds = db.Column(db.Integer)
+  clv_prob    = db.Column(db.Float)                         # pts of vig-free prob gained vs close
+  clv_pts     = db.Column(db.Float)                         # spread points gained vs close
+  result      = db.Column(db.String(5))                     # 'win' | 'loss' | 'push'
+  profit      = db.Column(db.Float)                         # per 1u
+  graded_at   = db.Column(db.DateTime(timezone=True))
+
+  __table_args__ = (db.UniqueConstraint('sport', 'game_date', 'home_team', 'away_team',
+                                        'market', 'snapshot', name='uq_paper_pick'),)
 
 
 class PlayerGameStat(db.Model):
@@ -3345,11 +3396,209 @@ def _fetch_predictions_map(schedule, sport):
   return {(p.game_date, p.home_team, p.away_team): p for p in rows}
 
 
+# ── Totals (O/U): tracking only ──────────────────────────────────────────────
+# Totals were dropped 2026-10-23 (no model beat a flat default in any sport)
+# and restored 2026-11-05 purely for tracking: GamePrediction's total_*
+# columns and the paper ledger grade the model's over/under side, but a
+# total never earns a ★ or a recommendation (_best_market_pick ignores it).
+# Residual sigma per sport from each model's one-time calibration fit; CBB's
+# 17.4 is the walk-forward 2025-26 residual of cbb_rating's raw total
+# (n=5,751, raw total already calibrated: MAE 13.8, vs DraftKings' close 13.3).
+_TOTAL_SIGMA = {sport: c[2] for mod in (bball_total_model, football_total_model,
+                                          hockey_total_model, mlb_total_model)
+                for sport, c in mod.CALIBRATION.items()}
+_TOTAL_SIGMA['CBB'] = 17.4
+
+
+def _total_projection(game):
+  """Model's projected combined score for a game, or None."""
+  tm = game.get('total_model') or {}
+  if tm.get('total_projection') is not None:
+    return tm['total_projection']
+  model = game.get('model') or {}
+  if model.get('proj_home_pts') is not None and model.get('proj_away_pts') is not None:
+    return round(model['proj_home_pts'] + model['proj_away_pts'], 1)   # CBB efficiency rating
+  return None
+
+
+def _total_over_prob(sport, projection, line):
+  """P(combined score > line), normal approximation around the projection."""
+  sigma = _TOTAL_SIGMA.get(sport)
+  if projection is None or line is None or not sigma:
+    return None
+  return 0.5 * (1 + math.erf((projection - line) / sigma / math.sqrt(2)))
+
+
+def _paper_leans(game, sport):
+  """The model's side in each market for one Preview game, unfiltered: the
+  positive-edge moneyline side and the spread side it gives >= 50% to cover
+  (same adjusted cover probability _best_market_pick uses; spread_proxy's
+  outside spread_model.VALIDATED_SPORTS). Returns
+  {'ml': lean|None, 'spread': lean|None} with paper_ledger.lean() fields plus
+  a display label."""
+  model = game.get('model') or {}
+  odds  = game.get('odds') or {}
+  home  = game.get('home') or {}
+  away  = game.get('away') or {}
+  abbr  = {'home': home.get('abbrev') or home.get('abbr') or '',
+           'away': away.get('abbrev') or away.get('abbr') or ''}
+  out = {'ml': None, 'spread': None, 'total': None}
+
+  h_odds, a_odds = odds.get('home_best'), odds.get('away_best')
+  p_home = model.get('final_home_prob') if 'final_home_prob' in model else model.get('home_prob')
+  vf_h = paper_ledger.vig_free(h_odds, a_odds)
+  if p_home is not None and vf_h is not None:
+    side = 'home' if p_home >= vf_h else 'away'
+    lean = paper_ledger.lean('ml', side, p_home if side == 'home' else 1 - p_home,
+                             h_odds if side == 'home' else a_odds,
+                             a_odds if side == 'home' else h_odds)
+    if lean:
+      lean['label'] = f"{abbr[side]} ML"
+      out['ml'] = lean
+
+  home_spread = odds.get('home_spread')
+  hp, ap = odds.get('home_spread_price'), odds.get('away_spread_price')
+  if model and home_spread is not None and hp is not None and ap is not None:
+    home_cover = _effective_spread_cover_prob(sport, model, model.get('factors'), home_spread)
+    if home_cover is None and model.get('home_prob') is not None:
+      # Not a validated spread sport: no live spread pick, but still log the
+      # side spread_proxy favors (the same cover prob GamePrediction grades
+      # as spread_cover_prob) so the paper record covers every market.
+      home_cover = spread_proxy.cover_prob(sport, model['home_prob'], home_spread)
+    if home_cover is not None:
+      side = 'home' if home_cover >= 0.5 else 'away'
+      prob = home_cover if side == 'home' else 1 - home_cover
+      prob = _spread_movement_adjusted_prob(prob, game.get('spread_movement_profile'), sport)
+      prob = _spread_dow_adjusted_prob(prob, game.get('dow'), sport)
+      line = paper_ledger.side_line(home_spread, side)
+      lean = paper_ledger.lean('spread', side, prob,
+                               hp if side == 'home' else ap,
+                               ap if side == 'home' else hp, line=line)
+      if lean:
+        lean['label'] = f"{abbr[side]} {'+' if line > 0 else ''}{line:g}"
+        out['spread'] = lean
+
+  line = odds.get('total_line')
+  o_odds, u_odds = odds.get('over_odds'), odds.get('under_odds')
+  over_p = _total_over_prob(sport, _total_projection(game), line)
+  if over_p is not None and o_odds is not None and u_odds is not None:
+    side = 'over' if over_p >= 0.5 else 'under'
+    lean = paper_ledger.lean('total', side, over_p if side == 'over' else 1 - over_p,
+                             o_odds if side == 'over' else u_odds,
+                             u_odds if side == 'over' else o_odds, line=line)
+    if lean:
+      lean['label'] = f"{'O' if side == 'over' else 'U'} {line:g}"
+      out['total'] = lean
+  return out
+
+
+def _fetch_paper_map(sport, dates):
+  if not dates:
+    return {}
+  rows = PaperPick.query.filter(PaperPick.sport == sport, PaperPick.game_date.in_(dates)).all()
+  return {(r.game_date, r.home_team, r.away_team, r.market, r.snapshot): r for r in rows}
+
+
+def _capture_paper_picks(sport, game, pred, pick, paper, now):
+  """Write any paper snapshots that are due for this Preview game. Each
+  (market, snapshot) is written once and never updated: 'first_rec' on the
+  first refresh where pick (the live ★) exists, for that market only;
+  't60' for every market with a lean, on the first refresh inside an hour
+  of start. Returns True if anything was added."""
+  key = (pred.game_date, pred.home_team, pred.away_team)
+  want = []
+  if pick and (key + (pick['market'], 'first_rec')) not in paper:
+    want.append((pick['market'], 'first_rec'))
+  if paper_ledger.t60_due(pred.game_time_utc or game.get('game_time_utc'), now):
+    want += [(m, 't60') for m in paper_ledger.MARKETS if (key + (m, 't60')) not in paper]
+  if not want:
+    return False
+  leans = _paper_leans(game, sport)
+  added = False
+  for market, snap in want:
+    lean = leans.get(market)
+    if not lean:
+      continue
+    if snap == 'first_rec' and lean['side'] != pick['side']:
+      continue   # shouldn't happen (same probabilities), but never log a side we didn't star
+    row = PaperPick(
+        sport=sport, game_date=pred.game_date, home_team=pred.home_team, away_team=pred.away_team,
+        game_time_utc=pred.game_time_utc or game.get('game_time_utc') or '',
+        market=market, snapshot=snap, side=lean['side'], label=lean['label'], line=lean['line'],
+        odds=lean['odds'], other_odds=lean['other_odds'], model_prob=lean['model_prob'],
+        market_prob=lean['market_prob'], edge=lean['edge'], kelly=lean['kelly'],
+        recommended=bool(pick and pick['market'] == market and pick['side'] == lean['side']),
+        captured_at=now,
+        minutes_before=paper_ledger.minutes_to_start(pred.game_time_utc or game.get('game_time_utc'), now))
+    db.session.add(row)
+    paper[key + (market, snap)] = row
+    added = True
+  return added
+
+
+def _settle_paper_pick(row, pred, started, now):
+  """Close (once the game has started) and grade (once it has a score) one
+  PaperPick from its GamePrediction. The close is the prediction's last
+  pregame line: home_odds/spread_* stop refreshing when status leaves
+  Preview. Returns True if the row changed."""
+  changed = False
+  if row.close_odds is None and (started or pred.home_score is not None):
+    if row.market == 'ml':
+      c_side, c_other, c_line = ((pred.home_odds, pred.away_odds, None) if row.side == 'home'
+                                 else (pred.away_odds, pred.home_odds, None))
+    elif row.market == 'total':
+      c_side, c_other = ((pred.total_over_price, pred.total_under_price) if row.side == 'over'
+                         else (pred.total_under_price, pred.total_over_price))
+      c_line = pred.total_pick_line
+    else:
+      c_side, c_other = ((pred.spread_home_price, pred.spread_away_price) if row.side == 'home'
+                         else (pred.spread_away_price, pred.spread_home_price))
+      c_line = paper_ledger.side_line(pred.spread_pick_line, row.side)
+    if c_side is not None:
+      row.close_odds, row.close_other_odds, row.close_line = c_side, c_other, c_line
+      row.clv_prob, row.clv_pts = paper_ledger.clv(row.market, row.line, row.odds, row.other_odds,
+                                                   c_line, c_side, c_other, side=row.side)
+      changed = True
+  if row.result is None and pred.home_score is not None and pred.away_score is not None:
+    result, profit = paper_ledger.grade(row.market, row.side, row.line, row.odds,
+                                        pred.home_score, pred.away_score)
+    if result:
+      row.result, row.profit, row.graded_at = result, profit, now
+      changed = True
+  return changed
+
+
+def _settle_all_paper_picks():
+  """DB-only sweep for paper picks whose game was graded outside a schedule
+  refresh (e.g. _resolve_pending_outcomes). Commits."""
+  now = datetime.now(timezone.utc)
+  rows = PaperPick.query.filter(PaperPick.result.is_(None)).all()
+  if not rows:
+    return
+  changed = False
+  keys = {(r.sport, r.game_date, r.home_team, r.away_team) for r in rows}
+  preds = {}
+  for sport, date in {(k[0], k[1]) for k in keys}:
+    for p in GamePrediction.query.filter_by(sport=sport, game_date=date).all():
+      preds[(p.sport, p.game_date, p.home_team, p.away_team)] = p
+  for r in rows:
+    pred = preds.get((r.sport, r.game_date, r.home_team, r.away_team))
+    if pred is not None and pred.home_score is not None:
+      changed |= _settle_paper_pick(r, pred, True, now)
+  if changed:
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+
+
 def _upsert_predictions(schedule, sport='MLB'):
   """Save model predictions and record outcomes for completed games."""
   now = datetime.now(timezone.utc)
   changed = False
   preds = _fetch_predictions_map(schedule, sport)
+  paper = _fetch_paper_map(sport, {k[0] for k in preds} | {
+      _et_date(g.get('game_time_utc') or '') for d in (schedule or []) for g in d.get('games', [])} - {''})
   for day in (schedule or []):
     for game in day.get('games', []):
       # NFL preseason (nfl_api.build_schedule_context tags is_preseason from
@@ -3416,12 +3665,18 @@ def _upsert_predictions(schedule, sport='MLB'):
             pred.blended_spread_cover_prob = _margin_cover_prob(
                 sport, model.get('ensemble_margin'), spread_line)
 
-          # Market total is captured (not modeled — Totals were removed
-          # 2026-10-23): the NFL combined projection's QB fit uses the
+          # Market total + the model's over/under side, tracking only (see
+          # _TOTAL_SIGMA). The NFL combined projection's QB fit also uses the
           # market-implied team total, i.e. total/2 -/+ spread/2.
           total_line = odds.get('total_line')
           if total_line is not None:
             pred.total_pick_line = total_line
+            pred.total_over_price  = odds.get('over_odds')
+            pred.total_under_price = odds.get('under_odds')
+            pred.total_proj        = _total_projection(game)
+            pred.total_over_prob   = _total_over_prob(sport, pred.total_proj, total_line)
+            if game.get('total_inputs'):
+              pred.total_inputs_json = json.dumps(game['total_inputs'], default=str)
 
         # Freeze whatever _best_market_pick currently says about this game —
         # see GamePrediction.rec_market's comment. Recomputed every cycle
@@ -3438,6 +3693,8 @@ def _upsert_predictions(schedule, sport='MLB'):
         pred.rec_ev_pct    = pick['ev_pct']    if pick else None
         pred.rec_pick_rank = pick['pick_rank'] if pick else None
         pred.rec_pips      = pick['pips']      if pick else None
+        if model:
+          _capture_paper_picks(sport, game, pred, pick, paper, now)
 
         if has_wind and pred.wind_mph is None:
           pred.wind_mph = wx['wind_mph']
@@ -3561,9 +3818,29 @@ def _upsert_predictions(schedule, sport='MLB'):
                     except (TypeError, ValueError):
                       pass
 
+            if pred.total_pick_line is not None:
+              pred.total_actual = h + a
+              if h + a == pred.total_pick_line:
+                pred.total_pick_roi = 0.0   # push; total_went_over stays None
+              else:
+                pred.total_went_over = h + a > pred.total_pick_line
+                if pred.total_over_prob is not None:
+                  pick_over = pred.total_over_prob >= 0.5
+                  b = paper_ledger.payout(pred.total_over_price if pick_over else pred.total_under_price)
+                  if b is not None:
+                    pred.total_pick_roi = round(b if pick_over == pred.total_went_over else -1.0, 4)
+
             changed = True
         except (TypeError, ValueError):
           pass
+
+      # Paper ledger: close at first sight of the game underway, grade at Final.
+      if status in ('Live', 'Final'):
+        for m in paper_ledger.MARKETS:
+          for snap in paper_ledger.SNAPSHOTS:
+            row = paper.get((game_date, home_name, away_name, m, snap))
+            if row is not None and row.result is None:
+              changed |= _settle_paper_pick(row, pred, True, now)
 
   if changed:
     try:
@@ -3616,75 +3893,6 @@ def _attach_graded_results(schedule, sport):
       game['graded'] = graded
 
 
-# Kelly calculation function with space to tweak using closed bets history
-def compute_recommended_amount(bankroll, percent_bankroll, odds, prob, closed_bets, sport=None, bet_type=None):
-  if odds is None or prob is None:
-    return 0.0
-  try:
-    b = float(odds) - 1.0
-    p = float(prob)
-  except Exception:
-    return 0.0
-  if b <= 0:
-    return 0.0
-
-  # Parameters you can tweak:
-  ALPHA = 0.6            # trust weight for user's supplied prob (higher = trust user more)
-  TAU_DAYS = 30.0        # recency time-constant in days for exponential weighting
-  MIN_PROB = 0.5         # minimum allowed probability after adjustment
-  MAX_PROB = 0.95        # optional upper cap to avoid extreme overconfidence
-
-  # If closed_bets provided, filter for same sport & bet_type (if those attrs exist)
-  try:
-    now = datetime.now(timezone.utc)
-    weights_sum = 0.0
-    weighted_wins = 0.0
-    for cb in closed_bets or []:
-      cb_sport = (getattr(cb, 'sport', '') or '').strip()
-      cb_type = (getattr(cb, 'bet_type', '') or '').strip()
-      if sport and cb_sport.lower() != sport.strip().lower():
-        continue
-      if bet_type and cb_type != bet_type.strip():
-        continue
-
-      try:
-        age_days = max(0.0, (now - (cb.closed_at or now)).total_seconds() / 86400.0)
-      except Exception:
-        age_days = 0.0
-
-      # Compute exponential decay weight
-      tau = TAU_DAYS
-      weight = math.exp(- age_days / tau)
-      weights_sum += weight
-      if getattr(cb, 'outcome', '') == 'win':
-        weighted_wins += weight
-  except Exception:
-    weights_sum = 0.0
-    weighted_wins = 0.0
-
-  empirical = None
-  if weights_sum > 0.0:
-    empirical = weighted_wins / weights_sum
-
-  # Blend user's prob with empirical recent performance when empirical exists
-  if empirical is not None:
-    adjusted_p = ALPHA * p + (1.0 - ALPHA) * empirical
-  else:
-    adjusted_p = p
-
-  # Enforce minimum probability of MIN_PROB
-  adjusted_p = max(adjusted_p, MIN_PROB)
-  adjusted_p = min(adjusted_p, MAX_PROB)
-
-  # Compute Kelly using adjusted probability
-  f = (b * adjusted_p - (1 - adjusted_p)) / b
-  f = max(0.0, f)  # no negative bets
-  raw_stake = f * bankroll
-  cap = percent_bankroll * bankroll
-  recommended = min(raw_stake, cap)
-  # prevent tiny fractional amounts (minimum $0.10)
-  recommended = max(recommended, 0.10)
-  return round(recommended, 2)
 
 
 
@@ -3695,26 +3903,6 @@ def _naive(dt):
   return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def compute_stats(open_bets, closed_bets):
-  decided      = [b for b in closed_bets if b.outcome in ('win', 'loss')]
-  total_staked = sum(cb.stake for cb in closed_bets)
-  total_profit = sum(cb.profit for cb in closed_bets)
-  wins         = sum(1 for cb in decided if cb.outcome == 'win')
-  cashouts     = sum(1 for cb in closed_bets if cb.outcome == 'cashout')
-  n = len(closed_bets)
-  nd = len(decided)
-  return {
-    'total_pl':     round(total_profit, 2),
-    'win_rate':     round(wins / nd * 100, 1) if nd else 0,
-    'roi':          round(total_profit / total_staked * 100, 1) if total_staked else 0,
-    'total_staked': round(total_staked, 2),
-    'wins':         wins,
-    'losses':       nd - wins,
-    'cashouts':     cashouts,
-    'total_closed': n,
-    'open_count':   len(open_bets),
-    'open_staked':  round(sum(b.stake for b in open_bets), 2),
-  }
 
 
 def compute_chart_data(closed_bets):
@@ -3820,53 +4008,8 @@ _LIVE_SCORE_FETCHERS = {
 _GAME_KEY_TS_STRIP = re.compile(r'_\d{4}-\d{2}-\d{2}T\d{2}$')
 
 
-def _score_map_for_open_bets(open_bets):
-    """
-    Builds {game_key: score_dict} covering every open bet's game, not just
-    today's slate — each bet's own eventstart date (ET) is queried too, so a
-    bet from a prior day keeps showing its final score instead of the score
-    silently disappearing once the game is no longer "today".
-    """
-    today_str = datetime.now(_ET).strftime('%Y-%m-%d')
-    dates_by_sport = defaultdict(set)
-    for b in open_bets:
-        sport = (b.sport or '').upper()
-        if sport not in _LIVE_SCORE_FETCHERS:
-            continue
-        es = b.eventstart
-        if es:
-            es = es if es.tzinfo else es.replace(tzinfo=timezone.utc)
-            dates_by_sport[sport].add(es.astimezone(_ET).strftime('%Y-%m-%d'))
-        dates_by_sport[sport].add(today_str)
-
-    score_map = {}
-    for sport, dates in dates_by_sport.items():
-        fetch = _LIVE_SCORE_FETCHERS[sport]
-        for d in dates:
-            try:
-                score_map.update(fetch(None if d == today_str else d))
-            except Exception:
-                pass
-    return score_map
 
 
-def _unsettled_finished_bets():
-    """
-    Open bets whose game has already gone Final but
-    haven't been closed out yet — used to block placing new bets until the
-    user settles them and the bankroll reflects the result.
-    """
-    open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
-    if not open_bets:
-        return []
-    score_map = _score_map_for_open_bets(open_bets)
-    unsettled = []
-    for b in open_bets:
-        score_key = _GAME_KEY_TS_STRIP.sub('', b.game_key)
-        info = score_map.get(score_key)
-        if info and info.get('status') == 'Final':
-            unsettled.append((b, info))
-    return unsettled
 
 
 def _as_decimal_odds(odds):
@@ -3892,10 +4035,6 @@ def _american_odds_filter(odds):
     return int(round(-100 / (decimal - 1)))
 
 
-@app.template_filter('bet_return')
-def _bet_return_filter(bet):
-    """Total payout (stake included) for an open bet, tolerant of American odds."""
-    return bet.stake * _as_decimal_odds(bet.odds)
 
 
 @app.template_filter('sigmoid_pct')
@@ -4135,245 +4274,18 @@ app.jinja_env.globals['spread_factors_panel'] = spread_factors_panel
 _BET_LINE_RE = re.compile(r'([+-]?\d+(?:\.\d+)?)\s*$')
 
 
-@app.template_filter('bet_line_value')
-def _bet_line_value_filter(name):
-    """Pulls the numeric line back out of a bet's stored name ('CWS +1.5' ->
-    1.5, 'Over 8.5' -> 8.5) — there's no separate numeric column for it, the
-    line only ever existed as text in the pick name. Used to compute live
-    cover/win status against the current score (see bc-cover-badge)."""
-    m = _BET_LINE_RE.search(name or '')
-    return float(m.group(1)) if m else None
 
 
-@app.template_filter('bet_pill_label')
-def _bet_pill_label_filter(name):
-    """Compact bet selection for the game-card pill: 'SEA Moneyline' -> 'SEA ML',
-    'Over 40.5' -> 'O 40.5'."""
-    label = (name or '').replace('Moneyline', 'ML').strip()
-    for long, short in (('Over ', 'O '), ('Under ', 'U ')):
-        if label.startswith(long):
-            label = short + label[len(long):]
-    return label
 
 
-def _annotate_open_bets(open_bets):
-    """
-    Attaches live CLV, line movement, and closing-line-suggestion display
-    fields to each OpenBet in place (transient — computed for this render
-    only, never persisted to the DB). Shared by the Dashboard (all sports)
-    and any sport-scoped page (e.g. /mlb) that wants to show its own open
-    bets without duplicating this ~40-line block per route.
-
-    Returns closing_suggestions: {bet_id: american_odds}, for the close-bet
-    modal's auto-fill — the caller passes this to its own template.
-    """
-    import odds_history as _oh
-
-    def _to_american(decimal):
-        if not decimal or decimal <= 1:
-            return None
-        if decimal >= 2.0:
-            return int(round((decimal - 1) * 100))
-        return int(round(-100 / (decimal - 1)))
-
-    closing_suggestions = {}
-    now_utc = datetime.now(timezone.utc)
-    for bet in open_bets:
-        odds_dec = _as_decimal_odds(bet.odds) if bet.odds else bet.odds
-        bet.live_clv          = None
-        bet.original_american = _to_american(odds_dec)
-        bet.current_american  = None
-        bet.line_move         = None
-        bet.closing_american  = None  # pre-game closing line (American odds)
-        bet.closing_clv_pos   = None  # True = beat the close, False = didn't
-        if not (bet.game_key and bet.bet_side and bet.sport):
-            continue
-        sk = _SPORT_ODDS_KEY.get(bet.sport.upper(), '')
-        if not sk:
-            continue
-        # Determine whether the game has started (with timezone-safe comparison)
-        game_started = False
-        es = None
-        if bet.eventstart:
-            es = bet.eventstart if bet.eventstart.tzinfo else bet.eventstart.replace(tzinfo=timezone.utc)
-            game_started = now_utc >= es
-
-        bet.cashout_value = None  # estimated cashout amount at current market
-
-        # A Total bet's bet_side is 'over'/'under' (no matching column pair
-        # in the snapshot's home/away shape), so CLV/line-move tracking only
-        # applies to home/away sides (Moneyline and Spread bets).
-        if bet.bet_side not in ('home', 'away'):
-            continue
-        # Compare the bet's own price against the SAME market's snapshot —
-        # a Spread bet's odds (e.g. -102) must be checked against the spread
-        # price history, not the moneyline, or the "current" price is for a
-        # different bet entirely and the resulting CLV is meaningless.
-        market = 'spread' if (bet.bet_type or '').strip().lower() == 'spread' else 'moneyline'
-
-        if not game_started:
-            # Pre-game: show live pre-game line movement
-            latest = _oh.get_latest(sk, bet.game_key, game_start=es, market=market)
-            if latest:
-                ca  = latest[f'{bet.bet_side}_odds']
-                mkt = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
-                bet.current_american = ca
-                bet.live_clv  = round((odds_dec / mkt - 1) * 100, 1)
-                if bet.original_american is not None:
-                    bet.line_move = ca - bet.original_american
-                # Cashout = fair value of position at current market price
-                if mkt > 1 and odds_dec and bet.stake:
-                    bet.cashout_value = round(bet.stake * odds_dec / mkt, 2)
-        else:
-            # Post-start: show closing line — ignore in-game odds entirely
-            if es:
-                snap = _oh.get_closing_line(sk, bet.game_key, es, market=market)
-                if snap:
-                    ca = snap[f'{bet.bet_side}_odds']
-                    closing_suggestions[bet.id] = ca
-                    bet.closing_american = ca
-                    cl_dec = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
-                    closing_clv = (odds_dec / cl_dec - 1) * 100 if cl_dec > 1 else 0
-                    bet.closing_clv_pos = closing_clv >= 0
-
-    return closing_suggestions
 
 
-def _tier_open_bets(real_open):
-    """
-    Per-bet book-implied prob / edge / EV / tier grading for open
-    bets. Split out from _annotate_open_bets so callers needing just the
-    CLV/line-move side (or just the tier side) don't have to run both, but
-    in practice the Dashboard and /mlb use both together.
-    """
-    for bet in real_open:
-        odds_dec = _as_decimal_odds(bet.odds) if bet.odds else bet.odds
-        implied = 1.0 / odds_dec if odds_dec and odds_dec > 1 else None
-        bet.book_implied = round(implied * 100, 1) if implied else None
-        bet.edge_pct     = round((bet.prob - implied) * 100, 1) if (bet.prob and implied) else None
-        bet.ev_pct       = round((bet.prob * odds_dec - 1) * 100, 1) if (bet.prob and odds_dec and odds_dec > 1) else None
-        ep = bet.edge_pct
-        if ep is None:
-            bet.tier, bet.tier_cls = None, ''
-        elif ep >= 7:
-            bet.tier, bet.tier_cls = 'A+', 'tier-aplus'
-        elif ep >= 4:
-            bet.tier, bet.tier_cls = 'B',  'tier-b'
-        elif ep >= 2:
-            bet.tier, bet.tier_cls = 'Lean', 'tier-lean'
-        else:
-            bet.tier, bet.tier_cls = 'Pass', 'tier-pass'
 
 
-def _open_bets_summary_stats(real_open):
-    """Aggregate summary row (avg edge / avg CLV / % positive CLV / expected
-    ROI) over a set of already-annotated-and-tiered open bets.
-    Used for both the Dashboard's all-sports summary row and a sport-scoped
-    page's own summary row (e.g. /mlb, MLB-only)."""
-    bets_with_edge = [b for b in real_open if b.edge_pct is not None]
-    bets_with_clv  = [b for b in real_open if b.live_clv is not None]
-    return {
-        'avg_edge':         round(sum(b.edge_pct for b in bets_with_edge) / len(bets_with_edge), 1) if bets_with_edge else None,
-        'avg_clv':          round(sum(b.live_clv for b in bets_with_clv) / len(bets_with_clv), 1) if bets_with_clv else None,
-        'positive_clv_pct': round(sum(1 for b in bets_with_clv if b.live_clv > 0) / len(bets_with_clv) * 100) if bets_with_clv else None,
-        'expected_roi':     round(sum(b.ev_pct for b in bets_with_edge) / len(bets_with_edge), 1) if bets_with_edge else None,
-    }
 
 
-def _match_open_bets_to_games(days, sport=None):
-    """
-    Attaches game['open_bets'] = [OpenBet, ...] to each game in `days` (a
-    list of {'games': [...]} dicts, as produced by each sport's
-    build_schedule_context()/build_week_schedule_context()) so a placed bet
-    is visible — and closeable — right on its game card. Matches on
-    game_key first, falling back to a leading team-abbreviation match in the
-    bet name for bets placed manually or before game_key existed. Scoped to
-    `sport` when given so an abbreviation collision can't attach a bet to
-    the wrong sport's game.
-    """
-    from odds_api import _normalize
-    import re as _re
-
-    query = OpenBet.query
-    if sport:
-        query = query.filter_by(sport=sport)
-    all_open = query.all()
-
-    by_key = {}
-    for bet in all_open:
-        if bet.game_key:
-            by_key.setdefault(bet.game_key, []).append(bet)
-
-    by_abbr = {}
-    for bet in all_open:
-        if bet.game_key:
-            continue
-        m = _re.match(r'^([A-Z]{2,4})\b', bet.name or '')
-        if m:
-            by_abbr.setdefault(m.group(1).upper(), []).append(bet)
-
-    for day in days:
-        for game in day.get('games', []):
-            home, away = game.get('home') or {}, game.get('away') or {}
-            gk = f"{_normalize(home.get('name', ''))}_{_normalize(away.get('name', ''))}"
-            matched = list(by_key.get(gk, []))
-            utc_raw = game.get('game_time_utc', '')
-            if utc_raw:
-                try:
-                    utc_dt = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
-                    gk_ts = f"{gk}_{utc_dt.strftime('%Y-%m-%dT%H')}"
-                    for bet in by_key.get(gk_ts, []):
-                        if bet not in matched:
-                            matched.append(bet)
-                except Exception:
-                    pass
-            for abbr in (away.get('abbrev') or away.get('abbr'), home.get('abbrev') or home.get('abbr')):
-                if not abbr:
-                    continue
-                for bet in by_abbr.get(abbr.upper(), []):
-                    if bet not in matched:
-                        matched.append(bet)
-            game['open_bets'] = matched
 
 
-@app.context_processor
-def _inject_global_exposure():
-    """
-    Bankroll/exposure summary shown in a persistent strip on every page
-    (base.html) regardless of which sport you're looking at.
-
-    Why this exists as a context processor (auto-injected everywhere) rather
-    than a section on one page: bankroll and Kelly % are global settings,
-    not per-sport, so a sport-scoped page's own open-bet total can't tell
-    you whether you're overextended once positions exist in more than one
-    sport at once (real overlap window: MLB regular season runs into NFL's
-    opening weeks each September). This keeps that total visible everywhere
-    without needing a dedicated cross-sport Dashboard as the landing page.
-
-    Wrapped in try/except: context processors run on every render, including
-    templates rendered before the DB is fully migrated/seeded — a failure
-    here shouldn't take down every page.
-    """
-    try:
-        settings = Setting.query.first()
-        if not settings:
-            return {'global_exposure': None}
-        open_bets   = OpenBet.query.all()
-        open_staked = sum((b.stake or 0.0) for b in open_bets)
-        # Total working capital = uncommitted bankroll + whatever's already
-        # staked (matches the _adj_bankroll convention used for unit sizing
-        # elsewhere — settings.bankroll alone is the UNCOMMITTED cash figure).
-        total_capital = (settings.bankroll or 0.0) + open_staked
-        pct_committed = round(open_staked / total_capital * 100, 1) if total_capital else None
-        return {'global_exposure': {
-            'bankroll':         round(settings.bankroll or 0.0, 2),
-            'open_staked':      round(open_staked, 2),
-            'open_count':       len(open_bets),
-            'pct_committed':    pct_committed,
-            'percent_bankroll': settings.percent_bankroll or 0.02,
-        }}
-    except Exception:
-        return {'global_exposure': None}
 
 
 _SPORT_SCHEDULE_ENDPOINTS = {
@@ -4405,22 +4317,11 @@ def _inject_nav_context():
     plain (unsigned, non-sensitive) `last_sport` cookie set by each sport
     schedule route on render (see _set_last_sport_cookie), since sport is a
     filter rather than its own nav destination and other pages need to
-    remember where you last were.
-
-    Also exposes nav_open_bet_count (open bet count, for the Bets nav
-    badge) and nav_sheet_count (staged-bet count, for the Bet Sheet badge)."""
+    remember where you last were."""
     sport = (request.cookies.get('last_sport') or 'MLB').upper()
     if sport not in _SPORT_SCHEDULE_ENDPOINTS:
         sport = 'MLB'
-
-    nav_open_bet_count = OpenBet.query.count()
-    nav_sheet_count = DraftBet.query.count()
-
-    return {
-        'nav_last_sport': sport,
-        'nav_open_bet_count': nav_open_bet_count,
-        'nav_sheet_count': nav_sheet_count,
-    }
+    return {'nav_last_sport': sport}
 
 
 def _set_last_sport_cookie(resp, sport):
@@ -4616,53 +4517,10 @@ def _hub_linescore(ls):
   return None
 
 
-def _american(dec):
-  """Decimal odds → American int (OpenBet/ClosedBet store decimal)."""
-  if not dec or dec <= 1:
-    return None
-  return round((dec - 1) * 100) if dec >= 2 else round(-100 / (dec - 1))
 
 
-def _open_bets_by_game():
-  """OpenBet rows indexed by normalized game_key without its hour bucket
-  (schedule builders emit "home_away", OpenBet stores "home_away_YYYY-MM-
-  DDTHH") so hub games can show the user's actual position — distinct from
-  the model's pick, which is what the old "Your bet" badge was (wrongly)
-  showing. Each value is a list of display dicts."""
-  out = {}
-  try:
-    for b in OpenBet.query.all():
-      key = _ODDS_GAME_KEY_HOUR_RE.sub('', b.game_key or '')
-      if not key:
-        continue
-      out.setdefault(key, []).append({
-          'label':  b.name, 'odds': _american(b.odds), 'stake': b.stake,
-          'sport':  b.sport, 'side': b.bet_side, 'bet_type': b.bet_type,
-          'edge':   round((b.prob * b.odds - 1) * 100, 1) if (b.prob and b.odds) else None,
-      })
-  except Exception:
-    pass
-  return out
 
 
-def _bet_state(bet, g):
-  """WINNING / LOSING / TIED / PENDING for an open ML or spread bet against
-  a hub game's live score. Spread bets read the line out of the bet name
-  ("BOS -3.5") since OpenBet has no line column."""
-  away_sc, home_sc = _int_score(g.get('away_score')), _int_score(g.get('home_score'))
-  if g.get('status') != 'Live' or away_sc is None or home_sc is None:
-    return 'PENDING'
-  side = bet['side']
-  if side not in ('home', 'away'):
-    return 'PENDING'
-  mine, theirs = (home_sc, away_sc) if side == 'home' else (away_sc, home_sc)
-  margin = mine - theirs
-  if (bet['bet_type'] or '').lower().startswith('spread'):
-    m = re.search(r'([+-]\d+(?:\.\d+)?)', bet['label'] or '')
-    if m:
-      margin += float(m.group(1))
-      return 'COVERING' if margin > 0 else ('PUSH' if margin == 0 else 'NOT COVERING')
-  return 'WINNING' if margin > 0 else ('TIED' if margin == 0 else 'LOSING')
 
 
 def _hub_sport_data(sport, icon, href, today_str, live=False):
@@ -4791,12 +4649,9 @@ def _hub_sport_data(sport, icon, href, today_str, live=False):
 
 _hub_cache = {'ts': 0.0, 'data': None}
 _HUB_CACHE_TTL = 60  # seconds — long enough to absorb refreshes/back-and-forth
-                     # navigation, short enough that a placed bet or a game
-                     # going live still shows up within a minute. Caches only
-                     # the computed sport data, never the rendered page — the
-                     # nav chrome (bankroll, open-bet/sheet counts) has to
-                     # reflect the current DB state on every request, not
-                     # whatever it was when the cache was last filled.
+                     # navigation, short enough that a game going live still
+                     # shows up within a minute. Caches only the computed
+                     # sport data, never the rendered page.
 _hub_refresh_lock = threading.Lock()
 _hub_refreshing = False  # guarded by _hub_refresh_lock — collapses concurrent
                          # stale-cache hits into a single background rebuild
@@ -4930,40 +4785,19 @@ def index():
     if not _hub_from_slices(skip):
       return _hub_loader_page()
   sport_summaries, unified_picks, today_display, all_games_today, live_games_today = _ensure_hub_cache()
-  games = _attach_bets(all_games_today, _open_bets_by_game())
+  games = all_games_today
   live_games_today = [g for g in games if g['status'] == 'Live']
 
-  # Featured game: a live game you have money on, else a live game the
-  # model likes, else any live game — falls back to the Lock of the Night
-  # card in the template when nothing's in progress.
-  featured = (next((g for g in live_games_today if g['my_bets']), None)
-              or next((g for g in live_games_today if g['edge_pick']), None)
+  # Featured game: a live game the model likes, else any live game — falls
+  # back to the Lock of the Night card in the template when nothing's in
+  # progress.
+  featured = (next((g for g in live_games_today if g['edge_pick']), None)
               or (live_games_today[0] if live_games_today else None))
   if featured and featured.get('game_id'):
     import game_feed
     live_wp = game_feed.get_live_winprob(featured['sport'], featured['game_id'])
     if live_wp is not None:
       featured = {**featured, 'live_home_prob': live_wp}
-
-  # Open bets rail — every OpenBet, with live state when its game is on
-  # tonight's slate (matched by game_key), else just PENDING.
-  game_by_key = {g['game_key']: g for g in games if g.get('game_key')}
-  open_bets = []
-  for b in OpenBet.query.order_by(OpenBet.eventstart.asc()).all():
-    g = game_by_key.get(_ODDS_GAME_KEY_HOUR_RE.sub('', b.game_key or ''))
-    bet = {'label': b.name, 'odds': _american(b.odds), 'side': b.bet_side, 'bet_type': b.bet_type,
-           'sport': b.sport}
-    if g:
-      where = g['live_clock'] if g['status'] == 'Live' else ('Final' if g['status'] == 'Final' else '')
-      score = (f", {g['away_score']}–{g['home_score']}" if g['status'] in ('Live', 'Final')
-               and g['away_score'] is not None else '')
-      bet.update(game=f"{g['matchup']}{' · ' + where if where else ''}{score}",
-                 game_time_utc='' if where else g['game_time_utc'], href=g['href'],
-                 state=_bet_state(bet, g))
-    else:
-      bet.update(game=b.sport, game_time_utc=b.eventstart.replace(tzinfo=timezone.utc).isoformat()
-                 if b.eventstart else '', href='', state='PENDING')
-    open_bets.append(bet)
 
   sport_counts = {}
   for g in games:
@@ -4972,7 +4806,7 @@ def index():
   return render_template('today.html', today_display=today_display,
                          sport_summaries=sport_summaries, top_picks=unified_picks,
                          all_games_today=games, live_games_today=live_games_today,
-                         featured=featured, open_bets=open_bets, sport_counts=sport_counts,
+                         featured=featured, sport_counts=sport_counts,
                          whispers=_build_whispers(games, unified_picks, limit=6))
 
 
@@ -5093,25 +4927,12 @@ def stats_page():
   faceoff = ((first['away_abbr'], first['home_abbr']) if first
              else tuple(r['abbr'] for r in rows[:2]) if len(rows) >= 2 else (None, None))
 
-  # "Your ledger" — real settled-bet record for this sport (ClosedBet), the
-  # same profit/stake/CLV fields /history aggregates.
-  ledger = {'w': 0, 'l': 0, 'staked': 0.0, 'profit': 0.0, 'clv': []}
-  for b in ClosedBet.query.filter(db.func.upper(db.func.trim(ClosedBet.sport)) == sport).all():
-    if b.outcome == 'win':
-      ledger['w'] += 1
-    elif b.outcome == 'loss':
-      ledger['l'] += 1
-    ledger['staked'] += b.stake or 0.0
-    ledger['profit'] += b.profit or 0.0
-    if b.clv is not None:
-      ledger['clv'].append(b.clv)
-  ledger['roi'] = round(ledger['profit'] / ledger['staked'] * 100, 1) if ledger['staked'] else None
-  ledger['avg_clv'] = round(sum(ledger['clv']) / len(ledger['clv']), 1) if ledger['clv'] else None
+  ledger = _paper_record(sport)
 
   return render_template('stats.html', today_display=today_display, sport=sport,
                          sports=standings_api.SPORTS, season=data['season'], rows=rows,
                          groups=data['groups'], trends=trends, faceoff=faceoff, ledger=ledger,
-                         subnav_sport=sport, ouija_targets=_cached_ouija_target_count())
+                         subnav_sport=sport, ouija_targets=_cached_ouija_target_count() if sport == 'NFL' else None)
 
 
 def _cached_ouija_target_count():
@@ -5123,41 +4944,25 @@ def _cached_ouija_target_count():
   return None
 
 
-def _attach_bets(games, bets_by_game):
-  """Per-request copy of the cached hub games with the user's actual open
-  bets (and their live state) attached — kept out of _hub_cache on
-  purpose, same reasoning as its TTL comment: a bet placed a second ago
-  has to show on the next render, not up to a minute later."""
-  out = []
-  for g in games:
-    bets = [{**b, 'state': _bet_state(b, g)} for b in bets_by_game.get(g.get('game_key'), [])]
-    out.append({**g, 'my_bets': bets})
-  return out
 
 
 @app.template_global()
 def game_center_extras(game):
-  """Hero linescore + "Your bet" + per-game Whispers for game_detail.html,
+  """Hero linescore + per-game Whispers for game_detail.html,
   which six different routes render — a template global keeps this in one
   place instead of threading three new kwargs through every one of them.
   Whispers come from whatever the hub cache already holds (never triggers
   a 6-sport rebuild just to draw a rail card); empty when it's cold."""
   if not game:
-    return {'linescore': None, 'my_bets': [], 'whispers': []}
+    return {'linescore': None, 'whispers': []}
   key = game.get('game_key', '')
-  g_lite = {'status': game.get('status'), 'away_score': (game.get('away') or {}).get('score'),
-            'home_score': (game.get('home') or {}).get('score')}
-  bets_by_game = _open_bets_by_game()
-  my_bets = [{**b, 'state': _bet_state(b, g_lite)} for b in bets_by_game.get(key, [])]
   whispers = []
   cached = _hub_cache['data']
   if cached and key:
     _s, unified_picks, _d, all_games_today, _l = cached
-    games = _attach_bets(all_games_today, bets_by_game)
-    whispers = [w for w in _build_whispers(games, unified_picks, limit=200)
+    whispers = [w for w in _build_whispers(all_games_today, unified_picks, limit=200)
                 if w.get('game_key') == key][:6]
-  return {'linescore': _hub_linescore(game.get('linescore')), 'my_bets': my_bets,
-          'whispers': whispers}
+  return {'linescore': _hub_linescore(game.get('linescore')), 'whispers': whispers}
 
 
 _WHISPER_COLORS = {'LIVE': 'live', 'LINE': 'line', 'INJURY': 'injury', 'FINAL': 'final',
@@ -5188,20 +4993,12 @@ def _build_whispers(games, unified_picks, limit=40):
   docstring above; "from" status is the player's most recent prior-day
   row, when one exists).
 
-  `games` must already carry my_bets (_attach_bets) so each item can say
-  whether it touches an open position. Items share one dict shape; the
-  optional `line`/`final`/`injury` sub-dicts drive the detail boxes."""
+  Items share one dict shape; the optional `line`/`final`/`injury` sub-dicts drive the detail boxes."""
   today_str = datetime.now(_ET).strftime('%Y-%m-%d')
   now_utc = datetime.now(timezone.utc)
   games_by_key = {g['game_key']: g for g in games if g.get('game_key')}
   games_by_matchup = {g['matchup']: g for g in games}
   items = []
-
-  def _bet_note(g):
-    if not g or not g.get('my_bets'):
-      return ''
-    b = g['my_bets'][0]
-    return f"Your bet {b['label']} — {b['state'].lower()}."
 
   def _item(ts, type_, sport, g=None, text='', **extra):
     # game/href kwargs are only the fallback for items with no hub game.
@@ -5210,7 +5007,7 @@ def _build_whispers(games, unified_picks, limit=40):
                   'game': g['matchup'] if g else game,
                   'href': (g['href'] or href) if g else href,
                   'game_key': g['game_key'] if g else '',
-                  'bet': _bet_note(g), 'text': text, **extra})
+                  'text': text, **extra})
 
   for g in games:
     if g['away_score'] is None or g['home_score'] is None:
@@ -5431,7 +5228,7 @@ def api_whispers_latest():
   if _hub_cache['data'] is not None:
     try:
       _summaries, unified_picks, _td, all_games_today, _live = _hub_cache['data']
-      items = _build_whispers(_attach_bets(all_games_today, _open_bets_by_game()), unified_picks)
+      items = _build_whispers(all_games_today, unified_picks)
       # LIVE and MODEL items are stamped "now" on every build, so they'd
       # keep the dot lit forever — only types carrying a real event time count.
       stamps = [w['ts'] for w in items if w.get('ts') and w['type'] in ('LINE', 'NEWS', 'INJURY', 'FINAL')]
@@ -5449,8 +5246,7 @@ def api_whispers_latest():
 @app.route('/whispers')
 def whispers_page():
   _summaries, unified_picks, today_display, all_games_today, _live = _ensure_hub_cache()
-  games = _attach_bets(all_games_today, _open_bets_by_game())
-  items = _build_whispers(games, unified_picks)
+  items = _build_whispers(all_games_today, unified_picks)
 
   groups = []
   for w in items:
@@ -5458,185 +5254,23 @@ def whispers_page():
       groups.append({'label': w['group'], 'items': []})
     groups[-1]['items'].append(w)
   types = [t for t in _WHISPER_LABELS if any(w['type'] == t for w in items)]
-  # "Touching your bets" rail — one line per open bet that has at least one
-  # whisper today, with the newest whisper's type as its note.
-  touching = {}
-  for w in items:
-    g = next((x for x in games if x.get('game_key') and x['game_key'] == w.get('game_key')), None)
-    if g and g['my_bets'] and g['game_key'] not in touching:
-      touching[g['game_key']] = {'bet': g['my_bets'][0], 'type': w['type'], 'color': w['color']}
   return render_template('whispers.html', today_display=today_display, items=items, groups=groups,
-                         types=types, type_labels=_WHISPER_LABELS, touching=list(touching.values()),
+                         types=types, type_labels=_WHISPER_LABELS,
                          updated=datetime.now(_ET).strftime('%-I:%M %p'))
 
 
-@app.route('/history')
-def history():
-  """Settled bets now live on the Bets page (Headstones) — keep old links,
-  the post-import redirect params and ?sport= working."""
-  args = {k: v for k, v in request.args.items() if k in ('imported', 'skipped', 'sport')}
-  return redirect(url_for('bets_page', **args) + '#settled')
 
 
-def _team_abbr_from_key(game_key, side):
-  """'home name_away name_2026-10-27T00' -> short label for one side."""
-  parts = _GAME_KEY_TS_STRIP.sub('', game_key or '').split('_')
-  if len(parts) < 2:
-    return ''
-  name = parts[0] if side == 'home' else parts[1]
-  return name.title()
 
 
 @app.route('/bets')
+@app.route('/history')
 def bets_page():
-  """The Graveyard — every open bet (live + upcoming) and the settled ledger
-  on one screen. Open bets reuse the same annotate/tier/summarize helpers the
-  sport schedule pages call; settled-bet KPIs, the cumulative-units chart and
-  the activity bars are recomputed client-side per time range from
-  `closed_rows`, so switching 7d/30d/90d/All doesn't round-trip.
-  """
-  all_bets = OpenBet.query.order_by(
-      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
-  closing_suggestions = _annotate_open_bets(all_bets)
-  _tier_open_bets(all_bets)
-
-  closed_bets = ClosedBet.query.order_by(ClosedBet.closed_at.desc()).all()
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
-  stats = compute_stats(all_bets, closed_bets)
-  _adj_bankroll = bankroll + stats['open_staked']
-  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
-
-  now = datetime.now(timezone.utc)
-  live_bets, upcoming_bets = [], []
-  for b in all_bets:
-    es = b.eventstart
-    if es is not None and es.tzinfo is None:
-      es = es.replace(tzinfo=timezone.utc)
-    b.started = es is not None and es <= now
-    b.minutes_out = int((es - now).total_seconds() // 60) if es is not None and not b.started else None
-    b.away_label = _team_abbr_from_key(b.game_key, 'away')
-    b.home_label = _team_abbr_from_key(b.game_key, 'home')
-    (live_bets if b.started else upcoming_bets).append(b)
-
-  closed_rows = [{
-      't': _naive(cb.closed_at).isoformat(),
-      'u': round(cb.profit / unit_size, 4),
-      'stake': round(cb.stake, 2),
-      'profit': round(cb.profit, 2),
-      'o': cb.outcome,
-      'clv': cb.clv,
-      'sport': (cb.sport or 'Other').strip().upper() or 'OTHER',
-  } for cb in closed_bets]
-
-  sports_list = sorted({(b.sport or '').strip() for b in closed_bets if b.sport and b.sport.strip()})
-  initial_sport = request.args.get('sport', '').strip().upper()
-
-  import odds_api as _oa
-  return render_template('bets.html', open_bets=all_bets, live_bets=live_bets,
-                         upcoming_bets=upcoming_bets, closed_bets=closed_bets,
-                         closed_rows=closed_rows, stats=stats, bankroll=bankroll,
-                         unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         odds_last_fetch=_oa.get_last_fetch_time(),
-                         sports_list=sports_list, initial_sport=initial_sport,
-                         imported=request.args.get('imported', type=int),
-                         skipped=request.args.get('skipped', type=int),
-                         sync_next=url_for('bets_page'))
+  """Manual bet tracking was removed in favor of the paper ledger (every
+  model pick logged and graded automatically); old links land there."""
+  return redirect(url_for('model_performance', sport=request.args.get('sport', 'MLB').upper()) + '#paper-h')
 
 
-@app.route('/import_bets', methods=['POST'])
-def import_bets():
-  raw = request.form.get('csv_data', '').strip().lstrip('﻿')
-  if not raw:
-    return redirect(url_for('bets_page'))
-
-  imported = 0
-  skipped  = 0
-
-  def _get(row, *keys):
-    """Case/whitespace-insensitive multi-key lookup."""
-    for k in keys:
-      v = row.get(k) or row.get(k.replace('_', ' '))
-      if v and str(v).strip():
-        return str(v).strip()
-    return ''
-
-  try:
-    try:
-      dialect = csv.Sniffer().sniff(raw[:2048], delimiters=',\t;|')
-    except csv.Error:
-      dialect = csv.excel  # fallback to comma
-    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
-    for row in reader:
-      try:
-        # Normalize all keys: strip whitespace + lowercase
-        row = {(k or '').strip().lower(): (v or '').strip()
-               for k, v in row.items() if k is not None}
-
-        # ── Required fields ──────────────────────────────
-        odds_raw    = _get(row, 'odds', 'american_odds', 'line', 'price')
-        stake_raw   = _get(row, 'stake', 'amount', 'wager', 'bet')
-        outcome_raw = _get(row, 'outcome', 'result').lower()
-
-        if not odds_raw or not stake_raw:
-          if imported == 0 and skipped == 0:
-            print(f"[import] first row keys={list(row.keys())} odds={odds_raw!r} stake={stake_raw!r} outcome={outcome_raw!r}", flush=True)
-          skipped += 1; continue
-
-        # Normalize outcome: accept win/loss/w/l
-        if outcome_raw in ('w', 'win'):
-          outcome = 'win'
-        elif outcome_raw in ('l', 'loss'):
-          outcome = 'loss'
-        else:
-          skipped += 1; continue
-
-        american_odds = float(odds_raw)
-        stake         = float(stake_raw)
-        odds = american_odds / 100.0 + 1.0 if american_odds > 0 else 100.0 / abs(american_odds) + 1.0
-        profit = stake * (odds - 1.0) if outcome == 'win' else -stake
-
-        # ── Optional fields ──────────────────────────────
-        name     = _get(row, 'name', 'bet_name', 'bet') or 'Bet'
-        sport    = _get(row, 'sport')
-        bet_type = _get(row, 'bet_type', 'type') or 'Moneyline'
-        notes    = _get(row, 'notes', 'note', 'comment')
-        date_str = _get(row, 'date', 'closed_at', 'settled')
-
-        # Prob: accept 0.55 or 55 or 55%
-        prob_raw = _get(row, 'prob', 'probability', 'win_prob') or '0.5'
-        try:
-          prob = float(prob_raw.rstrip('%'))
-          if prob > 1.0:
-            prob /= 100.0
-          prob = max(0.01, min(0.99, prob))
-        except (ValueError, TypeError):
-          prob = 0.5
-
-        # Date: try several common formats
-        closed_at = datetime.now(timezone.utc)
-        if date_str:
-          for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%Y/%m/%d', '%d-%m-%Y'):
-            try:
-              closed_at = datetime.strptime(date_str, fmt); break
-            except ValueError:
-              continue
-
-        db.session.add(ClosedBet(
-          name=name, odds=odds, prob=prob, stake=stake,
-          sport=sport, bet_type=bet_type, outcome=outcome,
-          profit=profit, closed_at=closed_at, notes=notes,
-        ))
-        imported += 1
-      except Exception:
-        skipped += 1
-        continue
-
-    db.session.commit()
-  except Exception:
-    skipped += 1
-
-  return redirect(url_for('bets_page', imported=imported, skipped=skipped))
 
 @app.route('/service-worker.js')
 def service_worker():
@@ -5794,413 +5428,28 @@ def api_test_webhook():
   except Exception as e:
     return jsonify({'ok': False, 'error': str(e)})
 
-# Calculation has been moved to client-side JavaScript.
-# Provide a lightweight JSON API as an optional fallback for client-side fetch() calls.
-@app.route('/api/calc', methods=['POST'])
-def api_calc():
-  settings = Setting.query.first()
-  # Accept JSON or form-encoded payloads
-  if request.is_json:
-    data = request.get_json(silent=True) or {}
-    odds = data.get('odds')
-    prob = data.get('prob')
-    sport = data.get('sport', '')
-    bet_type = data.get('bet_type', '')
-  else:
-    odds = request.form.get('odds')
-    prob = request.form.get('prob')
-    sport = request.form.get('sport', '')
-    bet_type = request.form.get('bet_type', '')
-
-  try:
-    odds = float(odds)
-    prob = float(prob)
-  except Exception:
-    return {'recommended': 0.0}
-
-  closed_bets = ClosedBet.query.all()
-  recommended = compute_recommended_amount(settings.bankroll, settings.percent_bankroll, odds, prob, closed_bets, sport=sport, bet_type=bet_type)
-  return {'recommended': recommended}
-
-@app.route("/api/empirical_info", methods=["POST"])
-def empirical_info():
-  data = request.get_json() or {}
-  sport = (data.get("sport") or "").strip()
-  bet_type = (data.get("bet_type") or "").strip()
-  prob = float(data.get("prob") or 0.5)
-  unf_rank = data.get("unf_rank")
-
-  ALPHA = 0.6
-  TAU_DAYS = 30.0
-
-  # If this bet is tied to today's Omen Score rank, use that rank-bucket's
-  # retroactive win rate (model-derived) instead of the bettor's own closed-bet
-  # history — same #1/#2-3/#4-6/#7+ buckets as the Rank Comparison table.
-  if unf_rank:
-    try:
-      rank = int(unf_rank)
-    except (TypeError, ValueError):
-      rank = None
-    if rank:
-      label = _unified_rank_bucket(rank)
-      bkt = _UNIFIED_RANK_STATS.get(sport.upper() or 'MLB', {}).get(label) if label else None
-      if bkt:
-        empirical = round(bkt['wr'] / 100.0, 4)
-        adjusted = round(ALPHA * prob + (1.0 - ALPHA) * empirical, 4)
-        return jsonify({
-            "empirical": empirical,
-            "adjusted": adjusted,
-            "alpha": ALPHA,
-            "matching_count": bkt['n'],
-            "source": "unified_rank",
-            "bucket_label": label,
-        })
-
-  closed_bets = ClosedBet.query.all()
-  now = datetime.now(timezone.utc)
-  weights_sum = 0.0
-  weighted_wins = 0.0
-  matching_count = 0
-
-  for cb in closed_bets:
-    cb_sport = (cb.sport or '').strip()
-    cb_type = (cb.bet_type or '').strip()
-    if sport and cb_sport.lower() != sport.lower():
-      continue
-    if bet_type and cb_type != bet_type:
-      continue
-    try:
-      age_days = max(0.0, (now - (cb.closed_at or now)).total_seconds() / 86400.0)
-    except Exception:
-      age_days = 0.0
-    weight = math.exp(-age_days / TAU_DAYS)
-    weights_sum += weight
-    if cb.outcome == 'win':
-      weighted_wins += weight
-    matching_count += 1
-
-  empirical = None
-  adjusted = prob
-  if weights_sum > 0.0:
-    empirical = round(weighted_wins / weights_sum, 4)
-    adjusted = round(ALPHA * prob + (1.0 - ALPHA) * empirical, 4)
-
-  return jsonify({
-      "empirical": empirical,
-      "adjusted": adjusted,
-      "alpha": ALPHA,
-      "matching_count": matching_count,
-      "source": "personal_history",
-  })
-
-def _parse_bet_form(form):
-  """Shared field-parsing for a submitted bet-slip form (name/odds/prob/
-  stake/sport/bet_type/eventstart/notes/bet_side/home_name/away_name),
-  including the game_key construction (normalized home/away names + an
-  hour-precision UTC timestamp so same teams playing consecutive days each
-  get a distinct key matching the odds snapshot exactly). Used by both
-  /add_open (places immediately) and /bet_sheet/add (stages a DraftBet).
-  Returns None if the required numeric fields don't parse."""
-  try:
-    name     = form.get('name', 'Bet')
-    odds     = _as_decimal_odds(form.get('odds'))
-    prob     = float(form.get('prob'))
-    stake    = float(form.get('stake'))
-    sport    = form.get('sport', '')
-    bet_type = form.get('bet_type', 'Moneyline')
-  except Exception:
-    return None
-  eventstart = None
-  # Prefer eventstartutc (ISO UTC string from schedule page) — unambiguous timezone.
-  # Fall back to eventstart (datetime-local, browser local time, treated as naive).
-  utc_raw = form.get('eventstartutc', '').strip()
-  if utc_raw:
-    try:
-      eventstart = datetime.fromisoformat(utc_raw.replace('Z', '+00:00'))
-      if not eventstart.tzinfo:
-        eventstart = eventstart.replace(tzinfo=timezone.utc)
-    except Exception:
-      pass
-  if eventstart is None:
-    eventstart_raw = form.get('eventstart', '')
-    if eventstart_raw:
-      try:
-        eventstart = datetime.strptime(eventstart_raw, "%Y-%m-%dT%H:%M")
-      except Exception:
-        pass
-  notes     = form.get('notes', '')
-  bet_side  = form.get('bet_side', '')
-  home_name = form.get('home_name', '')
-  away_name = form.get('away_name', '')
-  game_key  = ''
-  if home_name and away_name:
-    from odds_api import _normalize
-    h_norm = _normalize(home_name)
-    a_norm = _normalize(away_name)
-    if eventstart:
-      utc_dt = eventstart if getattr(eventstart, 'tzinfo', None) else eventstart.replace(tzinfo=timezone.utc)
-      game_key = f"{h_norm}_{a_norm}_{utc_dt.strftime('%Y-%m-%dT%H')}"
-    else:
-      game_key = f"{h_norm}_{a_norm}"
-  return {
-      'name': name, 'odds': odds, 'prob': prob, 'stake': stake, 'sport': sport,
-      'bet_type': bet_type, 'eventstart': eventstart, 'notes': notes,
-      'bet_side': bet_side, 'game_key': game_key,
-  }
 
 
-@app.route('/add_open', methods=['POST'])
-def add_open():
-  unsettled = _unsettled_finished_bets()
-  if unsettled:
-    names = ', '.join(b.name for b, _info in unsettled)
-    next_url = request.form.get('next', '').strip()
-    back_url = next_url if next_url.startswith('/') and not next_url.startswith('//') else url_for('index')
-    return (
-      f"<p>Close out finished bet(s) before placing a new one: {names}.</p>"
-      f"<p><a href='{back_url}'>Back to open bets</a></p>",
-      409,
-    )
-  fields = _parse_bet_form(request.form)
-  if fields is None:
-    return redirect(url_for('index'))
-  b = OpenBet(**fields)
-  db.session.add(b)
-  settings = Setting.query.first()
-  if settings:
-    settings.bankroll = round(settings.bankroll - fields['stake'], 2)
-  db.session.commit()
-  next_url = request.form.get('next', '').strip()
-  if next_url and next_url.startswith('/') and not next_url.startswith('//'):
-    return redirect(next_url)
-  return redirect(url_for('index'))
 
 
-def _ev_pct(odds, prob):
-  """Same EV-percent formula used in _best_market_pick/_mlb_candidates:
-  expected profit per $1 staked, at decimal `odds` and win probability
-  `prob`. Used to rank the Bet Sheet by best expected return."""
-  b = (odds or 0) - 1.0
-  if b <= 0 or prob is None:
-    return 0.0
-  return round((b * prob - (1 - prob)) * 100, 1)
 
 
-@app.route('/bet_sheet/add', methods=['POST'])
-def bet_sheet_add():
-  fields = _parse_bet_form(request.form)
-  if fields is None:
-    return _redirect_next('bet_sheet')
-  fields['ev_pct'] = _ev_pct(fields['odds'], fields['prob'])
-  db.session.add(DraftBet(**fields))
-  db.session.commit()
-  return _redirect_next('bet_sheet')
 
 
-@app.route('/bet_sheet')
-def bet_sheet():
-  drafts = DraftBet.query.order_by(DraftBet.ev_pct.desc()).all()
-  return render_template('bet_sheet.html', drafts=drafts)
 
 
-@app.route('/bet_sheet/remove/<int:draft_id>', methods=['POST'])
-def bet_sheet_remove(draft_id):
-  d = DraftBet.query.get_or_404(draft_id)
-  db.session.delete(d)
-  db.session.commit()
-  return _redirect_next('bet_sheet')
 
 
-@app.route('/bet_sheet/place', methods=['POST'])
-def bet_sheet_place():
-  unsettled = _unsettled_finished_bets()
-  if unsettled:
-    names = ', '.join(b.name for b, _info in unsettled)
-    return (
-      f"<p>Close out finished bet(s) before placing new ones: {names}.</p>"
-      f"<p><a href='{url_for('bet_sheet')}'>Back to Bet Sheet</a></p>",
-      409,
-    )
-  ids = [int(i) for i in request.form.getlist('bet_ids') if i.isdigit()]
-  if ids:
-    drafts = DraftBet.query.filter(DraftBet.id.in_(ids)).all()
-    settings = Setting.query.first()
-    for d in drafts:
-      b = OpenBet(name=d.name, odds=d.odds, prob=d.prob, stake=d.stake, sport=d.sport,
-                  bet_type=d.bet_type, eventstart=d.eventstart, notes=d.notes,
-                  game_key=d.game_key, bet_side=d.bet_side)
-      db.session.add(b)
-      if settings:
-        settings.bankroll = round(settings.bankroll - d.stake, 2)
-      db.session.delete(d)
-    db.session.commit()
-  return redirect(url_for('bet_sheet'))
 
 
-def _redirect_next(default_endpoint='index'):
-  """Redirect to the same-site `next` path a form sent along (so acting on a
-  bet from a schedule page's sheet returns there), else the dashboard."""
-  nxt = (request.form.get('next') or '').strip()
-  if nxt.startswith('/') and not nxt.startswith('//'):
-    return redirect(nxt)
-  return redirect(url_for(default_endpoint))
 
 
-@app.route('/edit_open/<int:bet_id>', methods=['GET', 'POST'])
-def edit_open(bet_id):
-  b = OpenBet.query.get_or_404(bet_id)
-  if request.method == 'POST':
-    try:
-      old_stake = b.stake
-      b.name     = request.form.get('name', b.name)
-      b.odds     = _as_decimal_odds(request.form.get('odds', b.odds))
-      b.prob     = float(request.form.get('prob', b.prob))
-      b.stake    = float(request.form.get('stake', b.stake))
-      b.sport    = request.form.get('sport', b.sport)
-      b.bet_type = request.form.get('bet_type', b.bet_type)
-      b.notes    = request.form.get('notes', b.notes or '')
-      settings = Setting.query.first()
-      if settings:
-        settings.bankroll = round(settings.bankroll + old_stake - b.stake, 2)
-      db.session.commit()
-      return _redirect_next()
-    except Exception:
-      pass
-  return render_template('edit_open.html', b=b)
 
-@app.route('/delete_open/<int:bet_id>', methods=['POST'])
-def delete_open(bet_id):
-  b = OpenBet.query.get_or_404(bet_id)
-  settings = Setting.query.first()
-  if settings:
-    settings.bankroll = round(settings.bankroll + b.stake, 2)
-  db.session.delete(b)
-  db.session.commit()
-  return _redirect_next()
 
-@app.route('/api/cashout/<int:bet_id>', methods=['POST'])
-def api_cashout(bet_id):
-  b = OpenBet.query.get_or_404(bet_id)
-  data = request.get_json(silent=True) or {}
-  cashout_amount = float(data.get('cashout_amount', 0))
-  if cashout_amount <= 0:
-    return jsonify({'error': 'Invalid cashout amount'}), 400
-  profit = round(cashout_amount - b.stake, 2)
-  cb = ClosedBet(
-    name=b.name, odds=b.odds, prob=b.prob, stake=b.stake,
-    sport=b.sport, bet_type=b.bet_type, eventstart=b.eventstart,
-    outcome='cashout', profit=profit, cashout_amount=cashout_amount,
-    closed_at=datetime.now(timezone.utc), notes=b.notes or '',
-    closing_line=None,
-  )
-  db.session.add(cb)
-  db.session.delete(b)
-  settings = Setting.query.first()
-  if settings:
-    settings.bankroll = round(settings.bankroll + cashout_amount, 2)
-  db.session.commit()
-  return jsonify({'ok': True, 'profit': profit})
 
-@app.route('/close_open/<int:bet_id>', methods=['POST'])
-def close_open(bet_id):
-  b = OpenBet.query.get_or_404(bet_id)
-  outcome = request.form.get('outcome', 'loss')
-  if outcome not in ('win', 'loss'):
-    outcome = 'loss'
-  profit = b.stake * (_as_decimal_odds(b.odds) - 1.0) if outcome == 'win' else -b.stake
 
-  # Closing line: use manually entered value, else auto-lookup from DraftKings history
-  closing_line = None
-  cl_raw = request.form.get('closing_line', '').strip()
-  if cl_raw:
-    try:
-      ca = float(cl_raw)
-      closing_line = ca / 100 + 1 if ca > 0 else 100 / abs(ca) + 1
-    except Exception:
-      pass
-  if closing_line is None and b.game_key and b.bet_side and b.eventstart:
-    try:
-      import odds_history as _oh
-      _SPORT_KEY = {'MLB': 'baseball_mlb', 'NHL': 'icehockey_nhl', 'NFL': 'americanfootball_nfl', 'CFB': 'americanfootball_ncaaf', 'NBA': 'basketball_nba', 'WNBA': 'basketball_wnba', 'CBB': 'basketball_ncaab'}
-      sk = _SPORT_KEY.get((b.sport or '').upper(), 'baseball_mlb')
-      es = b.eventstart if b.eventstart.tzinfo else b.eventstart.replace(tzinfo=timezone.utc)
-      market = 'spread' if (b.bet_type or '').strip().lower() == 'spread' else 'moneyline'
-      snap = _oh.get_closing_line(sk, b.game_key, es, market=market)
-      if snap:
-        ca = snap[f'{b.bet_side}_odds']
-        closing_line = ca / 100.0 + 1.0 if ca > 0 else 100.0 / abs(ca) + 1.0
-    except Exception:
-      pass
 
-  notes = request.form.get('notes', b.notes or '')
 
-  cb = ClosedBet(
-    name=b.name, odds=b.odds, prob=b.prob, stake=b.stake,
-    sport=b.sport, bet_type=b.bet_type, eventstart=b.eventstart,
-    outcome=outcome, profit=profit, closed_at=datetime.now(timezone.utc),
-    notes=notes, closing_line=closing_line,
-  )
-  db.session.add(cb)
-  db.session.delete(b)
-  if outcome == 'win':
-    settings = Setting.query.first()
-    if settings:
-      settings.bankroll = round(settings.bankroll + b.stake + profit, 2)
-  db.session.commit()
-  return _redirect_next()
-
-@app.route('/add_closed', methods=['POST'])
-def add_closed():
-  try:
-    name = request.form.get('name', 'Bet')
-    american_odds = float(request.form.get('american_odds'))
-    # Convert American odds to decimal
-    if american_odds > 0:
-      odds = american_odds / 100.0 + 1.0
-    else:
-      odds = 100.0 / abs(american_odds) + 1.0
-    prob = float(request.form.get('prob'))
-    stake = float(request.form.get('stake'))
-    sport = request.form.get('sport', '')
-    bet_type = request.form.get('bet_type', 'Moneyline')
-    outcome = request.form.get('outcome', 'loss')
-    closed_at_raw = request.form.get('closed_at', '')
-  except Exception:
-    return redirect(url_for('index'))
-
-  if outcome not in ('win', 'loss'):
-    outcome = 'loss'
-
-  if outcome == 'win':
-    profit = stake * (odds - 1.0)
-  else:
-    profit = -stake
-
-  eventstart = None
-  eventstart_raw = request.form.get('eventstart', '')
-  if eventstart_raw:
-    try:
-      eventstart = datetime.strptime(eventstart_raw, "%Y-%m-%dT%H:%M")
-    except Exception:
-      pass
-
-  closed_at = datetime.now(timezone.utc)
-  if closed_at_raw:
-    try:
-      # input type="datetime-local" -> "YYYY-MM-DDTHH:MM"
-      closed_at = datetime.strptime(closed_at_raw, "%Y-%m-%dT%H:%M")
-    except Exception:
-      pass
-
-  notes = request.form.get('notes', '')
-  cb = ClosedBet(
-    name=name, odds=odds, prob=prob, stake=stake,
-    sport=sport, bet_type=bet_type, outcome=outcome,
-    profit=profit, closed_at=closed_at, eventstart=eventstart, notes=notes,
-  )
-  db.session.add(cb)
-  db.session.commit()
-  return redirect(url_for('bets_page') + '#settled')
 
 def _market_qualifies(pick_prob, mkt_implied, amer_odds):
   """Shared bet-worthiness gate for every market (ML/Spread/Total): positive
@@ -6561,7 +5810,6 @@ def _mlb_candidates(schedule):
         'movement_pct':     movement_pct,
         'game_time_utc': game.get('game_time_utc', ''),
         'pick_name':     home_name if bet_side == 'home' else away_name,
-        'has_open_bet':  bool(game.get('open_bets')),
         'status':        status,
         'outcome':       outcome,
         'live':          _rec_live(game, 'ml', bet_side, 0.0),
@@ -6597,47 +5845,6 @@ def mlb_schedule():
   from odds_api import _normalize
   import odds_history as _oh_mv
   import re as _re
-
-  all_open = OpenBet.query.all()
-
-  # Primary index: game_key (set when bet was placed from schedule page)
-  by_key = {}
-  for bet in all_open:
-    if bet.game_key:
-      by_key.setdefault(bet.game_key, []).append(bet)
-
-  # Fallback index: leading team abbreviation in the bet name
-  # Matches bets like "PIT ML", "CWS ML" placed manually or pre-game_key
-  by_abbr = {}
-  for bet in all_open:
-    if bet.game_key:
-      continue  # already covered above
-    m = _re.match(r'^([A-Z]{2,4})\b', bet.name or '')
-    if m:
-      by_abbr.setdefault(m.group(1).upper(), []).append(bet)
-
-  for day in schedule:
-    for game in day['games']:
-      gk = f"{_normalize(game['home']['name'])}_{_normalize(game['away']['name'])}"
-      matched = list(by_key.get(gk, []))
-      # Also try the hour-precision timestamped key that add_open stores
-      _utc_raw = game.get('game_time_utc', '')
-      if _utc_raw:
-        try:
-          from datetime import datetime as _dt
-          _utc = _dt.fromisoformat(_utc_raw.replace('Z', '+00:00'))
-          gk_ts = f"{gk}_{_utc.strftime('%Y-%m-%dT%H')}"
-          for bet in by_key.get(gk_ts, []):
-            if bet not in matched:
-              matched.append(bet)
-        except Exception:
-          pass
-      # Add any fallback matches for either team abbreviation
-      for abbr in (game['away']['abbr'], game['home']['abbr']):
-        for bet in by_abbr.get(abbr.upper(), []):
-          if bet not in matched:
-            matched.append(bet)
-      game['open_bets'] = matched
 
   _upsert_predictions(schedule, 'MLB')
   _attach_graded_results(schedule, 'MLB')
@@ -6711,27 +5918,6 @@ def mlb_schedule():
   # that every game's model.final_*_prob has been stamped above.
   best_bets = _mlb_best_bets(schedule, all_candidates)
 
-  settings = Setting.query.first()
-  kelly_cap = settings.percent_bankroll if settings else 0.05
-  bankroll  = settings.bankroll if settings else 0.0
-
-  # Live MLB bets — same CLV/tier annotation as the Dashboard, scoped to
-  # this sport only, via the shared helpers (see _annotate_open_bets) so
-  # this doesn't duplicate ~70 lines of logic a second time.
-  mlb_bets       = OpenBet.query.filter_by(sport='MLB').order_by(
-      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
-  closing_suggestions = _annotate_open_bets(mlb_bets)
-  _tier_open_bets(mlb_bets)
-  open_stats = _open_bets_summary_stats(mlb_bets)
-
-  # Unit size uses ALL sports' open stake (not just MLB's) added back to
-  # bankroll — Kelly sizing is bankroll-wide, not per-sport (same reasoning
-  # as the persistent exposure strip in base.html), so a bet placed from
-  # this page needs to size against total exposure, not just MLB's.
-  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
-  _adj_bankroll = bankroll + _all_open_stats['open_staked']
-  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
-
   import odds_api as _oa
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
@@ -6743,13 +5929,8 @@ def mlb_schedule():
     slate = None
 
   resp = make_response(render_template('mlb_schedule.html', schedule=schedule, best_bets=best_bets,
-                         bankroll=bankroll, kelly_cap=kelly_cap,
-                         open_bets=mlb_bets, day_nav=day_nav,
-                         unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
-                         odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(mlb_bets)} Open MLB Bet{'s' if len(mlb_bets) != 1 else ''}",
-                         sync_next=f"/mlb?offset={day_nav['offset']}", subnav_sport='MLB', slate=slate))
+                         day_nav=day_nav, odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch, subnav_sport='MLB', slate=slate))
   return _set_last_sport_cookie(resp, 'MLB')
 
 def _splits_agg(rows):
@@ -6912,8 +6093,6 @@ def mlb_game_detail_page(game_id):
 
   game, _date_str = mlb_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
@@ -6925,10 +6104,9 @@ def mlb_game_detail_page(game_id):
   extra = ['_mlb_pitchers_panel.html']
 
   return render_template('game_detail.html', detail=detail, game=game,
-                          subnav_sport='MLB', bankroll=bankroll,
-                          schedule_endpoint='mlb_schedule', bet_panel_template='_mlb_bet_panel.html',
+                          subnav_sport='MLB',
+                          schedule_endpoint='mlb_schedule',
                           extra_panels=extra,
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -7290,6 +6468,50 @@ def _bet_type_accuracy_stats(resolved, prob_attr, outcome_attr, roi_attr):
   return stats
 
 
+def _paper_record(sport, market='ml', snap='t60'):
+  """Compact paper-ledger summary for a sport, for cards outside the Model
+  page: recommended picks, or every game for tracking-only sports (which
+  never recommend). None when nothing has been logged yet."""
+  q = PaperPick.query.filter_by(sport=sport, market=market, snapshot=snap)
+  tracking_only = sport in _TRACKING_ONLY_SPORTS
+  if not tracking_only:
+    q = q.filter(PaperPick.recommended.is_(True))
+  rows = [{'result': r.result, 'profit': r.profit, 'edge': r.edge or 0.0,
+           'clv_prob': r.clv_prob, 'clv_pts': r.clv_pts} for r in q.all()]
+  if not rows:
+    return None
+  return {**paper_ledger.summarize(rows),
+          'pool_label': 'Every game' if tracking_only else 'Recommended picks'}
+
+
+def _paper_ledger_context(sport, bet_type, snap, pool):
+  """Paper-ledger block for the Model page: record/ROI/CLV for every logged
+  side vs the recommended subset, plus a shadow bankroll for the chosen pool.
+  Same selection, filtered only by market and snapshot, so the gap between
+  the two summaries is what the recommendation filter adds or costs."""
+  market = {'spread': 'spread', 'total': 'total'}.get(bet_type, 'ml')
+  snap = 't60' if market == 'total' else (snap if snap in paper_ledger.SNAPSHOTS else 't60')
+  pool = 'all' if market == 'total' else (pool if pool in ('rec', 'all') else 'rec')
+  q = PaperPick.query.filter_by(sport=sport, market=market, snapshot=snap)
+  rows = [{
+      'id': r.id, 'date': r.game_date, 'start': r.game_time_utc or r.game_date,
+      'label': r.label, 'odds': r.odds, 'edge': r.edge or 0.0, 'kelly': r.kelly,
+      'recommended': bool(r.recommended), 'result': r.result, 'profit': r.profit,
+      'clv_prob': r.clv_prob, 'clv_pts': r.clv_pts,
+  } for r in q.all()]
+  rec_rows = [r for r in rows if r['recommended']]
+  pool_rows = rec_rows if pool == 'rec' else rows
+  settings = Setting.query.first()
+  return {
+      'market': market, 'snap': snap, 'pool': pool,
+      'all': paper_ledger.summarize(rows),
+      'rec': paper_ledger.summarize(rec_rows),
+      'tracking_only': sport in _TRACKING_ONLY_SPORTS or market == 'total',
+      'shadow': paper_ledger.shadow_bankroll(
+          pool_rows, kelly_cap=(settings.percent_bankroll if settings and settings.percent_bankroll else 0.25)),
+  }
+
+
 @app.route('/model')
 def model_performance():
   from collections import defaultdict as _dd
@@ -7299,7 +6521,7 @@ def model_performance():
     sport = 'MLB'
 
   bet_type = request.args.get('type', 'moneyline').lower()
-  if bet_type not in ('moneyline', 'spread'):
+  if bet_type not in ('moneyline', 'spread', 'total'):
     bet_type = 'moneyline'
 
   preds = (GamePrediction.query
@@ -7310,7 +6532,12 @@ def model_performance():
   resolved = [p for p in preds if p.home_won is not None]
   n = len(resolved)
 
-  spread_stats = _bet_type_accuracy_stats(resolved, 'spread_cover_prob', 'spread_covered', 'spread_pick_roi')
+  # The non-moneyline tab's stats block (template calls it spread_stats).
+  # Totals are tracking-only: graded on the model's over/under side.
+  if bet_type == 'total':
+    spread_stats = _bet_type_accuracy_stats(resolved, 'total_over_prob', 'total_went_over', 'total_pick_roi')
+  else:
+    spread_stats = _bet_type_accuracy_stats(resolved, 'spread_cover_prob', 'spread_covered', 'spread_pick_roi')
 
   brier = accuracy = log_loss_val = None
   if n:
@@ -8294,10 +7521,20 @@ def model_performance():
     except ValueError:
       grp['date_label'] = grp['date']
 
-  rec_bets = _recommended_bets_history(resolved, sport, bet_type)
+  rec_bets = None if bet_type == 'total' else _recommended_bets_history(resolved, sport, bet_type)
+  if bet_type == 'total':
+    # The signal tables, recent slates and weekly trend below are all built
+    # from moneyline/spread picks — nothing total-specific to show there.
+    rank_stats = rank_comparison = movement_stats = firing_stats = None
+    score_bucket_stats = market_agree_stats = consensus_stats = fav_dog_stats = None
+    closing_dist_stats = dow_stats = travel_stats = spread_omen_bucket_stats = None
+    factor_stats = trend_weeks = None
+    pred_days, enriched_preds = [], []
+  paper = _paper_ledger_context(sport, bet_type, request.args.get('snap'), request.args.get('pool'))
 
   resp = make_response(render_template('model_performance.html',
       rec_bets=rec_bets,
+      paper=paper,
       preds=preds[:40],
       total=len(preds),
       resolved=n,
@@ -8510,7 +7747,6 @@ def nhl_schedule():
   _stamp_dow(schedule, 'NHL')
   _attach_graded_results(schedule, 'NHL')
   _mark_favorites(schedule, 'NHL')
-  _match_open_bets_to_games(schedule, sport='NHL')
   recommended = _edge_recommendations(schedule, 'NHL')
   try:
     slate = slate_overview.build(schedule[0]['games'], 'nhl') if schedule else None
@@ -8529,16 +7765,13 @@ def nhl_game_detail_page(game_id):
 
   game, _date_str = nhl_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
 
   return render_template('game_detail.html', detail=detail, game=game,
-                          subnav_sport='NHL', bankroll=bankroll,
-                          schedule_endpoint='nhl_schedule', bet_panel_template='_nhl_bet_panel.html',
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          subnav_sport='NHL',
+                          schedule_endpoint='nhl_schedule',
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -8552,7 +7785,6 @@ def nba_schedule():
   _stamp_dow(schedule, 'NBA')
   _attach_graded_results(schedule, 'NBA')
   _mark_favorites(schedule, 'NBA')
-  _match_open_bets_to_games(schedule, sport='NBA')
   recommended = _edge_recommendations(schedule, 'NBA')
   # Map + "at a glance" facts — built only from data already in `schedule`;
   # never let it take the page down.
@@ -8573,8 +7805,6 @@ def nba_game_detail_page(game_id):
 
   game, _date_str = nba_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
@@ -8583,10 +7813,9 @@ def nba_game_detail_page(game_id):
     extra.append('_nba_lineups.html')
 
   return render_template('game_detail.html', detail=detail, game=game,
-                          subnav_sport='NBA', bankroll=bankroll,
-                          schedule_endpoint='nba_schedule', bet_panel_template='_nba_bet_panel.html',
+                          subnav_sport='NBA',
+                          schedule_endpoint='nba_schedule',
                           extra_panels=extra,
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -8600,7 +7829,6 @@ def wnba_schedule():
   _stamp_dow(schedule, 'WNBA')
   _attach_graded_results(schedule, 'WNBA')
   _mark_favorites(schedule, 'WNBA')
-  _match_open_bets_to_games(schedule, sport='WNBA')
   recommended = _edge_recommendations(schedule, 'WNBA')
   try:
     slate = slate_overview.build(schedule[0]['games'], 'wnba') if schedule else None
@@ -8619,8 +7847,6 @@ def wnba_game_detail_page(game_id):
 
   game, _date_str = wnba_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
@@ -8629,10 +7855,9 @@ def wnba_game_detail_page(game_id):
     extra.append('_nba_lineups.html')
 
   return render_template('game_detail.html', detail=detail, game=game,
-                          subnav_sport='WNBA', bankroll=bankroll,
-                          schedule_endpoint='wnba_schedule', bet_panel_template='_wnba_bet_panel.html',
+                          subnav_sport='WNBA',
+                          schedule_endpoint='wnba_schedule',
                           extra_panels=extra,
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -8646,7 +7871,6 @@ def cbb_schedule():
   _stamp_dow(schedule, 'CBB')
   _attach_graded_results(schedule, 'CBB')
   _mark_favorites(schedule, 'CBB')
-  _match_open_bets_to_games(schedule, sport='CBB')
   recommended = _edge_recommendations(schedule, 'CBB')
   slate = None   # slate_overview's arena map has no college venues
   conferences = sorted({t['conference'] for d in schedule for g in d['games']
@@ -8674,16 +7898,13 @@ def cbb_game_detail_page(game_id):
 
   game, _date_str = cbb_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
   return render_template('game_detail.html', detail=detail, game=game,
-                          subnav_sport='CBB', bankroll=bankroll,
-                          schedule_endpoint='cbb_schedule', bet_panel_template='_cbb_bet_panel.html',
+                          subnav_sport='CBB',
+                          schedule_endpoint='cbb_schedule',
                           extra_panels=['_cbb_ratings_panel.html'] if game else [],
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -8697,20 +7918,6 @@ def nfl_schedule():
   _stamp_dow(week_ctx['days'], 'NFL')
   _attach_graded_results(week_ctx['days'], 'NFL')
   _mark_favorites(week_ctx['days'], 'NFL')
-  _match_open_bets_to_games(week_ctx['days'], sport='NFL')
-
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
-
-  nfl_bets       = OpenBet.query.filter_by(sport='NFL').order_by(
-      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
-  closing_suggestions = _annotate_open_bets(nfl_bets)
-  _tier_open_bets(nfl_bets)
-  open_stats = _open_bets_summary_stats(nfl_bets)
-
-  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
-  _adj_bankroll = bankroll + _all_open_stats['open_staked']
-  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
 
   import odds_api as _oa
   odds_last_fetch = _oa.get_last_fetch_time()
@@ -8728,12 +7935,8 @@ def nfl_schedule():
 
   resp = make_response(render_template('nfl_schedule.html', week_ctx=week_ctx, subnav_sport='NFL',
                          recommended=_edge_recommendations(week_ctx['days'], 'NFL'),
-                         open_bets=nfl_bets,
-                         unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
-                         odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(nfl_bets)} Open NFL Bet{'s' if len(nfl_bets) != 1 else ''}",
-                         sync_next='/nfl', slate=slate))
+                         odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch, slate=slate))
   return _set_last_sport_cookie(resp, 'NFL')
 
 @app.route('/nfl/game/<game_id>')
@@ -8742,24 +7945,19 @@ def nfl_game_detail_page(game_id):
   if not detail:
     return redirect(url_for('nfl_schedule'))
 
-  # The bet-slip panel (_nfl_bet_panel.html) reuses the schedule page's own
-  # bet-type-chip/bet-slip markup and JS (openBetSlip et al in main.js), so
-  # it needs the same `game` dict shape those partials already expect —
-  # build_game_detail() doesn't produce that shape itself (it returns the
-  # richer, page-specific contract above), so re-fetch the plain game dict
-  # for just this panel rather than reshaping one into the other.
+  # game_detail.html's shared pieces (game_center_extras, extra panels)
+  # expect the plain schedule `game` dict, which build_game_detail() doesn't
+  # produce (it returns the richer page-specific contract above), so
+  # re-fetch it rather than reshaping one into the other.
   game, season, week = nfl_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
 
   return render_template('game_detail.html', detail=detail, game=game, week=week,
-                          subnav_sport='NFL', bankroll=bankroll,
-                          schedule_endpoint='nfl_schedule', bet_panel_template='_nfl_bet_panel.html',
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          subnav_sport='NFL',
+                          schedule_endpoint='nfl_schedule',
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -10412,15 +9610,12 @@ def _build_nfl_matchup_board(day=None):
   if envs:
     glance.append({'label': 'Best fantasy environment', 'game': f"{envs[0]['away']} @ {envs[0]['home']}",
                    'sub': f"Sim total {envs[0]['total']} pts"})
-  nfl_closed = ClosedBet.query.filter(db.func.upper(ClosedBet.sport) == 'NFL').all()
-  if nfl_closed:
-    w = sum(1 for b in nfl_closed if b.outcome == 'win')
-    l = sum(1 for b in nfl_closed if b.outcome == 'loss')
-    staked = sum(b.stake for b in nfl_closed)
-    roi = sum(b.profit for b in nfl_closed) / staked * 100 if staked else 0.0
-    clvs = [b.clv for b in nfl_closed if b.clv is not None]
-    glance.append({'label': 'Your NFL ledger', 'game': f'{w}–{l} · {roi:+.1f}%', 'ledger': True, 'roi': roi,
-                   'sub': 'ROI' + (f' · CLV {sum(clvs) / len(clvs):+.1f}%' if clvs else '')})
+  paper = _paper_record('NFL')
+  if paper and paper['graded']:
+    roi = paper['roi'] or 0.0
+    glance.append({'label': 'Model paper record', 'game': f"{paper['wins']}–{paper['losses']} · {roi:+.1f}%",
+                   'ledger': True, 'roi': roi,
+                   'sub': 'ROI' + (f" · beat close {paper['beat_close_pct']:g}%" if paper['beat_close_pct'] is not None else '')})
 
   day_tabs = []
   for d in days:
@@ -10528,7 +9723,6 @@ def cfb_schedule():
   _stamp_dow(week_ctx['days'], 'CFB')
   _attach_graded_results(week_ctx['days'], 'CFB')
   _mark_favorites(week_ctx['days'], 'CFB')
-  _match_open_bets_to_games(week_ctx['days'], sport='CFB')
 
   # Weekly Recommendations — same edge-ranked list as the other non-MLB sports
   # (see _edge_recommendations), scoped to the displayed week.
@@ -10540,31 +9734,14 @@ def cfb_schedule():
           conferences.add(t['conference'])
   recommended = _edge_recommendations(week_ctx['days'], 'CFB')
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
-
-  cfb_bets       = OpenBet.query.filter_by(sport='CFB').order_by(
-      OpenBet.eventstart.asc().nulls_last(), OpenBet.created_at.asc()).all()
-  closing_suggestions = _annotate_open_bets(cfb_bets)
-  _tier_open_bets(cfb_bets)
-  open_stats = _open_bets_summary_stats(cfb_bets)
-
-  _all_open_stats = compute_stats(OpenBet.query.all(), ClosedBet.query.all())
-  _adj_bankroll = bankroll + _all_open_stats['open_staked']
-  unit_size = max(0.01, round(_adj_bankroll * (settings.percent_bankroll if settings else 0.25), 4))
-
   import odds_api as _oa
   odds_last_fetch = _oa.get_last_fetch_time()
   odds_next_fetch = _oa.get_next_fetch_time()
 
   resp = make_response(render_template('cfb_schedule.html', week_ctx=week_ctx, subnav_sport='CFB',
                          recommended=recommended, conferences=sorted(conferences),
-                         open_bets=cfb_bets,
-                         unit_size=unit_size, closing_suggestions=closing_suggestions,
-                         open_stats=open_stats, odds_last_fetch=odds_last_fetch,
-                         odds_next_fetch=odds_next_fetch,
-                         heading=f"{len(cfb_bets)} Open CFB Bet{'s' if len(cfb_bets) != 1 else ''}",
-                         sync_next='/cfb'))
+                         odds_last_fetch=odds_last_fetch,
+                         odds_next_fetch=odds_next_fetch))
   return _set_last_sport_cookie(resp, 'CFB')
 
 @app.route('/cfb/game/<game_id>')
@@ -10575,16 +9752,13 @@ def cfb_game_detail_page(game_id):
 
   game, _season, week = cfb_game_detail.find_game(game_id)
 
-  settings = Setting.query.first()
-  bankroll = settings.bankroll if settings else 0.0
 
   import odds_api as _oa
   panel = ml_factors_panel(game) if game else None
 
   return render_template('game_detail.html', detail=detail, game=game, week=week,
-                          subnav_sport='CFB', bankroll=bankroll,
-                          schedule_endpoint='cfb_schedule', bet_panel_template='_cfb_bet_panel.html',
-                          percent_bankroll=(settings.percent_bankroll if settings else 0.25),
+                          subnav_sport='CFB',
+                          schedule_endpoint='cfb_schedule',
                           odds_last_fetch=_oa.get_last_fetch_time(),
                           ml_panel=panel, splits=_similar_games_splits(detail))
 
@@ -10957,33 +10131,6 @@ def api_mlb_live_scores():
     return jsonify(mlb_api.get_live_game_states())
 
 
-@app.route('/api/live-scores')
-def api_live_scores():
-    """
-    Returns {bet_id: score_dict} for all open bets with a game — including
-    preview (pre-kickoff) games so the card-face matchup can show team
-    logos/abbreviations before the game starts, and bets from prior days
-    whose game already finished, so the score keeps showing (instead of
-    vanishing) until the bet is closed. Called by the dashboard every 2
-    minutes to update score badges and the matchup.
-    """
-    from flask import jsonify
-
-    open_bets = OpenBet.query.filter(OpenBet.game_key != '').all()
-    if not open_bets:
-        return jsonify({})
-
-    score_map = _score_map_for_open_bets(open_bets)
-
-    result = {}
-    for bet in open_bets:
-        score_key = _GAME_KEY_TS_STRIP.sub('', bet.game_key)  # strip _YYYY-MM-DDTHH suffix
-        info = score_map.get(score_key)
-        if not info:
-            continue
-        result[str(bet.id)] = dict(info)
-
-    return jsonify(result)
 
 
 @app.route('/api/mlb/game/<int:game_pk>/boxscore')
@@ -11881,6 +11028,9 @@ def _resolve_pending_outcomes():
                  .all())
         purged = len(stale)
         for p in stale:
+            # Postponed/cancelled: void its ungraded paper picks too.
+            PaperPick.query.filter_by(sport='MLB', game_date=p.game_date, home_team=p.home_team,
+                                      away_team=p.away_team, result=None).delete()
             db.session.delete(p)
 
         if resolved or purged:
@@ -11894,6 +11044,11 @@ def _resolve_pending_outcomes():
                     print(f'[outcome-resolver] purged {purged} stale pending predictions', flush=True)
             except Exception:
                 db.session.rollback()
+
+        try:
+            _settle_all_paper_picks()
+        except Exception as e:
+            print(f'[outcome-resolver] paper-pick settle failed: {e}', flush=True)
 
 
 def _recompute_all_calibration(sport):

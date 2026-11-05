@@ -4,15 +4,15 @@ page (/nfl/simulations/<game_id>), matching game-page-handoff/
 SIM-HANDOFF.md as closely as real data allows.
 
 Builds on nfl_game_detail.py (for the real betting model's blend
-probability, the FanDuel moneyline/spread lines, and the team/game meta —
+probability, the DraftKings moneyline/spread lines, and the team/game meta —
 no reason to re-derive any of that) plus the daily simulation background
 job's own stored output (nfl_stats_db.get_sim_results_db()/
 get_sim_game_summary_db(), written by nfl_game_simulator.simulate_week()).
 
 What's deliberately NOT here, and why:
-  - FanDuel player PROPS (pass/rush/rec yards, anytime TD, ...): this app
+  - Player PROPS (pass/rush/rec yards, anytime TD, ...): this app
     has never ingested a player-props feed (odds_api.py only ever
-    requests h2h/spreads/totals markets) — the "Top FanDuel prop" column,
+    requests moneyline/spread/total markets) — the "Top prop" column,
     the prop-EV sort, the per-prop histogram/line-marker, and the
     "Best prop edges" rail all need that feed and are omitted rather than
     shown with fabricated prices. sim_math.py's p_over_normal/
@@ -43,21 +43,21 @@ CORR_MAX_PAIRS = 8
 
 
 def _agreement_rows(detail, summary, margins):
-    """Rows: ['home win prob', 'spread'] x {market, sim, blend, fanduel,
-    read, note}. Hidden (omitted) entirely for a market with no FanDuel
+    """Rows: ['home win prob', 'spread'] x {market, sim, blend, draftkings,
+    read, note}. Hidden (omitted) entirely for a market with no DraftKings
     line stored yet, or no blend-model probability for it — same
     "hide the section rather than fake it" rule as the rest of this page."""
     rows = []
 
     p_blend_home = detail['model']['p_blend_home']
-    novig_home = detail['fanduel']['novig_home']
+    novig_home = detail['draftkings']['novig_home']
     if p_blend_home is not None and novig_home is not None and (summary['home_wins'] + summary['away_wins']):
         sim_home_pct = sm.win_prob_excl_ties(summary['home_wins'], summary['away_wins']) * 100
         blend_home_pct = p_blend_home * 100
         agree = (sim_home_pct >= 50) == (blend_home_pct >= 50)
         rows.append({
             'market': 'Home win prob', 'sim': f'{sim_home_pct:.1f}%', 'blend': f'{blend_home_pct:.1f}%',
-            'fanduel': f'{novig_home:.1f}%', 'read': 'AGREE' if agree else 'SPLIT',
+            'draftkings': f'{novig_home:.1f}%', 'read': 'AGREE' if agree else 'SPLIT',
             'note': (f"Sim and the blend model both favor the "
                      f"{'home' if sim_home_pct >= 50 else 'away'} side."
                      if agree else
@@ -65,7 +65,7 @@ def _agreement_rows(detail, summary, margins):
                      f"the blend model favors {'home' if blend_home_pct >= 50 else 'away'}."),
         })
 
-    home_spread_line = detail['fanduel']['spread']['home']['line']
+    home_spread_line = detail['draftkings']['spread']['home']['line']
     factors = detail['model']['factors']
     if home_spread_line is not None and margins and factors:
         cover = sm.cover_prob_empirical(margins, home_spread_line)
@@ -76,7 +76,7 @@ def _agreement_rows(detail, summary, margins):
             agree = (sim_home_pct >= 50) == (blend_home_pct >= 50)
             rows.append({
                 'market': 'Spread', 'sim': f'{sim_home_pct:.1f}%', 'blend': f'{blend_home_pct:.1f}%',
-                'fanduel': f"{home_spread_line:+g}", 'read': 'AGREE' if agree else 'SPLIT',
+                'draftkings': f"{home_spread_line:+g}", 'read': 'AGREE' if agree else 'SPLIT',
                 'note': (f"Sim and the blend model both lean the "
                          f"{'home' if sim_home_pct >= 50 else 'away'} side of the spread."
                          if agree else
@@ -187,8 +187,8 @@ def build_sim_detail(game_id):
         'players': {'away': away_players, 'home': home_players},
         'correlations': _correlations(away_players + home_players),
         'margin_hist': sm.histogram(margins, MARGIN_BIN_WIDTH, *MARGIN_RANGE) if margins else [],
-        'margin_cover': (sm.cover_prob_empirical(margins, detail['fanduel']['spread']['home']['line'])
-                          if margins and detail['fanduel']['spread']['home']['line'] is not None else None),
-        'spread_line': detail['fanduel']['spread']['home']['line'],
+        'margin_cover': (sm.cover_prob_empirical(margins, detail['draftkings']['spread']['home']['line'])
+                          if margins and detail['draftkings']['spread']['home']['line'] is not None else None),
+        'spread_line': detail['draftkings']['spread']['home']['line'],
         'quarters': quarters,
     }

@@ -285,8 +285,8 @@
       {% endif %}
       <div class="gdp-venue">{{ detail.game.venue }}{% if detail.game.weather %} · {{ detail.game.weather.temp }}°F{% if detail.game.weather.gust_mph %} · Gust {{ detail.game.weather.gust_mph }}mph{% endif %}{% if detail.game.weather.precip_pct %} · {{ detail.game.weather.precip_pct }}% rain{% endif %}{% endif %}</div>
       <div class="gdp-pills">
-        {% if detail.fanduel.spread.home.line is not none %}<span class="gdp-pill">{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span>{% endif %}
-        {% if detail.fanduel.moneyline.away.price is not none %}<span class="gdp-pill">{{ detail.teams.away.abbr }} {{ '+' if detail.fanduel.moneyline.away.price > 0 }}{{ detail.fanduel.moneyline.away.price }} · {{ detail.teams.home.abbr }} {{ detail.fanduel.moneyline.home.price }}</span>{% endif %}
+        {% if detail.draftkings.spread.home.line is not none %}<span class="gdp-pill">{{ detail.teams.home.abbr }} {{ detail.draftkings.spread.home.line }}</span>{% endif %}
+        {% if detail.draftkings.moneyline.away.price is not none %}<span class="gdp-pill">{{ detail.teams.away.abbr }} {{ '+' if detail.draftkings.moneyline.away.price > 0 }}{{ detail.draftkings.moneyline.away.price }} · {{ detail.teams.home.abbr }} {{ detail.draftkings.moneyline.home.price }}</span>{% endif %}
       </div>
     </div>
 
@@ -360,7 +360,7 @@
     <span>Team <b>{{ (detail.model.p_team_home * 100) | round(1) }}%</b></span>
     <span>Player <b>{{ (detail.model.p_player_home * 100) | round(1) }}%</b></span>
     <span>→ Blended <b>{{ (detail.model.p_blend_home * 100) | round(1) }}%</b></span>
-    {% if detail.fanduel.novig_home is not none %}<span>DraftKings no-vig <b>{{ detail.fanduel.novig_home }}%</b></span>{% endif %}
+    {% if detail.draftkings.novig_home is not none %}<span>DraftKings no-vig <b>{{ detail.draftkings.novig_home }}%</b></span>{% endif %}
     {% if detail.model.ats_record_when_edge %}<span style="margin-left:auto">ATS when edge ≥ {{ detail.model.ats_record_when_edge.threshold_pts }}: <b>{{ detail.model.ats_record_when_edge.w }}–{{ detail.model.ats_record_when_edge.l }} ({{ detail.model.ats_record_when_edge.pct }}%)</b></span>{% endif %}
   </div>
   {% endif %}
@@ -403,7 +403,7 @@
       {% endif %}
 
       {# ── Line movement ─────────────────────────────────────────────── #}
-      {% if detail.fanduel.history.ml or detail.fanduel.history.spread %}
+      {% if detail.draftkings.history.ml or detail.draftkings.history.spread %}
       <div data-gtab="odds" class="gdp-card">
         <div class="gdp-section-head"><span>LINE MOVEMENT</span></div>
         <div class="gdp-lm-tabs" role="tablist" aria-label="Line movement market">
@@ -512,54 +512,36 @@
 
     <div class="gdp-rail">
 
-      {# ── Your bet — the user's actual open position on this game ───────── #}
-      {% for b in gx.my_bets %}
-      <div data-gtab="gamecast" class="gdp-card gdp-yourbet">
-        <div class="gdp-yourbet-head">
-          <span class="gdp-team-name" style="font-size:24px;">Your bet</span>
-          <span class="gdp-yourbet-state {{ 'good' if b.state in ('WINNING', 'COVERING') else ('bad' if b.state in ('LOSING', 'NOT COVERING') else '') }}">{{ b.state }}</span>
-        </div>
-        <div class="gdp-yourbet-pick"><b>{{ b.label }}</b>{% if b.odds is not none %}<span class="mono">{{ '+' if b.odds > 0 }}{{ b.odds }}</span>{% endif %}</div>
-        <div class="gdp-yourbet-sub">{{ b.bet_type }}{% if b.stake %} · stake ${{ '%.2f' % b.stake }}{% endif %}</div>
-        {% if b.edge is not none %}
-        <div class="gdp-vgrid" style="grid-template-columns:repeat(2,1fr); margin-top:12px;">
-          <div><span>EDGE AT PLACEMENT</span><b style="color:{{ 'var(--gdp-good)' if b.edge > 0 else 'var(--gdp-bad)' }}">{{ '+' if b.edge > 0 }}{{ b.edge }}%</b></div>
-          <div><span>SIDE</span><b>{{ detail.teams[b.side].abbr if b.side in ('home', 'away') else '—' }}</b></div>
-        </div>
-        {% endif %}
-      </div>
-      {% endfor %}
-
       {# ── DraftKings market (read-only, informational) ───────────────────── #}
-      {% if detail.fanduel.moneyline.home.price is not none or detail.fanduel.spread.home.line is not none %}
+      {% if detail.draftkings.moneyline.home.price is not none or detail.draftkings.spread.home.line is not none %}
       <div data-gtab="odds" class="gdp-card">
         <div class="gdp-section-head"><span>DRAFTKINGS MARKET</span><span>Model side outlined</span></div>
 
-        {% if detail.fanduel.moneyline.home.price is not none %}
+        {% if detail.draftkings.moneyline.home.price is not none %}
         <div class="gdp-market">
-          <div style="display:flex;justify-content:space-between;font-size:12px;"><b>Moneyline</b>{% if detail.fanduel.hold_ml is not none %}<span style="color:var(--gdp-dim)">{{ detail.fanduel.hold_ml }}% hold</span>{% endif %}</div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;"><b>Moneyline</b>{% if detail.draftkings.hold_ml is not none %}<span style="color:var(--gdp-dim)">{{ detail.draftkings.hold_ml }}% hold</span>{% endif %}</div>
           <div class="gdp-market-sides">
             <div class="gdp-market-side{{ ' model' if detail.verdicts and detail.verdicts[0].market == 'MONEYLINE' and detail.teams.away.abbr in detail.verdicts[0].pick }}">
-              <span>{{ detail.teams.away.abbr }}</span><span class="price">{{ '+' if detail.fanduel.moneyline.away.price > 0 }}{{ detail.fanduel.moneyline.away.price }}</span>
-              <div class="sub">Open {{ detail.fanduel.moneyline.away.open }}{% if detail.fanduel.novig_away is not none %} · no-vig {{ detail.fanduel.novig_away }}%{% endif %}</div>
+              <span>{{ detail.teams.away.abbr }}</span><span class="price">{{ '+' if detail.draftkings.moneyline.away.price > 0 }}{{ detail.draftkings.moneyline.away.price }}</span>
+              <div class="sub">Open {{ detail.draftkings.moneyline.away.open }}{% if detail.draftkings.novig_away is not none %} · no-vig {{ detail.draftkings.novig_away }}%{% endif %}</div>
             </div>
             <div class="gdp-market-side{{ ' model' if detail.verdicts and detail.verdicts[0].market == 'MONEYLINE' and detail.teams.home.abbr in detail.verdicts[0].pick }}">
-              <span>{{ detail.teams.home.abbr }}</span><span class="price">{{ '+' if detail.fanduel.moneyline.home.price > 0 }}{{ detail.fanduel.moneyline.home.price }}</span>
-              <div class="sub">Open {{ detail.fanduel.moneyline.home.open }}{% if detail.fanduel.novig_home is not none %} · no-vig {{ detail.fanduel.novig_home }}%{% endif %}</div>
+              <span>{{ detail.teams.home.abbr }}</span><span class="price">{{ '+' if detail.draftkings.moneyline.home.price > 0 }}{{ detail.draftkings.moneyline.home.price }}</span>
+              <div class="sub">Open {{ detail.draftkings.moneyline.home.open }}{% if detail.draftkings.novig_home is not none %} · no-vig {{ detail.draftkings.novig_home }}%{% endif %}</div>
             </div>
           </div>
         </div>
         {% endif %}
 
-        {% if detail.fanduel.spread.home.line is not none %}
+        {% if detail.draftkings.spread.home.line is not none %}
         <div class="gdp-market">
           <div style="font-size:12px;"><b>Spread</b></div>
           <div class="gdp-market-sides">
             <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','SPREAD')|list and detail.teams.away.abbr in (detail.verdicts|selectattr('market','equalto','SPREAD')|first).pick }}">
-              <span>{{ detail.teams.away.abbr }} {{ '+' if detail.fanduel.spread.away.line > 0 }}{{ detail.fanduel.spread.away.line }}</span><span class="price">{{ detail.fanduel.spread.away.price }}</span>
+              <span>{{ detail.teams.away.abbr }} {{ '+' if detail.draftkings.spread.away.line > 0 }}{{ detail.draftkings.spread.away.line }}</span><span class="price">{{ detail.draftkings.spread.away.price }}</span>
             </div>
             <div class="gdp-market-side{{ ' model' if detail.verdicts|selectattr('market','equalto','SPREAD')|list and detail.teams.home.abbr in (detail.verdicts|selectattr('market','equalto','SPREAD')|first).pick }}">
-              <span>{{ detail.teams.home.abbr }} {{ detail.fanduel.spread.home.line }}</span><span class="price">{{ detail.fanduel.spread.home.price }}</span>
+              <span>{{ detail.teams.home.abbr }} {{ detail.draftkings.spread.home.line }}</span><span class="price">{{ detail.draftkings.spread.home.price }}</span>
             </div>
           </div>
         </div>
@@ -680,33 +662,11 @@
   </div>
   {% endif %}
 
-  {# ── Bet panel — reuses the schedule card's exact bet-chip/bet-slip UI,
-       serving as both the "tap a side" affordance and the quick-bet bar #}
-  {% if game and game.status not in ('Final', 'Live') %}
-  {% include bet_panel_template %}
-  {% endif %}
-
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Recommendations-table "Bet" buttons on the schedule page (openRecommendedBet
-// in main.js) land here with ?bet=<side>&bet_type=<type> for sports that have
-// no inline bottom sheet — auto-open the matching chip's bet slip so the tap
-// still goes straight to placing the bet, same as it does on CFB/MLB.
-(function () {
-    var params = new URLSearchParams(window.location.search);
-    var side = params.get('bet');
-    if (!side) return;
-    var type = params.get('bet_type') || 'Moneyline';
-    var btn = document.querySelector('.btn-bet-team[data-bet-side="' + side + '"][data-bet-type="' + type + '"]');
-    if (btn && btn.tagName === 'BUTTON') {
-        btn.click();
-        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-})();
-
 document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     var utc = el.getAttribute('data-utc');
     if (!utc) return;
@@ -717,9 +677,9 @@ document.querySelectorAll('.game-time[data-utc]').forEach(function (el) {
     } catch (e) {}
 });
 
-{% if detail.fanduel.history.ml or detail.fanduel.history.spread %}
+{% if detail.draftkings.history.ml or detail.draftkings.history.spread %}
 (function () {
-    var hist = {{ detail.fanduel.history | tojson }};
+    var hist = {{ detail.draftkings.history | tojson }};
     var model = {{ {'ml': (detail.model.p_blend_home * 100) if detail.model.p_blend_home is not none else none,
                     'spread': detail.model.spread_home} | tojson }};
     var LABELS = {ml: 'Moneyline', spread: 'Spread'};

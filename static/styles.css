@@ -814,13 +814,6 @@ body.embed-mode .container { padding-bottom: 0; }
   box-shadow: none;
 }
 
-.bet-sheet-iframe {
-  flex: 1 1 auto;
-  width: 100%;
-  border: none;
-  background: var(--bg-card);
-}
-
 /* The game-details sheet sits behind the bet-entry sheet so that tapping a
    bet chip (which closes this one and opens the other) always resolves with
    the bet form on top during the brief overlap. */
@@ -860,40 +853,6 @@ body.embed-mode .container { padding-bottom: 0; }
 /* Sticky footer: pinned to the bottom of the scrolling sheet body so the
    Bet chips are always reachable without scrolling past the rest of the
    game details. */
-.bet-type-section {
-  position: sticky;
-  bottom: -16px;
-  z-index: 10;  /* above the factor bars/markers (z-index 2) that scroll beneath */
-  background: var(--bg-card);
-  margin: 14px -16px -16px;
-  padding: 12px 16px calc(16px + 12px);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.bet-type-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.bet-type-label {
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-}
-.bet-type-chips {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
 
 /* ── Responsive ──────────────────────────────────────── */
 @media (min-width: 768px) {
@@ -1107,32 +1066,6 @@ body.embed-mode .container { padding-bottom: 0; }
 }
 
 /* ── Two-line open bet rows ──────────────────────────────────────────────── */
-.bet-line1 {
-  font-weight: 600;
-  font-size: 0.88rem;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.bet-sport {
-  font-size: 0.70rem;
-  font-weight: 700;
-  color: var(--blue);
-  letter-spacing: 0.3px;
-}
-.bet-line2 {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-top: 3px;
-}
-.bet-time {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
 
 /* Score badge — hidden until JS populates it */
 .score-badge {
@@ -1311,23 +1244,6 @@ body.embed-mode .container { padding-bottom: 0; }
 /* Live win/loss badge (checkmark/X) — top-right corner of the open-bet's
    mc-chip, shown once a game is Live/Final and we can tell whether this
    bet's own side is currently covering/winning. */
-.bc-cover-badge {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1;
-}
-.bc-cover-badge.cover-win  { background: rgba(168,240,122,0.18); color: var(--win); }
-.bc-cover-badge.cover-loss { background: rgba(255,178,122,0.18); color: var(--loss); }
-.bc-cover-badge.cover-push { background: rgba(148,163,184,0.18); color: var(--text-muted); }
 .mc-sub.mc-unproven { color: var(--loss); }
 
 /* Final-game result chips — same chip shell, tinted by whether the pick
@@ -1629,72 +1545,6 @@ body.embed-mode .container { padding-bottom: 0; }
 /* ── Inline bet slip — replaces navigating to /new-bet for Moneyline bets
      on CFB/NFL cards. Sits at the bottom of .game-card-details, below the
      bet-type chips, and slides open in place when a chip is tapped. ── */
-.bet-slip {
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-  margin-top: 14px;
-  display: none;
-}
-.bet-slip.open { display: block; }
-.bet-slip-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 12px;
-}
-.bet-slip-pick { display: flex; align-items: center; gap: 8px; }
-.bet-slip-pick img { width: 28px; height: 28px; object-fit: contain; }
-.bet-slip-pick-name { font-size: 0.95rem; font-weight: 800; }
-.bet-slip-pick-sub { font-size: 0.72rem; color: var(--text-muted); }
-.bet-slip-cancel {
-  background: none; border: none; color: var(--text-muted);
-  font-size: 0.75rem; cursor: pointer; text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.bet-slip-cancel:hover { color: var(--text); }
-.bet-slip-stats {
-  display: flex; flex-wrap: wrap; gap: 8px 16px;
-  padding: 10px 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  margin-bottom: 12px;
-  font-size: 0.76rem;
-}
-.bss-item { display: flex; flex-direction: column; gap: 1px; }
-.bss-label { color: var(--text-muted); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.4px; }
-.bss-val { font-weight: 700; }
-.bss-val.edge-pos { color: var(--win); }
-.bss-val.edge-neg { color: var(--loss); }
-.stake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.stake-input-wrap { position: relative; flex: 1; }
-.stake-input-wrap::before {
-  content: "$"; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  color: var(--text-muted); font-weight: 700; font-size: 0.95rem; pointer-events: none;
-}
-.stake-input-wrap input {
-  width: 100%; padding: 11px 12px 11px 26px;
-  background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); color: var(--text);
-  font-size: 1rem; font-weight: 700;
-}
-.stake-input-wrap input:focus { outline: none; border-color: var(--blue); }
-.stake-quick-btns { display: flex; gap: 6px; }
-.stake-quick-btn {
-  padding: 7px 10px; font-size: 0.72rem; font-weight: 700;
-  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
-}
-.stake-quick-btn:hover { color: var(--text); border-color: var(--border-strong); }
-.stake-meta {
-  display: flex; justify-content: space-between; font-size: 0.72rem;
-  color: var(--text-muted); margin-bottom: 14px; padding: 0 2px;
-}
-.stake-meta b { color: var(--text); }
-.bet-slip-error {
-  display: none; margin-bottom: 10px; padding: 8px 10px;
-  background: rgba(255,178,122,0.09); border: 1px solid rgba(255,178,122,0.25);
-  border-radius: var(--radius-sm); color: var(--loss); font-size: 0.76rem;
-}
-.bet-slip-error.show { display: block; }
 .btn-place-bet {
   width: 100%; padding: 13px; font-size: 0.95rem; font-weight: 800;
   background: var(--orange); color: #fff; border: none;
@@ -1705,17 +1555,6 @@ body.embed-mode .container { padding-bottom: 0; }
 .btn-place-bet:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .btn-place-bet:active { transform: translateY(0); }
 .btn-place-bet:disabled { opacity: 0.6; cursor: default; transform: none; }
-.bet-slip-btn-row { display: flex; gap: 8px; }
-.bet-slip-btn-row .btn-place-bet { flex: 2; }
-.btn-add-sheet {
-  flex: 1; padding: 13px 10px; font-size: 0.85rem; font-weight: 800;
-  background: transparent; color: var(--orange); border: 1px solid var(--orange);
-  border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap;
-  transition: var(--transition);
-}
-.btn-add-sheet:hover { background: var(--orange-dim); }
-.btn-add-sheet:active { transform: translateY(0); }
-.btn-add-sheet:disabled { opacity: 0.6; cursor: default; }
 .bm-toast {
   position: fixed; left: 50%; bottom: 24px; z-index: 300;
   transform: translate(-50%, 12px); opacity: 0; pointer-events: none;
@@ -1725,9 +1564,6 @@ body.embed-mode .container { padding-bottom: 0; }
   max-width: calc(100vw - 32px); transition: opacity 0.2s ease, transform 0.2s ease;
 }
 .bm-toast.show { opacity: 1; transform: translate(-50%, 0); }
-.btn-bet-team.is-rec { border-color: #eab308; color: #eab308; }
-.btn-bet-team.is-rec:hover { color: #fff; }
-.btn-bet-team.selected { background: var(--orange); color: #fff; border-color: var(--orange); }
 
 .weather-strip {
   display: flex;
@@ -1913,20 +1749,8 @@ body.embed-mode .container { padding-bottom: 0; }
 .sb-score-win { color: var(--text); }
 .sb-score-sep { color: var(--border-strong); font-size: 1.4rem; font-weight: 400; }
 .sb-inning { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
-
-.bet-pair { display: flex; gap: 5px; }
-.btn-bet-team {
-    display: inline-block; background: rgba(255,122,26,0.12); color: var(--orange);
-    border: 1px solid rgba(255,122,26,0.3);
-    font-size: 0.68rem; font-weight: 700; padding: 5px 10px;
-    border-radius: var(--radius-sm); text-decoration: none; white-space: nowrap;
-    transition: background 0.16s, transform 0.16s;
-}
-.btn-bet-team:hover { background: var(--orange); color: #fff; transform: translateY(-1px); }
 /* No odds fetched yet for this game — nothing to actually bet against, so
    the chip is just a plain label instead of a (dead) link to place a bet. */
-.btn-bet-team-disabled { background: rgba(255,255,255,0.04); color: var(--text-muted); border-color: var(--border); cursor: default; }
-.btn-bet-team-disabled:hover { background: rgba(255,255,255,0.04); color: var(--text-muted); transform: none; }
 
 .track-pair { display: flex; gap: 5px; }
 
@@ -2098,13 +1922,6 @@ body.embed-mode .container { padding-bottom: 0; }
 .lineup-actual { color: var(--text); font-weight: 700; }
 .lineup-dnp { font-weight: 700; color: var(--loss); }
 
-.open-bet-pill {
-    font-size: 0.68rem; font-weight: 700; white-space: nowrap;
-    padding: 2px 8px; border-radius: 999px;
-    background: rgba(168,240,122,0.12); color: var(--win);
-    border: 1px solid rgba(168,240,122,0.30);
-}
-
 .games-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2117,8 +1934,6 @@ body.embed-mode .container { padding-bottom: 0; }
 .games-grid .game-card { margin-bottom: 0; display: flex; flex-direction: column; border-color: rgba(255,255,255,0.16); }
 .games-grid .game-card-summary { display: flex; flex-direction: column; flex: 1; }
 .games-grid .scoreboard { grid-template-columns: 1fr 110px 1fr; }
-
-.sb-bet-mobile { display: none; margin-top: 6px; }
 
 @media (max-width: 900px) {
     .games-grid { grid-template-columns: 1fr; }
@@ -2150,8 +1965,6 @@ body.embed-mode .container { padding-bottom: 0; }
         display: flex; width: 100%; justify-content: center;
         white-space: normal; font-size: 0.7rem;
     }
-    .bet-pair.desktop-bet { display: none; }
-    .sb-bet-mobile { display: inline-block; }
     .team-logo { width: 34px; height: 34px; }
     .sb-name { font-size: 0.78rem; }
     .sb-record, .sb-split { font-size: 0.7rem; }
@@ -2272,325 +2085,34 @@ body.embed-mode .container { padding-bottom: 0; }
 .tier-pass  { background: var(--bg-card-2); color: var(--text-muted); border: 1px solid var(--border); }
 
 /* ── Bet Cards (dashboard) ─────────────────────────────── */
-.bet-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 10px;
-  margin-top: 6px;
-  align-items: start;
-}
-
-.bet-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
 
 /* Card flip: turn edge-on, swap front summary <-> manage panel, turn back. */
-.bet-card { transition: transform 0.17s ease-in; transform: perspective(900px) rotateY(0); }
-.bet-card.bc-flipping { transform: perspective(900px) rotateY(90deg); }
-.bc-flip { cursor: pointer; }
 /* Always a single away/center/home row, regardless of viewport — overrides
    the schedule card's @media(max-width:700px) 2-row "away home"/"center
    center" grid (built for its longer name+record+conference team info),
    which otherwise leaves this abbreviation-only scoreboard with a mismatched
    3-column/2-column track count: an orphaned empty column pushes the home
    team off-center with a big gap (the bug reported against this layout). */
-.bc-scoreboard {
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-rows: auto;
-  grid-template-areas: none;
-}
-.bc-scoreboard .sb-team.sb-away,
-.bc-scoreboard .sb-team.sb-home,
-.bc-scoreboard .sb-center { grid-area: auto; }
-.bc-scoreboard .sb-center { border-top: none; padding: 0; }
-.bc-scoreboard:empty { min-height: 96px; }
-.bc-scoreboard .sb-score { font-size: 1.9rem; }
-.sb-name.is-bet { color: var(--blue); }
-.bc-live-hdr:empty, .bc-status:empty { display: none; }
-.bc-model-line { margin-top: 0; }
 /* Market-vs-model row (reuses the schedule card's .mc-table/.mc-row/
    .mc-track-wrap styling from _market_chips.html) — just needs the same
    14px/10px side/bottom margin every other bet-card section below the
    scoreboard uses (.bc-analytics, .bc-linemove). */
 .eb-typerow { margin: 0 14px 10px; }
-.bc-front-body { position: relative; }
-.bc-edit-front {
-  align-self: center;
-  margin: 0 10px 0 auto;
-  padding: 4px 9px;
-  font-size: 0.68rem;
-  flex-shrink: 0;
-}
-.bc-flip:active { opacity: 0.85; }
-.bc-front-body[hidden], .bc-details[hidden] { display: none; }
-.bc-details { padding: 12px 14px 14px; }
-.bc-flip-back { width: 100%; margin-top: 8px; }
-
-.bc-name-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.bc-name {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.bc-meta {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 0 14px 10px;
-}
-
-.bc-time {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-}
 
 /* Analytics row */
-.bc-analytics {
-  display: flex;
-  margin: 0 14px 10px;
-  padding: 7px 10px;
-  background: var(--bg-card-2);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  gap: 0;
-}
-
-.bc-ana-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.bc-ana-item + .bc-ana-item {
-  border-left: 1px solid var(--border);
-  padding-left: 8px;
-}
-
-.bc-ana-label {
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.bc-ana-val {
-  font-size: 0.80rem;
-  font-weight: 700;
-  color: var(--text);
-}
 
 /* Line movement bobber: green (in your favor, more negative) <-> red (against you) */
-.bc-linemove {
-  margin: 0 14px 10px;
-}
-
-.bc-linemove-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.bc-linemove-track {
-  position: relative;
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--win), var(--border) 50%, var(--loss));
-  opacity: 0.85;
-}
-
-.bc-linemove-bobber {
-  position: absolute;
-  top: 50%;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--text);
-  border: 2px solid var(--bg-card, #1a1a1a);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.25);
-  transition: left 0.3s ease;
-}
-
-.bc-score-status {
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 5px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
 
 /* Live implied win probability badge */
-.bc-live-implied {
-  margin-left: auto;
-  font-size: 0.68rem;
-  font-weight: 800;
-  padding: 2px 7px;
-  border-radius: 4px;
-  letter-spacing: 0.2px;
-  text-transform: none;
-}
 .limp-good    { color: var(--win); background: rgba(168,240,122,0.12); border: 1px solid rgba(168,240,122,0.25); }
 .limp-neutral { color: var(--text-muted); background: rgba(255,255,255,0.07); }
 .limp-bad     { color: var(--loss); background: rgba(255,178,122,0.10); border: 1px solid rgba(255,178,122,0.22); }
 
-.bc-score-status.is-live {
-  color: var(--orange);
-}
-
-.bc-score-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.bc-team-block {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.bc-team-abbr {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-
-.bc-team-abbr.is-bet {
-  color: var(--blue);
-}
-
-.bc-team-num {
-  font-size: 1.3rem;
-  font-weight: 800;
-  color: var(--silver);
-  line-height: 1;
-}
-
-.bc-team-num.winning {
-  color: var(--win);
-}
-
-.bc-score-div {
-  color: var(--border-strong);
-  font-weight: 500;
-  font-size: 0.9rem;
-  line-height: 1;
-}
-
 /* Financial footer */
-.bc-financials {
-  margin-top: auto;
-  display: flex;
-  border-top: 1px solid var(--border);
-}
-
-.bc-fin-item {
-  flex: 0 0 72px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.bc-fin-item:last-child {
-  flex: 1;
-  overflow: visible;
-}
-
-.bc-fin-item + .bc-fin-item {
-  border-left: 1px solid var(--border);
-}
-
-.bc-fin-label {
-  font-size: 0.60rem;
-  font-weight: 700;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.bc-fin-val .line-cell {
-  flex-wrap: nowrap;
-  gap: 3px;
-}
-
-.bc-fin-val {
-  font-size: 0.83rem;
-  font-weight: 700;
-  color: var(--text);
-}
 
 /* Matchup row on the card face — team logos + vs., populated by JS */
-.bc-matchup {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 2px 14px 10px;
-  min-height: 34px;
-}
-.bc-matchup-team {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.bc-matchup-team img {
-  width: 26px;
-  height: 26px;
-  object-fit: contain;
-}
-.bc-matchup-team span {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-muted);
-}
-.bc-matchup-team.is-bet span { color: var(--orange); }
-.bc-matchup-vs {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-}
 
 /* First-row matchup — larger now that the name/sport/tier header is gone */
-.bc-matchup-lg {
-  gap: 14px;
-  padding: 16px 14px 14px;
-  min-height: 40px;
-}
-.bc-matchup-lg .bc-matchup-team span { font-size: 0.95rem; }
-.bc-matchup-lg .bc-matchup-team img { width: 32px; height: 32px; }
-.bc-matchup-lg .bc-matchup-vs { font-size: 0.72rem; }
 
 /* Bet detail sheet actions (Edit / Close Bet / Delete) */
 .bdm-actions {
@@ -2641,16 +2163,8 @@ body.embed-mode .container { padding-bottom: 0; }
 .bdm-seg button:last-child { border-right: none; }
 .bdm-seg button.on-win  { background: rgba(168,240,122,0.18);  color: var(--win); }
 .bdm-seg button.on-loss { background: rgba(255,178,122,0.14);  color: var(--loss); }
-.bdm-seg button.on-cashout { background: rgba(99,102,241,0.14); color: #6366f1; }
 .bdm-form-actions { display: flex; gap: 8px; margin-top: 8px; }
 .bdm-form-actions > * { flex: 1; }
-.bdm-cashout-box {
-  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 12px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px;
-}
-.bdm-cashout-box .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.8rem; }
-.bdm-cashout-box .row[hidden] { display: none; }
-.bdm-cashout-box .row span:first-child { color: var(--text-muted); }
 
 /* ── History page — filter bar ───────────────────────── */
 .filter-bar {
@@ -2889,7 +2403,6 @@ body.embed-mode .container { padding-bottom: 0; }
 .live-strip-base.b3 { left: 1px; bottom: 4px; }
 .live-strip-edge { font-size: 0.66rem; font-weight: 700; color: var(--win); }
 .live-strip-model { font-size: 0.66rem; font-weight: 700; color: var(--orange); }
-.live-strip-card.has-bet { border-color: rgba(168,240,122,0.32); }
 .live-strip-lead {
     flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; gap: 6px;
     padding-right: 6px;
@@ -3007,16 +2520,11 @@ body.embed-mode .container { padding-bottom: 0; }
 .hub-board-edge.pos { color: var(--win); }
 
 .hub-rail-card { padding: 0; overflow: hidden; }
-.hub-wire, .hub-bets { list-style: none; margin: 0; padding: 4px 0; }
+.hub-wire { list-style: none; margin: 0; padding: 4px 0; }
 .hub-wire li { display: flex; gap: 12px; padding: 10px 20px; }
 .hub-wire-time { flex: 0 0 40px; font-size: 0.72rem; color: var(--text-muted); padding-top: 2px; }
 .hub-wire-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 0.85rem; line-height: 1.45; color: var(--text); }
 .hub-wire-body .whisper-type { flex: none; padding: 0; }
-.hub-bets li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 20px; }
-.hub-bets-l { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.hub-bets-l strong { font-size: 0.88rem; }
-.hub-bets-l a { color: inherit; text-decoration: none; }
-.hub-bets-r { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
 .hub-model { padding: 16px 20px; }
 .hub-model h2 { font-size: 1.6rem; line-height: 1; margin-bottom: 14px; }
 .hub-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
@@ -3179,13 +2687,8 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .whisper-detail .was { color:var(--text-muted); text-decoration:line-through; }
 .whisper-pill { font-size:0.72rem; font-weight:800; padding:3px 8px; border-radius:6px; background:var(--border); color:var(--silver); }
 .whisper-pill.bad { background:rgba(255,178,122,0.14); color:var(--loss); }
-.whisper-bet { display:flex; align-items:center; gap:8px; font-size:0.8rem; font-weight:700; color:var(--win); }
-.whisper-bet .dot { width:6px; height:6px; border-radius:50%; background:var(--win); }
 .whispers-empty { text-align:center; padding:36px 24px; border-style:dashed; color:var(--text-muted); }
 .whispers-empty-title { font-family:var(--font-display); font-size:1.8rem; color:var(--text); }
-.whispers-touching { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
-.whispers-touching li { display:flex; justify-content:space-between; gap:12px; font-size:0.88rem; }
-.whispers-touching li span { font-size:0.74rem; font-weight:700; text-align:right; }
 @media (max-width: 760px) {
     .whispers-filter { flex:1 1 100%; max-width:none; flex-direction:row; overflow-x:auto; position:static; gap:6px; scrollbar-width:none; }
     .whispers-filter::-webkit-scrollbar { display:none; }
@@ -3466,26 +2969,10 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .gy-h2 { margin: 0; font-size: 2rem; line-height: 1; }
 .gy-h2.sm { font-size: 1.75rem; }
 .gy-h2-n { font-size: 1rem; color: var(--text-muted); }
-
-.gy-live { padding: 0; overflow: hidden; }
-.gy-live.winning { border-color: #3b4a2a; }
-.gy-live.trailing { border-color: #4a2a2e; }
-.gy-live-head {
-    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 12px 22px; border-bottom: 1px solid var(--border);
-    font-size: 0.74rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
-}
-.gy-live-state { display: flex; align-items: center; gap: 12px; }
-.gy-live-clock { display: flex; align-items: center; gap: 8px; color: var(--orange); }
-.gy-live-clock .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.gy-live-body { display: flex; flex-wrap: wrap; gap: 28px; padding: 22px; }
-.gy-live-score { flex: 1 1 240px; display: flex; align-items: center; justify-content: space-around; gap: 16px; }
 .gy-team { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--text-muted); }
 .gy-team.mine { color: var(--orange); }
 .gy-team .abbr { font-family: var(--font-display); font-size: 3rem; line-height: 0.9; }
 .gy-team .pts { font-size: 2.2rem; font-weight: 500; color: var(--text); }
-.gy-live-score .at { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
-.gy-live-pick { flex: 2 1 320px; display: flex; flex-direction: column; gap: 12px; padding-left: 28px; border-left: 1px solid var(--border); }
 .gy-pick-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .gy-pick { font-weight: 800; font-size: 1.5rem; }
 .gy-odds { font-size: 1.1rem; color: var(--silver); }
@@ -3493,8 +2980,6 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .gy-wp-bar { position: relative; height: 10px; border-radius: 5px; background: var(--border); }
 .gy-wp-bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--win); }
 .gy-wp-bar i { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--text); }
-.gy-live-foot { display: flex; flex-wrap: wrap; align-items: center; background: var(--bg-input); border-top: 1px solid var(--border); }
-.gy-live-foot > div:not(.gy-foot-actions) { display: flex; flex-direction: column; gap: 2px; padding: 14px 22px; border-right: 1px solid var(--border); }
 .gy-foot-actions { margin-left: auto; display: flex; gap: 8px; padding: 10px 22px; }
 .gy-btn {
     display: inline-flex; align-items: center; width: auto; height: 40px; padding: 0 14px;
@@ -3503,7 +2988,6 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 }
 .gy-btn:hover { border-color: var(--border-strong); transform: none; }
 .gy-btn:disabled { color: var(--border-strong); border-color: var(--border); cursor: default; }
-.gy-live .bc-details, .gy-up-list .bc-details { padding: 18px 22px; }
 
 .gy-up-list { list-style: none; margin: 0; padding: 0; overflow: hidden; }
 .gy-up-list > li + li { border-top: 1px solid var(--border); }
@@ -3519,8 +3003,6 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .gy-up-num { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 100px; font-size: 0.85rem; }
 .gy-empty { padding: 18px 22px; color: var(--text-muted); }
 .gy-empty a { color: var(--orange); font-weight: 700; text-decoration: none; }
-
-.gy-headstones { padding: 0; }
 .gy-hs-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
 .gy-filters { display: flex; flex-wrap: wrap; gap: 8px; }
 .gy-field { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); }
@@ -3566,9 +3048,7 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
     .gy-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
     .gy-kpis > div { padding: 14px 16px; border-bottom: 1px solid var(--border); }
     .gy-kpi-val { font-size: 1.4rem; }
-    .gy-live-pick { padding-left: 0; border-left: 0; }
-    .gy-live-head, .gy-live-body, .gy-up-row, .gy-hs-head, .gy-hs-foot { padding-left: 16px; padding-right: 16px; }
-    .gy-live-foot > div:not(.gy-foot-actions) { padding: 12px 16px; }
+    .gy-up-row, .gy-hs-head, .gy-hs-foot { padding-left: 16px; padding-right: 16px; }
     .gy-foot-actions { margin-left: 0; padding: 10px 16px; }
     .gy-up-num { align-items: flex-start; }
     .gy-h2 { font-size: 1.6rem; }
@@ -3709,6 +3189,14 @@ a.whisper-game:hover { color:var(--text); border-color:var(--border-strong); }
 .mp-meter span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--win); }
 .mp-meter i { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--text); }
 .mp-row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.mp-paper { padding: 0; margin-bottom: 24px; }
+.mp-paper .gy-h2-row { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.mp-paper-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.mp-paper tr.on th { color: var(--orange); }
+.mp-paper-final { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 10px 0 14px; }
+.mp-paper-final > div { display: grid; grid-template-columns: 10px auto; column-gap: 8px; align-items: center; }
+.mp-paper-final .sw { width: 10px; height: 10px; border-radius: 3px; grid-row: span 3; align-self: start; margin-top: 4px; }
+.mp-paper-final .mono { font-size: 1.35rem; }
 .mp-findings { flex: 999 1 540px; min-width: 0; padding: 0; border-color: var(--border-warn); }
 .mp-pad { padding: 18px 22px 8px; }
 .mp-find-list { list-style: none; margin: 0; padding: 0 0 8px; }
@@ -4300,16 +3788,6 @@ html.dm-loader-open, html.dm-loader-open body { overflow: hidden; }
 .dm-loader-btn[hidden] { display: none; }
 .dm-loader-btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
-.dm-loader-cached { border: 1px solid var(--line-2); border-radius: 18px; padding: 14px 20px; background: var(--surface-2); }
-.dm-loader-cached[hidden] { display: none; }
-.dm-loader-cached-head { display: flex; justify-content: space-between; align-items: baseline; }
-.dm-loader-cached-tag { font-size: 12px; color: var(--muted-2); }
-.dm-loader-cached ul { list-style: none; margin: 0; padding: 0; }
-.dm-loader-cached li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; }
-.dm-loader-cached-bet { font-size: 14px; font-weight: 600; }
-.dm-loader-cached-state { font-family: var(--font-mono); font-size: 12px; color: var(--muted-2); }
-.dm-loader-cached-state.good { color: var(--win); }
-.dm-loader-cached-state.bad { color: var(--loss); }
 
 @media (max-width: 960px) {
   .dm-loader-skel { opacity: 0.3; padding: 16px; }
@@ -4324,7 +3802,7 @@ html.dm-loader-open, html.dm-loader-open body { overflow: hidden; }
   .dm-loader-title { font-size: 44px; }
   .dm-quips { margin-top: 10px; font-size: 15px; }
   .dm-loader-progress { margin-top: 18px; }
-  .dm-loader-card, .dm-loader-cached { border-radius: 16px; padding: 12px 14px; }
+  .dm-loader-card { border-radius: 16px; padding: 12px 14px; }
   .dm-loader-card-head { margin-bottom: 2px; }
   .dm-loader-card-head h2 { font-size: 22px; }
   .dm-loader-row { gap: 10px; min-height: 44px; }

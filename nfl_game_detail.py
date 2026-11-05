@@ -393,7 +393,7 @@ def build_game_detail(game_id):
             'weather': g.get('weather'),
         },
         'teams': {'away': away, 'home': home},
-        'fanduel': {
+        'draftkings': {
             'updated_at': None,
             'moneyline': {'away': {'price': odds.get('away_best'), 'open': odds.get('opening_away')},
                            'home': {'price': odds.get('home_best'), 'open': odds.get('opening_home')}},

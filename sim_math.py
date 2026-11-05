@@ -56,7 +56,7 @@ def p_over_empirical(line, draws):
 
 
 def ev_over_under(p_over, over_price, under_price):
-    """EV per $1 on each side of a prop, using FanDuel prices for both.
+    """EV per $1 on each side of a prop, using DraftKings prices for both.
     Returns (ev_over, ev_under)."""
     ev_over = gm.ev(p_over, gm.net_payout_b(over_price))
     ev_under = gm.ev(1.0 - p_over, gm.net_payout_b(under_price))

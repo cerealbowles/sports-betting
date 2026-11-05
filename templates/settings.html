@@ -17,7 +17,6 @@
   {% if cap > 5 %}
   <a href="#sizing" class="set-attn-card bad"><span class="gy-tag bad">Risk</span><span><strong>Kelly cap is <span data-cap-label>{{ cap | round(1) | string | replace('.0', '') }}%</span>.</strong> <span class="muted">The app's own guidance is 2–5%.</span></span></a>
   {% endif %}
-  <a href="#data" class="set-attn-card warn"><span class="gy-tag warn">Mismatch</span><span><strong>Odds come from DraftKings</strong> <span class="muted">(via ESPN), but you bet FanDuel.</span></span></a>
   {% if storage_old %}
   <a href="#data" class="set-attn-card"><span class="gy-tag">Storage</span><span><strong>{{ odds_stats.age_days }} days of line snapshots.</strong> <span class="muted">Past the 90-day roll-up point.</span></span></a>
   {% endif %}
@@ -28,7 +27,7 @@
     <a href="#sizing">Bankroll &amp; sizing{% if cap > 5 %}<span class="dot {{ cap_cls }}" data-cap-dot></span>{% endif %}</a>
     <a href="#alerts">Alerts</a>
     <a href="#teams">Favorite teams</a>
-    <a href="#data">Data &amp; odds<span class="dot warn"></span></a>
+    <a href="#data">Data &amp; odds{% if storage_old %}<span class="dot warn"></span>{% endif %}</a>
     <a href="#maint">Grave digging</a>
   </nav>
 
@@ -36,7 +35,7 @@
 
     <section id="sizing" class="card set-card" aria-labelledby="sz-h">
       <h2 id="sz-h" class="gy-h2">Bankroll &amp; sizing</h2>
-      <p class="set-sub">Kelly sizing is bankroll-wide, not per sport.</p>
+      <p class="set-sub">Kelly sizing is bankroll-wide, not per sport. The cap also limits full-Kelly stakes in the Model page's shadow bankroll.</p>
       <div class="set-sizing">
         <label class="set-bankroll">
           <span class="gy-kpi-label">Bankroll ($)</span>
@@ -119,10 +118,10 @@
     <section id="data" class="card set-card" aria-labelledby="dt-h">
       <h2 id="dt-h" class="gy-h2" style="margin-bottom:16px;">Data &amp; odds</h2>
       <div class="set-data">
-        <div class="set-box warn">
-          <div class="set-box-head"><span class="gy-kpi-label">Odds source</span><span class="gy-tag warn">Not your book</span></div>
+        <div class="set-box">
+          <div class="set-box-head"><span class="gy-kpi-label">Odds source</span><span class="gy-tag good">Your book</span></div>
           <div class="set-box-title">ESPN feed · DraftKings lines</div>
-          <p class="set-sub" style="margin:6px 0 0;">No API key, no quota. But edge, EV and CLV are measured against DraftKings prices, not the FanDuel prices you actually take.</p>
+          <p class="set-sub" style="margin:6px 0 0;">No API key, no quota. Edge, EV and CLV are measured against the same DraftKings prices you bet.</p>
         </div>
         <div class="set-box">
           <span class="gy-kpi-label">Line snapshots</span>

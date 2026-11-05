@@ -22,7 +22,6 @@ import requests
 # Order here is the order Settings shows them in.
 CHANNELS = {
     'default':  {'label': 'Default',           'hint': 'Catch-all. Anything without its own channel lands here.'},
-    'my_bets':  {'label': 'My bets',           'hint': 'Line moves, injuries, lead changes and finals on games you have money on.'},
     'model':    {'label': 'Model',             'hint': "Tonight's card, Omen Score moves, picks added or dropped."},
     'scores':   {'label': 'Scores',            'hint': 'Final scores across the board.'},
     'injuries': {'label': 'Injuries & lineups', 'hint': "Starters ruled out on tonight's slate."},
@@ -34,9 +33,6 @@ ALERTS = {
     'daily_card':     {'label': "The model posts tonight's card",     'channel': 'model',    'default': True,  'live': True},
     'score_moves':    {'label': 'Omen Score moves ±10 / crosses 60',  'channel': 'model',    'default': True,  'live': True},
     'picks_changed':  {'label': 'A pick is added to or drops off the list', 'channel': 'model', 'default': True, 'live': True},
-    'bet_line_move':  {'label': 'A line moves 1+ point on my bet',     'channel': 'my_bets',  'default': True,  'live': False},
-    'bet_starter_out': {'label': 'A starter is ruled out in my game',  'channel': 'my_bets',  'default': True,  'live': False},
-    'bet_lead_change': {'label': 'The lead changes in my game',        'channel': 'my_bets',  'default': True,  'live': False},
     'any_final':      {'label': 'Any final score',                     'channel': 'scores',   'default': False, 'live': False},
     'starter_out':    {'label': "A starter is ruled out anywhere on tonight's slate", 'channel': 'injuries', 'default': False, 'live': False},
 }
